@@ -342,6 +342,22 @@ label {
   max-width: 64ch;
 }
 
+.artist-story {
+  display: grid;
+  gap: 18px;
+}
+
+.artist-quote {
+  margin: 0;
+  padding: 22px 24px;
+  border-left: 4px solid var(--accent);
+  border-radius: 0 18px 18px 0;
+  background: rgba(255, 250, 246, 0.9);
+  font-family: "Cormorant Garamond", serif;
+  font-size: 2rem;
+  line-height: 1.1;
+}
+
 .placeholder-copy,
 .testimonials-placeholder blockquote,
 .contact-card {
