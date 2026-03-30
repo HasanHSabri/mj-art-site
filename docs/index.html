@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MJ Art</title>
+  <meta
+    name="description"
+    content="A warm and elegant art landing page with a gallery, artist story, testimonials, and a simple painting inquiry flow."
+  >
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%239a5c4b'/%3E%3Ccircle cx='24' cy='24' r='10' fill='%23f7d4b1'/%3E%3Cpath d='M20 44c8-10 18-14 24-10 2 1 4 4 4 8H20Z' fill='%23fff4e8'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <nav class="topbar">
+        <a class="brand" href="#top">MJ</a>
+        <div class="topbar-links">
+          <a href="#gallery">Gallery</a>
+          <a href="#story">Story</a>
+          <a href="#contact">Contact</a>
+        </div>
+      </nav>
+
+      <section class="hero-content" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow">Original paintings for homes, gifts, and collectors</p>
+          <h1>MJ's paintings, gathered into a simple and personal online gallery.</h1>
+          <p class="hero-text">
+            A warm first home for MJ's art: browse recent paintings, open each piece for a closer look,
+            and send a direct inquiry if something speaks to you.
+          </p>
+          <div class="hero-tags" aria-label="Site highlights">
+            <span>Original works</span>
+            <span>Direct inquiries</span>
+            <span>More pieces coming soon</span>
+          </div>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#gallery">Browse the collection</a>
+            <a class="button button-secondary" href="#contact">Ask about a painting</a>
+          </div>
+        </div>
+
+        <div class="hero-stack">
+          <div class="hero-card hero-preview">
+            <div class="hero-preview-image preview-large" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.17%20PM.jpeg');"></div>
+            <div class="hero-preview-column">
+              <div class="hero-preview-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(3).jpeg');"></div>
+              <div class="hero-preview-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM.jpeg');"></div>
+            </div>
+          </div>
+
+          <div class="hero-card hero-note">
+            <p class="hero-card-label">Current setup</p>
+            <ul>
+              <li>Single-page site</li>
+              <li>Real uploaded artwork in the gallery</li>
+              <li>Email-based inquiry flow</li>
+              <li>Space ready for bio and testimonials</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </header>
+
+    <main>
+      <section class="section intro-grid">
+        <article class="intro-panel accent-panel">
+          <p class="section-label">Why this site works</p>
+            <h2>Simple enough to launch now, personal enough to grow with her collection.</h2>
+          <p>
+            Instead of building a full ecommerce system right away, this version keeps the focus on
+            the paintings and makes it easy for interested visitors to reach out.
+          </p>
+        </article>
+
+        <article class="intro-panel stats-panel">
+          <div>
+            <span class="stat-value">1</span>
+            <span class="stat-label">single landing page</span>
+          </div>
+          <div>
+            <span class="stat-value">0</span>
+            <span class="stat-label">payment complexity for now</span>
+          </div>
+          <div>
+            <span class="stat-value">100%</span>
+            <span class="stat-label">art-first presentation</span>
+          </div>
+        </article>
+      </section>
+
+      <section class="section" id="gallery">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">Gallery</p>
+            <h2>Available work</h2>
+          </div>
+          <p class="section-note">These are the first uploaded pieces. Titles, sizes, medium, availability, and descriptions can all be filled in later.</p>
+        </div>
+
+        <div class="gallery-grid" id="gallery-grid">
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 1" data-title="Painting 1" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.17%20PM.jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.17%20PM.jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 1</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 2" data-title="Painting 2" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.17%20PM%20(1).jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.17%20PM%20(1).jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 2</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 3" data-title="Painting 3" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.20%20PM.jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.20%20PM.jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 3</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 4" data-title="Painting 4" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM.jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM.jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 4</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 5" data-title="Painting 5" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(1).jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(1).jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 5</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 6" data-title="Painting 6" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(2).jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(2).jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 6</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 7" data-title="Painting 7" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(3).jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(3).jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 7</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 8" data-title="Painting 8" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM.jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM.jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 8</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 9" data-title="Painting 9" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM%20(1).jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM%20(1).jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 9</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 10" data-title="Painting 10" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM%20(2).jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM%20(2).jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 10</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card painting-card-placeholder" aria-label="More paintings will be added soon">
+            <div class="painting-image painting-image-placeholder"></div>
+            <div class="painting-card-body">
+              <h3>More works soon</h3>
+              <p>Additional paintings can be added as the collection grows.</p>
+              <span>New uploads welcome</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section story-layout" id="story">
+        <div>
+          <p class="section-label">Artist story</p>
+          <h2>Painting as expression, connection, and continuity.</h2>
+        </div>
+        <div class="story-copy placeholder-copy">
+          <p>
+            This space is intentionally left ready for MJ's bio. We can add her own voice, background,
+            inspirations, and story as soon as you send it.
+          </p>
+          <p>
+            A short artist story is enough for now: who she is, what she paints, what matters to her,
+            and what people feel when they live with her work.
+          </p>
+          <div class="placeholder-list">
+            <span>Personal background</span>
+            <span>What inspires MJ</span>
+            <span>How she wants viewers to feel</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section testimonials-section">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">Testimonials</p>
+            <h2>Kind words from people who know her work</h2>
+          </div>
+        </div>
+
+        <div class="testimonials-grid testimonials-placeholder">
+          <blockquote>
+            Testimonial space reserved.
+          </blockquote>
+          <blockquote>
+            Add a short quote from a buyer, friend, or visitor here.
+          </blockquote>
+          <blockquote>
+            Add another line here when you are ready.
+          </blockquote>
+        </div>
+      </section>
+
+      <section class="section contact-section" id="contact">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">Contact</p>
+            <h2>Ask about a painting</h2>
+          </div>
+          <p class="section-note">The form opens the visitor's email app so visitors can contact MJ directly.</p>
+        </div>
+
+        <div class="contact-grid">
+          <form class="contact-form" id="inquiry-form">
+            <label>
+              Your name
+              <input type="text" id="customer-name" name="customer-name" placeholder="Jane Smith" required>
+            </label>
+            <label>
+              Your email
+              <input type="email" id="customer-email" name="customer-email" placeholder="jane@example.com" required>
+            </label>
+            <label>
+              Painting
+              <input type="text" id="painting-name" name="painting-name" placeholder="Select from gallery or type the title" required>
+            </label>
+            <label>
+              Message
+              <textarea id="message" name="message" rows="5" placeholder="Hi, I would love to ask about this painting..." required></textarea>
+            </label>
+            <button class="button button-primary" type="submit">Create email inquiry</button>
+          </form>
+
+          <aside class="contact-card">
+            <h3>Ready now, easy to expand later</h3>
+            <p>
+              The site is already usable as a first version. These details can be added gradually without
+              changing the structure.
+            </p>
+            <ul>
+              <li>Final painting titles</li>
+              <li>Sizes, medium, and availability</li>
+              <li>Artwork descriptions</li>
+              <li>MJ's bio and real testimonials</li>
+            </ul>
+            <a class="inline-link" href="mailto:mjdonnellan73@gmail.com">mjdonnellan73@gmail.com</a>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="painting-dialog" id="painting-dialog">
+    <button class="dialog-close" id="dialog-close" aria-label="Close artwork details">Close</button>
+    <div class="dialog-image" id="dialog-image"></div>
+    <div class="dialog-copy">
+      <p class="section-label">Painting details</p>
+      <h2 id="dialog-title"></h2>
+      <dl class="detail-list">
+        <div>
+          <dt>Medium</dt>
+          <dd id="dialog-medium"></dd>
+        </div>
+        <div>
+          <dt>Size</dt>
+          <dd id="dialog-size"></dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd id="dialog-availability"></dd>
+        </div>
+      </dl>
+      <p id="dialog-description"></p>
+      <button class="button button-primary" id="dialog-inquire" type="button">Inquire about this painting</button>
+    </div>
+  </dialog>
+
+  <script src="./script.js"></script>
+</body>
+</html>
