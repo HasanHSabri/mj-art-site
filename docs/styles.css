@@ -320,6 +320,12 @@ label {
   background-color: rgba(255, 255, 255, 0.4);
 }
 
+.painting-image-contained,
+.dialog-image-contained {
+  background-size: contain;
+  background-repeat: no-repeat;
+}
+
 .painting-image-placeholder {
   background:
     radial-gradient(circle at top, rgba(255, 228, 210, 0.9), transparent 34%),

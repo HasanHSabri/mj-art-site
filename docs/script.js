@@ -15,7 +15,7 @@ const contactEmail = 'mjdonnellan73@gmail.com';
 let selectedPainting = '';
 
 function openPaintingDialog(card) {
-  const { title, medium, size, availability, description, image } = card.dataset;
+  const { title, medium, size, availability, description, image, imageFit } = card.dataset;
 
   selectedPainting = title;
   dialogTitle.textContent = title;
@@ -25,6 +25,7 @@ function openPaintingDialog(card) {
   dialogDescription.textContent = description;
   paintingNameInput.value = title;
   dialogImage.style.backgroundImage = `url("${image}")`;
+  dialogImage.classList.toggle('dialog-image-contained', imageFit === 'contain');
 
   dialog.showModal();
 }
