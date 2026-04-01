@@ -10,9 +10,26 @@ const dialogImage = document.getElementById('dialog-image');
 const dialogInquire = document.getElementById('dialog-inquire');
 const inquiryForm = document.getElementById('inquiry-form');
 const paintingNameInput = document.getElementById('painting-name');
+const dialogImageElement = document.createElement('img');
 
 const contactEmail = 'mjdonnellan73@gmail.com';
 let selectedPainting = '';
+
+dialogImageElement.alt = '';
+dialogImage.appendChild(dialogImageElement);
+
+galleryCards.forEach((card) => {
+  const imageContainer = card.querySelector('.painting-image');
+  if (!imageContainer || imageContainer.classList.contains('painting-image-placeholder')) {
+    return;
+  }
+
+  const imageElement = document.createElement('img');
+  imageElement.src = card.dataset.image;
+  imageElement.alt = card.dataset.title || 'Artwork';
+  imageContainer.style.backgroundImage = 'none';
+  imageContainer.appendChild(imageElement);
+});
 
 function openPaintingDialog(card) {
   const { title, medium, size, availability, description, image } = card.dataset;
@@ -24,7 +41,8 @@ function openPaintingDialog(card) {
   dialogAvailability.textContent = availability;
   dialogDescription.textContent = description;
   paintingNameInput.value = title;
-  dialogImage.style.backgroundImage = `url("${image}")`;
+  dialogImageElement.src = image;
+  dialogImageElement.alt = title;
 
   dialog.showModal();
 }
