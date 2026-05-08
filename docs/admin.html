@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MJ Art Admin</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./admin.css">
+</head>
+<body>
+  <main class="admin-shell">
+    <header class="admin-hero">
+      <div>
+        <p class="eyebrow">MJ Art admin helper</p>
+        <h1>Edit artwork data for the public gallery.</h1>
+        <p>
+          This admin surface loads the same artwork data as the public gallery. For now it exports an updated
+          <code>artworks.json</code> file; real login and direct publishing can be added next.
+        </p>
+      </div>
+      <a class="button ghost-button" href="./index.html">View public site</a>
+    </header>
+
+    <section class="admin-grid" aria-label="Artwork editor">
+      <form class="panel editor-panel" id="artwork-form">
+        <div class="section-heading">
+          <p class="eyebrow">Artwork details</p>
+          <h2>Add or update a painting</h2>
+        </div>
+
+        <input id="artwork-id" name="artworkId" type="hidden">
+
+        <label>
+          Title
+          <input id="title" name="title" type="text" placeholder="Painting title" required>
+        </label>
+
+        <label>
+          Image file
+          <input id="image" name="image" type="text" list="image-options" placeholder="./artwork/example.jpg" required>
+          <datalist id="image-options"></datalist>
+        </label>
+
+        <div class="field-row">
+          <label>
+            Medium
+            <input id="medium" name="medium" type="text" placeholder="Acrylic on canvas">
+          </label>
+          <label>
+            Size
+            <input id="size" name="size" type="text" placeholder="To be added">
+          </label>
+        </div>
+
+        <label>
+          Availability
+          <input id="availability" name="availability" type="text" placeholder="Available, sold, reserved">
+        </label>
+
+        <label class="checkbox-label">
+          <input id="contain-image" name="containImage" type="checkbox">
+          Show full image without cropping
+        </label>
+
+        <label>
+          Short card note
+          <input id="card-note" name="cardNote" type="text" placeholder="Details to be added">
+        </label>
+
+        <label>
+          Description
+          <textarea id="description" name="description" rows="8" placeholder="Artwork description"></textarea>
+        </label>
+
+        <div class="actions">
+          <button class="button primary-button" type="submit">Save change</button>
+          <button class="button ghost-button" id="new-artwork" type="button">New painting</button>
+          <button class="button ghost-button" id="reset-form" type="button">Clear form</button>
+        </div>
+      </form>
+
+      <aside class="panel preview-panel" aria-label="Preview and output">
+        <div class="section-heading">
+          <p class="eyebrow">Preview</p>
+          <h2 id="preview-title">Untitled painting</h2>
+        </div>
+        <div class="preview-image" id="preview-image"></div>
+        <dl class="preview-meta">
+          <div>
+            <dt>Medium</dt>
+            <dd id="preview-medium">To be added</dd>
+          </div>
+          <div>
+            <dt>Size</dt>
+            <dd id="preview-size">To be added</dd>
+          </div>
+          <div>
+            <dt>Availability</dt>
+            <dd id="preview-availability">To be added</dd>
+          </div>
+        </dl>
+        <p id="preview-description" class="preview-description">Artwork description preview.</p>
+
+        <label>
+          Updated artworks.json
+          <textarea id="generated-json" rows="10" readonly></textarea>
+        </label>
+        <button class="button primary-button" id="copy-json" type="button">Copy JSON</button>
+        <p class="copy-status" id="copy-status" role="status"></p>
+      </aside>
+    </section>
+
+    <section class="panel drafts-panel" aria-label="Saved drafts">
+      <div class="section-heading inline-heading">
+        <div>
+          <p class="eyebrow">Drafts</p>
+          <h2>Artwork list</h2>
+        </div>
+        <button class="button danger-button" id="reset-data" type="button">Reset local edits</button>
+      </div>
+      <div class="draft-list" id="artwork-list"></div>
+    </section>
+  </main>
+
+  <script src="./admin.js"></script>
+</body>
+</html>

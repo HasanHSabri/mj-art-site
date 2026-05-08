@@ -1,4 +1,4 @@
-const galleryCards = document.querySelectorAll('.painting-card');
+const galleryGrid = document.getElementById('gallery-grid');
 const dialog = document.getElementById('painting-dialog');
 const dialogClose = document.getElementById('dialog-close');
 const dialogTitle = document.getElementById('dialog-title');
@@ -18,18 +18,105 @@ let selectedPainting = '';
 dialogImageElement.alt = '';
 dialogImage.appendChild(dialogImageElement);
 
-galleryCards.forEach((card) => {
-  const imageContainer = card.querySelector('.painting-image');
-  if (!imageContainer || imageContainer.classList.contains('painting-image-placeholder')) {
-    return;
-  }
+loadArtworks();
 
-  const imageElement = document.createElement('img');
-  imageElement.src = card.dataset.image;
-  imageElement.alt = card.dataset.title || 'Artwork';
-  imageContainer.style.backgroundImage = 'none';
-  imageContainer.appendChild(imageElement);
-});
+async function loadArtworks() {
+  try {
+    const response = await fetch('./artworks.json');
+    if (!response.ok) {
+      throw new Error('Artwork data could not be loaded.');
+    }
+
+    const artworks = await response.json();
+    renderGallery(artworks);
+  } catch (error) {
+    setupGalleryCards(document.querySelectorAll('.painting-card'));
+  }
+}
+
+function renderGallery(artworks) {
+  galleryGrid.innerHTML = '';
+
+  artworks.forEach((artwork) => {
+    const card = document.createElement('article');
+    card.className = 'painting-card';
+    card.role = 'button';
+    card.setAttribute('aria-haspopup', 'dialog');
+    card.setAttribute('aria-label', `View details for ${artwork.title}`);
+    card.dataset.title = artwork.title;
+    card.dataset.medium = artwork.medium;
+    card.dataset.size = artwork.size;
+    card.dataset.availability = artwork.availability;
+    card.dataset.description = artwork.description;
+    card.dataset.image = artwork.image;
+    if (artwork.containImage) {
+      card.dataset.imageFit = 'contain';
+    }
+
+    const imageClass = artwork.containImage ? 'painting-image painting-image-contained' : 'painting-image';
+    card.innerHTML = `
+      <div class="${imageClass}"></div>
+      <div class="painting-card-body">
+        <h3>${escapeHtml(artwork.title)}</h3>
+        <p>${escapeHtml(artwork.cardNote)}</p>
+        <span>${escapeHtml(artwork.availability)}</span>
+      </div>
+    `;
+    galleryGrid.appendChild(card);
+  });
+
+  const placeholder = document.createElement('article');
+  placeholder.className = 'painting-card painting-card-placeholder';
+  placeholder.setAttribute('aria-label', 'More paintings will be added soon');
+  placeholder.innerHTML = `
+    <div class="painting-image painting-image-placeholder"></div>
+    <div class="painting-card-body">
+      <h3>More works soon</h3>
+      <p>Additional paintings can be added as the collection grows.</p>
+      <span>New uploads welcome</span>
+    </div>
+  `;
+  galleryGrid.appendChild(placeholder);
+
+  setupGalleryCards(galleryGrid.querySelectorAll('.painting-card'));
+}
+
+function setupGalleryCards(cards) {
+  cards.forEach((card) => {
+    const imageContainer = card.querySelector('.painting-image');
+    if (!imageContainer || imageContainer.classList.contains('painting-image-placeholder')) {
+      return;
+    }
+
+    const imageElement = document.createElement('img');
+    imageElement.src = card.dataset.image;
+    imageElement.alt = card.dataset.title || 'Artwork';
+    imageContainer.style.backgroundImage = 'none';
+    imageContainer.appendChild(imageElement);
+  });
+
+  cards.forEach((card) => {
+    if (card.classList.contains('painting-card-placeholder')) {
+      return;
+    }
+
+    card.addEventListener('click', () => openPaintingDialog(card));
+    card.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        openPaintingDialog(card);
+      }
+    });
+    card.tabIndex = 0;
+  });
+}
+
+function escapeHtml(value) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
 
 function openPaintingDialog(card) {
   const { title, medium, size, availability, description, image } = card.dataset;
@@ -46,17 +133,6 @@ function openPaintingDialog(card) {
 
   dialog.showModal();
 }
-
-galleryCards.forEach((card) => {
-  card.addEventListener('click', () => openPaintingDialog(card));
-  card.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      openPaintingDialog(card);
-    }
-  });
-  card.tabIndex = 0;
-});
 
 dialogClose.addEventListener('click', () => dialog.close());
 
