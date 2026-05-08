@@ -106,7 +106,15 @@ jobs:
             deploy_args+=(--env production)
           fi
 
-          pnpm exec wrangler deploy "${deploy_args[@]}"
+          pnpm exec wrangler deploy "${deploy_args[@]}" | tee deploy.log
+
+          DEPLOY_URL=$(grep -Eo 'https://[^[:space:]]+\.workers\.dev' deploy.log | tail -n 1 || true)
+          if [ -z "$DEPLOY_URL" ]; then
+            echo "Could not determine deployment URL from Wrangler output."
+            exit 1
+          fi
+
+          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -115,11 +123,7 @@ jobs:
         run: |
           sleep 15
 
-          if [ "${{ github.event.inputs.environment }}" = "preview" ]; then
-            URL="https://mj-art-preview.ihab-a-wahbi.workers.dev"
-          else
-            URL="https://mj-art.ihab-a-wahbi.workers.dev"
-          fi
+          URL="$DEPLOY_URL"
 
           HEALTH_URL="$URL/api/health"
 
