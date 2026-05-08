@@ -1,32 +1,38 @@
 # MJ Art Site
 
-Simple landing-page website for MJ's artwork.
-
-Live site:
-- https://hasanhsabri.github.io/mj-art-site/
+Cloudflare Worker app for MJ's artwork, with a public gallery and password-protected admin surface.
 
 Repo:
 - https://github.com/HasanHSabri/mj-art-site
 
 Project structure:
-- `docs/` - website files served by GitHub Pages
-- `docs/artwork/` - uploaded artwork images and inventory template
+- `apps/web/` - deployable Cloudflare Worker app
+- `apps/web/public/` - public static assets
+- `apps/web/src/worker.js` - Cloudflare Worker API
+- `apps/web/wrangler.jsonc` - Cloudflare config
+- `.github/workflows/deploy-cloudflare.yml` - GitHub Actions deploy workflow
+- `docs/` - previous GitHub Pages version kept as a reference/fallback
 
 Current setup:
-- single-page static site
-- gallery with artwork detail dialog rendered from `docs/artworks.json`
-- email inquiry flow
-- placeholder space for bio, testimonials, and artwork metadata
-- browser-only admin surface at `docs/admin.html` for editing and exporting artwork data
+- public gallery reads live artwork data from `/api/artworks`
+- admin page at `/admin.html`
+- admin login uses GitHub Actions/Cloudflare secrets
+- admin edits save artwork metadata to R2 as `artworks.json`
+- admin image uploads save artwork images to R2
+- email inquiry flow remains mail-based
 
-To update later:
-- add more artwork photos to `docs/artwork/`
-- fill artwork titles, medium, size, availability, and descriptions
-- use `docs/admin.html` to edit metadata and export the updated `docs/artworks.json`
-- add MJ bio
-- add testimonials
-- add real authentication and direct publishing when the site moves beyond static GitHub Pages
+Deploy flow:
+- Pushes to `main` deploy production through GitHub Actions.
+- Manual workflow dispatch can deploy `preview` or `production`.
+- Local Wrangler deploy should only be used if `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are available in the shell.
 
-Deployment:
-- GitHub Pages is configured from `main:/docs`
-- pushing changes to `main` updates the live site
+Required GitHub secrets:
+- `CLOUDFLARE_ACCOUNT_ID`
+- `CLOUDFLARE_API_TOKEN`
+- `ADMIN_PASSWORD`
+- `ADMIN_SESSION_SECRET`
+
+Useful commands:
+- `pnpm install`
+- `pnpm --filter @mj-art/web build`
+- `pnpm --filter @mj-art/web cf:dev`

@@ -1,0 +1,23 @@
+{
+  "name": "mj-art",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "pnpm --filter @mj-art/web build",
+    "dev": "pnpm --filter @mj-art/web dev",
+    "lint": "pnpm --filter @mj-art/web lint",
+    "test": "pnpm --filter @mj-art/web test",
+    "type-check": "pnpm --filter @mj-art/web type-check",
+    "validate:release": "pnpm type-check && pnpm lint && pnpm test && pnpm build"
+  },
+  "devDependencies": {
+    "wrangler": "^4.61.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "packageManager": "pnpm@10.16.1"
+}

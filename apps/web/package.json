@@ -1,0 +1,20 @@
+{
+  "name": "@mj-art/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "node --check src/worker.js && node --check public/script.js && node --check public/admin.js && node -e \"JSON.parse(require('fs').readFileSync('public/artworks.json','utf8')); console.log('build checks passed')\"",
+    "lint": "node --check src/worker.js && node --check public/script.js && node --check public/admin.js",
+    "test": "node -e \"const fs=require('fs'); for (const f of ['public/index.html','public/admin.html','public/styles.css','public/admin.css','public/artworks.json','src/worker.js','wrangler.jsonc']) { if (!fs.existsSync(f)) throw new Error('Missing '+f); } console.log('tests passed')\"",
+    "type-check": "node --check src/worker.js && node --check public/script.js && node --check public/admin.js",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "wrangler deploy",
+    "cf:deploy:preview": "wrangler deploy --env preview",
+    "cf:deploy:production": "wrangler deploy --env production"
+  },
+  "devDependencies": {
+    "wrangler": "^4.61.0"
+  }
+}
