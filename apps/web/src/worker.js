@@ -65,7 +65,7 @@ async function getArtworks(request, env) {
 
 async function servePublicIndex(request, env) {
   const indexUrl = new URL('/index.html', request.url);
-  const asset = await env.ASSETS.fetch(new Request(indexUrl, request));
+  const asset = await env.ASSETS.fetch(indexUrl);
   const html = await asset.text();
   const artworks = await getArtworks(request, env);
   const galleryHtml = renderArtworkCards(artworks);
