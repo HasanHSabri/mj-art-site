@@ -110,8 +110,11 @@ jobs:
 
           DEPLOY_URL=$(grep -Eo 'https://[^[:space:]]+\.workers\.dev' deploy.log | tail -n 1 || true)
           if [ -z "$DEPLOY_URL" ]; then
-            echo "Could not determine deployment URL from Wrangler output."
-            exit 1
+            if [ "${{ github.event.inputs.environment }}" = "preview" ]; then
+              DEPLOY_URL="https://mj-art-preview.drhasansabri.workers.dev"
+            else
+              DEPLOY_URL="https://mj-art.drhasansabri.workers.dev"
+            fi
           fi
 
           echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"

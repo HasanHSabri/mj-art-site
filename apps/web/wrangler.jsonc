@@ -17,7 +17,7 @@
   },
 
   "vars": {
-    "NEXT_PUBLIC_APP_URL": "https://mj-art.workers.dev"
+    "NEXT_PUBLIC_APP_URL": "https://mj-art.drhasansabri.workers.dev"
   },
 
   "r2_buckets": [
@@ -32,7 +32,7 @@
       "name": "mj-art",
       "workers_dev": true,
       "vars": {
-        "NEXT_PUBLIC_APP_URL": "https://mj-art.workers.dev"
+        "NEXT_PUBLIC_APP_URL": "https://mj-art.drhasansabri.workers.dev"
       },
       "r2_buckets": [
         {
@@ -44,7 +44,7 @@
     "preview": {
       "name": "mj-art-preview",
       "vars": {
-        "NEXT_PUBLIC_APP_URL": "https://mj-art-preview.workers.dev"
+        "NEXT_PUBLIC_APP_URL": "https://mj-art-preview.drhasansabri.workers.dev"
       },
       "r2_buckets": [
         {
