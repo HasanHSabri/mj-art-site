@@ -95,6 +95,25 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: Configure admin secrets
+        working-directory: apps/web
+        run: |
+          deploy_args=()
+
+          if [ "${{ github.event.inputs.environment }}" = "preview" ]; then
+            deploy_args+=(--env preview)
+          else
+            deploy_args+=(--env production)
+          fi
+
+          printf '%s' "$ADMIN_PASSWORD" | pnpm exec wrangler secret put ADMIN_PASSWORD "${deploy_args[@]}"
+          printf '%s' "$ADMIN_SESSION_SECRET" | pnpm exec wrangler secret put ADMIN_SESSION_SECRET "${deploy_args[@]}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          ADMIN_SESSION_SECRET: ${{ secrets.ADMIN_SESSION_SECRET }}
+
       - name: Deploy to Cloudflare Workers
         working-directory: apps/web
         run: |
