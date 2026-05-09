@@ -60,6 +60,7 @@ form.addEventListener('submit', async (event) => {
   event.preventDefault();
 
   const artwork = readArtworkFromForm();
+  const previousArtworks = [...artworks];
   const existingIndex = artworks.findIndex((item) => item.id === artwork.id);
 
   if (existingIndex >= 0) {
@@ -68,7 +69,13 @@ form.addEventListener('submit', async (event) => {
     artworks.push(artwork);
   }
 
-  await saveArtworks();
+  const saved = await saveArtworks(artwork);
+  if (!saved) {
+    artworks = previousArtworks;
+    renderArtworkList();
+    return;
+  }
+
   renderArtworkList();
   writeArtworkToForm(artwork);
 });
@@ -91,7 +98,7 @@ imageUpload.addEventListener('change', async () => {
 
   fields.image.value = body.image;
   updatePreview();
-  uploadStatus.textContent = 'Image uploaded and selected.';
+  uploadStatus.textContent = 'Image uploaded and selected. Fill in the details, then click Save to public gallery to publish.';
 });
 
 document.getElementById('new-artwork').addEventListener('click', () => {
@@ -129,7 +136,7 @@ async function loadArtworks() {
   renderArtworkList();
 }
 
-async function saveArtworks() {
+async function saveArtworks(savedArtwork) {
   saveStatus.textContent = 'Saving to public gallery...';
   const response = await fetch('/api/admin/artworks', {
     method: 'PUT',
@@ -140,11 +147,32 @@ async function saveArtworks() {
 
   if (!response.ok) {
     saveStatus.textContent = body.error || 'Save failed.';
-    return;
+    return false;
   }
 
   artworks = body.artworks;
+  if (!savedArtwork) {
+    saveStatus.textContent = 'Saved. The public gallery is updated.';
+    return true;
+  }
+
+  const isPublic = await verifyPublicArtwork(savedArtwork.id);
+
+  if (!isPublic) {
+    saveStatus.textContent = 'Saved, but the public gallery did not confirm the update yet. Refresh the public page in a moment.';
+    return true;
+  }
+
   saveStatus.textContent = 'Saved. The public gallery is updated.';
+  return true;
+}
+
+async function verifyPublicArtwork(artworkId) {
+  const response = await fetch(`/api/artworks?published=${Date.now()}`, { cache: 'no-store' });
+  if (!response.ok) return false;
+
+  const publicArtworks = await response.json().catch(() => []);
+  return publicArtworks.some((artwork) => artwork.id === artworkId);
 }
 
 function readArtworkFromForm() {
