@@ -22,7 +22,7 @@ loadArtworks();
 
 async function loadArtworks() {
   try {
-    const response = await fetch('/api/artworks');
+    const response = await fetch(`/api/artworks?published=${Date.now()}`, { cache: 'no-store' });
     if (!response.ok) {
       throw new Error('Artwork data could not be loaded.');
     }

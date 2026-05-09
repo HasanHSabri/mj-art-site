@@ -203,7 +203,10 @@ function getCookie(request, name) {
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json' }
+    headers: {
+      'cache-control': 'no-store',
+      'content-type': 'application/json'
+    }
   });
 }
 
