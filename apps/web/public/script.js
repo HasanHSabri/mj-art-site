@@ -37,7 +37,7 @@ async function loadArtworks() {
 function renderGallery(artworks) {
   galleryGrid.innerHTML = '';
 
-  artworks.forEach((artwork) => {
+  [...artworks].reverse().forEach((artwork) => {
     const card = document.createElement('article');
     card.className = 'painting-card';
     card.role = 'button';
@@ -82,6 +82,7 @@ function setupGalleryCards(cards) {
   cards.forEach((card) => {
     const imageContainer = card.querySelector('.painting-image');
     if (!imageContainer || imageContainer.classList.contains('painting-image-placeholder')) return;
+    if (imageContainer.querySelector('img')) return;
 
     const imageElement = document.createElement('img');
     imageElement.src = card.dataset.image;

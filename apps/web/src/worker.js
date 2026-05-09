@@ -14,6 +14,10 @@ export default {
       return jsonResponse(await getArtworks(request, env));
     }
 
+    if ((url.pathname === '/' || url.pathname === '/index.html') && request.method === 'GET') {
+      return servePublicIndex(request, env);
+    }
+
     if (url.pathname === '/api/admin/login' && request.method === 'POST') {
       return login(request, env);
     }
@@ -57,6 +61,51 @@ async function getArtworks(request, env) {
   const fallbackUrl = new URL('/artworks.json', request.url);
   const fallback = await env.ASSETS.fetch(new Request(fallbackUrl, request));
   return fallback.json();
+}
+
+async function servePublicIndex(request, env) {
+  const indexUrl = new URL('/index.html', request.url);
+  const asset = await env.ASSETS.fetch(new Request(indexUrl, request));
+  const html = await asset.text();
+  const artworks = await getArtworks(request, env);
+  const galleryHtml = renderArtworkCards(artworks);
+  const rendered = html.replace(
+    /<!-- artwork-gallery:start -->[\s\S]*<!-- artwork-gallery:end -->/,
+    `<!-- artwork-gallery:start -->\n${galleryHtml}\n          <!-- artwork-gallery:end -->`
+  );
+
+  return new Response(rendered, {
+    headers: {
+      'cache-control': 'no-store',
+      'content-type': 'text/html; charset=UTF-8'
+    }
+  });
+}
+
+function renderArtworkCards(artworks) {
+  const cards = [...artworks].reverse().map((artwork) => {
+    const imageClass = artwork.containImage ? 'painting-image painting-image-contained' : 'painting-image';
+
+    return `          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for ${escapeAttribute(artwork.title)}" data-title="${escapeAttribute(artwork.title)}" data-medium="${escapeAttribute(artwork.medium)}" data-size="${escapeAttribute(artwork.size)}" data-availability="${escapeAttribute(artwork.availability)}" data-description="${escapeAttribute(artwork.description)}" data-image="${escapeAttribute(artwork.image)}">
+            <div class="${imageClass}"><img src="${escapeAttribute(artwork.image)}" alt="${escapeAttribute(artwork.title)}"></div>
+            <div class="painting-card-body">
+              <h3>${escapeHtml(artwork.title)}</h3>
+              <p>${escapeHtml(artwork.cardNote)}</p>
+              <span>${escapeHtml(artwork.availability)}</span>
+            </div>
+          </article>`;
+  });
+
+  cards.push(`          <article class="painting-card painting-card-placeholder" aria-label="More paintings will be added soon">
+            <div class="painting-image painting-image-placeholder"></div>
+            <div class="painting-card-body">
+              <h3>More works soon</h3>
+              <p>Additional paintings can be added as the collection grows.</p>
+              <span>New uploads welcome</span>
+            </div>
+          </article>`);
+
+  return cards.join('\n\n');
 }
 
 async function saveArtworks(request, env) {
@@ -208,6 +257,14 @@ function jsonResponse(body, status = 200) {
       'content-type': 'application/json'
     }
   });
+}
+
+function escapeHtml(value) {
+  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replaceAll('"', '&quot;');
 }
 
 function slugify(value) {
