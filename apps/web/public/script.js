@@ -69,8 +69,7 @@ function renderGallery(artworks) {
     <div class="painting-image painting-image-placeholder"></div>
     <div class="painting-card-body">
       <h3>More works soon</h3>
-      <p>Additional paintings can be added as the collection grows.</p>
-      <span>New uploads welcome</span>
+      <p>Additional paintings will be added as the collection grows.</p>
     </div>
   `;
   galleryGrid.appendChild(placeholder);
