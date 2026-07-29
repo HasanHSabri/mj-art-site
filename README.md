@@ -11,7 +11,7 @@ Project structure:
 - `apps/web/src/worker.js` - Cloudflare Worker API
 - `apps/web/wrangler.jsonc` - Cloudflare config
 - `.github/workflows/deploy-cloudflare.yml` - GitHub Actions deploy workflow
-- `docs/` - previous GitHub Pages version kept as a reference/fallback
+- `archive/` - inactive, non-production material (policy & recovery guide: `archive/README.md`); the previous GitHub Pages site now lives at `archive/retired/legacy-github-pages/`
 
 Current setup:
 - public gallery reads live artwork data from `/api/artworks`

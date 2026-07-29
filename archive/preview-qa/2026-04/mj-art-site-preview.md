@@ -1,0 +1,25 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - navigation [ref=e4]:
+      - link "MJ" [ref=e5] [cursor=pointer]:
+        - /url: "#top"
+      - generic [ref=e6]
+    - generic [ref=e10]:
+      - generic [ref=e11]
+      - generic [ref=e28]
+  - main [ref=e35]:
+    - generic [ref=e36]:
+      - article [ref=e37]
+      - article [ref=e41]
+    - generic [ref=e48]:
+      - generic [ref=e49]
+      - generic [ref=e54]
+    - generic [ref=e173]:
+      - generic [ref=e174]
+      - generic [ref=e177]
+    - generic [ref=e186]:
+      - generic [ref=e188]
+      - generic [ref=e191]
+    - generic [ref=e195]:
+      - generic [ref=e196]
+      - generic [ref=e201]
