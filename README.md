@@ -1,5 +1,9 @@
 # MJ Art Site
 
+MJ-ART deploys exclusively through GitHub Actions. Cloudflare credentials are GitHub Actions secrets and are not expected in the local shell. Read docs/OPERATIONS.md before proposing deployment, Cloudflare, Wrangler, or R2 work.
+
+See [docs/OPERATIONS.md](docs/OPERATIONS.md) for the full operations, deployment, and R2 backup policy.
+
 Cloudflare Worker app for MJ's artwork, with a public gallery and password-protected admin surface.
 
 Repo:
@@ -24,7 +28,7 @@ Current setup:
 Deploy flow:
 - Pushes to `main` deploy production through GitHub Actions.
 - Manual workflow dispatch can deploy `preview` or `production`.
-- Local Wrangler deploy should only be used if `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are available in the shell.
+- Local deploy is prohibited. The `wrangler deploy` / `cf:deploy*` scripts in `apps/web` are CI implementation details used by the GitHub Actions workflow and must not be run from a local terminal. See [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 Required GitHub secrets:
 - `CLOUDFLARE_ACCOUNT_ID`

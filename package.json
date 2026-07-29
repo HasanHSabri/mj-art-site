@@ -10,7 +10,8 @@
     "dev": "pnpm --filter @mj-art/web dev",
     "lint": "pnpm --filter @mj-art/web lint",
     "test": "pnpm --filter @mj-art/web test",
-    "type-check": "pnpm --filter @mj-art/web type-check",
+    "check:operations": "node scripts/check-operations-rules.mjs && node scripts/r2-readonly-backup.mjs --self-test",
+    "type-check": "pnpm check:operations && pnpm --filter @mj-art/web type-check",
     "validate:release": "pnpm type-check && pnpm lint && pnpm test && pnpm build"
   },
   "devDependencies": {
