@@ -8,7 +8,7 @@ on:
       - main
     paths-ignore:
       - '*.md'
-      - 'archive/**'
+      - 'docs/**'
       - '.opencode/**'
       - 'thoughts/**'
   pull_request:
@@ -95,25 +95,6 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
-      - name: Configure admin secrets
-        working-directory: apps/web
-        run: |
-          deploy_args=()
-
-          if [ "${{ github.event.inputs.environment }}" = "preview" ]; then
-            deploy_args+=(--env preview)
-          else
-            deploy_args+=(--env production)
-          fi
-
-          printf '%s' "$ADMIN_PASSWORD" | pnpm exec wrangler secret put ADMIN_PASSWORD "${deploy_args[@]}"
-          printf '%s' "$ADMIN_SESSION_SECRET" | pnpm exec wrangler secret put ADMIN_SESSION_SECRET "${deploy_args[@]}"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
-          ADMIN_SESSION_SECRET: ${{ secrets.ADMIN_SESSION_SECRET }}
-
       - name: Deploy to Cloudflare Workers
         working-directory: apps/web
         run: |
@@ -125,18 +106,7 @@ jobs:
             deploy_args+=(--env production)
           fi
 
-          pnpm exec wrangler deploy "${deploy_args[@]}" | tee deploy.log
-
-          DEPLOY_URL=$(grep -Eo 'https://[^[:space:]]+\.workers\.dev' deploy.log | tail -n 1 || true)
-          if [ -z "$DEPLOY_URL" ]; then
-            if [ "${{ github.event.inputs.environment }}" = "preview" ]; then
-              DEPLOY_URL="https://mj-art-preview.drhasansabri.workers.dev"
-            else
-              DEPLOY_URL="https://mj-art.drhasansabri.workers.dev"
-            fi
-          fi
-
-          echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"
+          pnpm exec wrangler deploy "${deploy_args[@]}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -145,7 +115,11 @@ jobs:
         run: |
           sleep 15
 
-          URL="$DEPLOY_URL"
+          if [ "${{ github.event.inputs.environment }}" = "preview" ]; then
+            URL="https://mj-art-preview.ihab-a-wahbi.workers.dev"
+          else
+            URL="https://mj-art.ihab-a-wahbi.workers.dev"
+          fi
 
           HEALTH_URL="$URL/api/health"
 

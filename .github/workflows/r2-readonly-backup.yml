@@ -1,0 +1,141 @@
+# R2 read-only inventory and backup for MJ-ART.
+#
+# This workflow ONLY reads from Cloudflare R2. It never writes, never modifies
+# secrets, and never references the write-capable CLOUDFLARE_API_TOKEN. It is
+# the canonical route for R2 inventory (default) and explicit backups.
+#
+# Read docs/OPERATIONS.md before changing anything here.
+
+name: R2 Read-Only Backup
+
+on:
+  workflow_dispatch:
+    inputs:
+      download_backup:
+        description: 'Backup mode: all object bodies are downloaded only when this is enabled. Default (false) is inventory mode, which downloads only artworks.json for reference analysis.'
+        required: true
+        type: boolean
+        default: false
+      confirm_read_only_scope:
+        description: 'Required confirmation that this run is strictly read-only. The run fails closed unless this is enabled.'
+        required: true
+        type: boolean
+        default: false
+      max_backup_bytes:
+        description: 'Optional byte budget enforced before any body download in backup mode. Conservative default.'
+        required: false
+        type: string
+        default: '5368709120'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: r2-readonly-backup-recovery
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  r2-readonly:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Fail closed unless read-only scope is confirmed
+        if: always()
+        env:
+          CONFIRM_INPUT: ${{ inputs.confirm_read_only_scope }}
+          TOKEN_CONFIRMED_VAR: ${{ vars.CLOUDFLARE_R2_READ_TOKEN_CONFIRMED }}
+          R2_READ_TOKEN: ${{ secrets.CLOUDFLARE_R2_READ_TOKEN }}
+          ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          # Always-running prerequisite gate. Values are NEVER echoed; only
+          # sanitized presence/shape booleans are reported. A run requires ALL of:
+          #   1. dispatch input confirm_read_only_scope == true
+          #   2. repo variable CLOUDFLARE_R2_READ_TOKEN_CONFIRMED == 'true'
+          #      (set this ONLY after a maintainer verifies, out of band, that the
+          #      token has the Workers R2 Storage Read scope and nothing broader)
+          #   3. secrets CLOUDFLARE_R2_READ_TOKEN and CLOUDFLARE_ACCOUNT_ID present
+          if [ "${CONFIRM_INPUT}" != "true" ]; then
+            echo "fail closed: dispatch input confirm_read_only_scope must be true"
+            exit 1
+          fi
+          if [ "${TOKEN_CONFIRMED_VAR}" != "true" ]; then
+            echo "fail closed: repository variable CLOUDFLARE_R2_READ_TOKEN_CONFIRMED must be 'true'"
+            echo "(maintainer out-of-band read-scope attestation is missing)"
+            exit 1
+          fi
+          if [ -z "${R2_READ_TOKEN}" ]; then
+            echo "fail closed: secret CLOUDFLARE_R2_READ_TOKEN is empty or missing"
+            exit 1
+          fi
+          if [ -z "${ACCOUNT_ID}" ]; then
+            echo "fail closed: secret CLOUDFLARE_ACCOUNT_ID is empty or missing"
+            exit 1
+          fi
+          echo "read-only scope confirmed (token value not shown)"
+          echo "Never test read-only safety by performing a write."
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Run read-only inventory and backup script
+        env:
+          CLOUDFLARE_R2_READ_TOKEN: ${{ secrets.CLOUDFLARE_R2_READ_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_BACKUP_MODE: ${{ inputs.download_backup == true && 'backup' || 'inventory' }}
+          R2_READ_ONLY_CONFIRMED: ${{ inputs.confirm_read_only_scope == true && 'I-CONFIRM-READ-ONLY-SCOPE' || '' }}
+          R2_BACKUP_OUTPUT_DIR: ${{ runner.temp }}/r2-output
+          R2_MAX_BACKUP_BYTES: ${{ inputs.max_backup_bytes }}
+          GIT_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node scripts/r2-readonly-backup.mjs
+
+      - name: Package artifact
+        if: success()
+        run: |
+          set -euo pipefail
+          STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+          SRC="${RUNNER_TEMP}/r2-output"
+          if [ ! -d "$SRC" ]; then echo "output directory missing"; exit 1; fi
+          if [ -z "$(ls -A "$SRC")" ]; then echo "output directory is empty"; exit 1; fi
+          # Guard against any credential-bearing file slipping into the archive.
+          if find "$SRC" -type f \( -iname '*token*' -o -iname '*credential*' -o -iname '*secret*' -o -iname '*.env' -o -iname '.netrc' \) -print | grep .; then
+            echo "a potential credential file was found in the output; refusing to package"
+            exit 1
+          fi
+          NAME="r2-readonly-backup-${STAMP}"
+          ARCHIVE="${RUNNER_TEMP}/${NAME}.tar.gz"
+          tar -C "$SRC" -czf "$ARCHIVE" .
+          (cd "${RUNNER_TEMP}" && sha256sum "${NAME}.tar.gz" > "${ARCHIVE}.sha256")
+          {
+            echo "ARCHIVE_PATH=${ARCHIVE}"
+            echo "ARCHIVE_SHA=${ARCHIVE}.sha256"
+            echo "ARCHIVE_NAME=${NAME}"
+          } >> "$GITHUB_ENV"
+          echo "--- sanitized summary ---"
+          cat "$SRC/SUMMARY.md" || true
+
+      - name: Upload artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE_NAME }}
+          path: |
+            ${{ env.ARCHIVE_PATH }}
+            ${{ env.ARCHIVE_SHA }}
+          retention-days: 30
+          if-no-files-found: error

@@ -1,0 +1,57 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "mj-art",
+  // Account ID from Cloudflare dashboard
+  "account_id": "3fd59a882149691fb0fd7b59ec90426a",
+  "main": "src/worker.js",
+  "compatibility_date": "2025-04-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+  // Static assets binding
+  "assets": {
+    "binding": "ASSETS",
+    "directory": "./public"
+  },
+  "observability": {
+    "enabled": true
+  },
+
+  "vars": {
+    "NEXT_PUBLIC_APP_URL": "https://mj-art.workers.dev"
+  },
+
+  "r2_buckets": [
+    {
+      "binding": "ARTWORK_IMAGES",
+      "bucket_name": "mj-art-images"
+    }
+  ],
+
+  "env": {
+    "production": {
+      "name": "mj-art",
+      "workers_dev": true,
+      "vars": {
+        "NEXT_PUBLIC_APP_URL": "https://mj-art.ihab-a-wahbi.workers.dev"
+      },
+      "r2_buckets": [
+        {
+          "binding": "ARTWORK_IMAGES",
+          "bucket_name": "mj-art-images"
+        }
+      ]
+    },
+    "preview": {
+      "name": "mj-art-preview",
+      "vars": {
+        "NEXT_PUBLIC_APP_URL": "https://mj-art-preview.ihab-a-wahbi.workers.dev"
+      },
+      "r2_buckets": [
+        {
+          "binding": "ARTWORK_IMAGES",
+          "bucket_name": "mj-art-images-preview"
+        }
+      ]
+    }
+  }
+}

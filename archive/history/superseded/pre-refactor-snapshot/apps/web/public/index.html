@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MJ Art</title>
+  <meta
+    name="description"
+    content="A warm and elegant art landing page with a gallery, artist story, testimonials, and a simple painting inquiry flow."
+  >
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%239a5c4b'/%3E%3Ccircle cx='24' cy='24' r='10' fill='%23f7d4b1'/%3E%3Cpath d='M20 44c8-10 18-14 24-10 2 1 4 4 4 8H20Z' fill='%23fff4e8'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero">
+      <nav class="topbar">
+        <a class="brand" href="#top">MJ</a>
+        <div class="topbar-links">
+          <a href="#gallery">Gallery</a>
+          <a href="#story">Story</a>
+          <a href="#contact">Contact</a>
+        </div>
+      </nav>
+
+      <section class="hero-content" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow">Original paintings for homes, gifts, and collectors</p>
+          <h1>MJ's paintings, gathered into a simple and personal online gallery.</h1>
+          <p class="hero-text">
+            A warm first home for MJ's art: browse recent paintings, open each piece for a closer look,
+            and send a direct inquiry if something speaks to you.
+          </p>
+          <div class="hero-tags" aria-label="Site highlights">
+            <span>Original works</span>
+            <span>Direct inquiries</span>
+            <span>More pieces coming soon</span>
+          </div>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#gallery">Browse the collection</a>
+            <a class="button button-secondary" href="#contact">Ask about a painting</a>
+          </div>
+        </div>
+
+        <div class="hero-stack">
+          <div class="hero-card hero-preview">
+            <div class="hero-preview-image preview-large" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.17%20PM.jpeg');"></div>
+            <div class="hero-preview-column">
+              <div class="hero-preview-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(3).jpeg');"></div>
+              <div class="hero-preview-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM.jpeg');"></div>
+            </div>
+          </div>
+
+          <div class="hero-card hero-note">
+            <p class="hero-card-label">Current setup</p>
+            <ul>
+              <li>Single-page site</li>
+              <li>Real uploaded artwork in the gallery</li>
+              <li>Email-based inquiry flow</li>
+              <li>Space ready for bio and testimonials</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </header>
+
+    <main>
+      <section class="section intro-grid">
+        <article class="intro-panel accent-panel">
+          <p class="section-label">Why this site works</p>
+            <h2>Simple enough to launch now, personal enough to grow with her collection.</h2>
+          <p>
+            Instead of building a full ecommerce system right away, this version keeps the focus on
+            the paintings and makes it easy for interested visitors to reach out.
+          </p>
+        </article>
+
+        <article class="intro-panel stats-panel">
+          <div>
+            <span class="stat-value">1</span>
+            <span class="stat-label">single landing page</span>
+          </div>
+          <div>
+            <span class="stat-value">0</span>
+            <span class="stat-label">payment complexity for now</span>
+          </div>
+          <div>
+            <span class="stat-value">100%</span>
+            <span class="stat-label">art-first presentation</span>
+          </div>
+        </article>
+      </section>
+
+      <section class="section" id="gallery">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">Gallery</p>
+            <h2>Available work</h2>
+          </div>
+          <p class="section-note">These are the first uploaded pieces. Titles, sizes, medium, availability, and descriptions can all be filled in later.</p>
+        </div>
+
+        <div class="gallery-grid" id="gallery-grid">
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 1" data-title="Painting 1" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.17%20PM.jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.17%20PM.jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 1</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 2" data-title="Painting 2" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.17%20PM%20(1).jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.17%20PM%20(1).jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 2</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 3" data-title="Painting 3" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.20%20PM.jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.20%20PM.jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 3</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 4" data-title="Painting 4" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM.jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM.jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 4</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Spirit beneath the Ashes" data-title="Spirit beneath the Ashes" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="For a long time, I couldn’t connect with this piece. It felt distant, almost out of reach. But when I finally did, I saw something I hadn’t noticed before, the reflection of the battle I’ve been living with for six years, fighting a chronic illness every single day. And in that moment, this painting became more than colors on canvas, it became a mirror. I could see her: the warrior woman within me, standing strong despite everything. &#34;I don’t look like everything I’ve walked through. I’ve fought battle after battle and I’m still standing. I’ve cried more tears than I can count and yet my smile hasn’t faded. I’ve survived things meant to break me and I’m still breathing. I’m a warrior, not because of my own strength, but because of Him living in me. Every fight, every scar, every victory belongs to the Lord.&#34;" data-image="./artwork/5.jpg">
+            <div class="painting-image" style="background-image: url('./artwork/5.jpg');"></div>
+            <div class="painting-card-body">
+              <h3>Spirit beneath the Ashes</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 6" data-title="Painting 6" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(2).jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(2).jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 6</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 7" data-title="Painting 7" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(3).jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(3).jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 7</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 8" data-title="Painting 8" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM.jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM.jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 8</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 9" data-title="Painting 9" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM%20(1).jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM%20(1).jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 9</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Painting 10" data-title="Painting 10" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="Artwork details to be added later." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM%20(2).jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM%20(2).jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Painting 10</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Distant Tide" data-title="Distant Tide" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="This piece captures the feeling of the ocean not as a place, but as an emotion deep, vast, and out of reach. Dark, moody tones hold the canvas like still water at dusk, while currents of gold and green drift through on one side, searching for light. On the other, a surge of violet rises with raw intensity, textured and restless, like emotion pushing to the surface. The movement throughout feels like waves beneath the surface unsettled, powerful, and alive, expressing a quiet tension between longing and release, as if the ocean itself is being felt from afar rather than touched." data-image="./artwork/WhatsApp%20Image%202026-03-30%20at%206.48.50%20PM.jpeg">
+            <div class="painting-image" style="background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%206.48.50%20PM.jpeg');"></div>
+            <div class="painting-card-body">
+              <h3>Distant Tide</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Veins of Gold in Violet Chaos" data-title="Veins of Gold in Violet Chaos" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="This piece feels like a storm that refuses to dim, an emotional landscape where deep violets swirl and collide, carrying both weight and movement. The richness of purple evokes introspection, depth, and a kind of quiet resilience, while the bursts of gold cut through like light breaking into darkness. Rather than overpowering, the gold feels earned, like moments of clarity, strength, or hope emerging from within the turbulence. There is a beautiful tension here between control and surrender. The fluid motion suggests letting go, allowing the paint to find its own path, while the layered textures and splatters hint at complexity beneath the surface, thoughts, feelings, and experiences that do not sit still. The white flecks almost read like stars or energy, giving the work a sense of expansiveness, as though it stretches beyond the canvas. Altogether, it tells a story of navigating chaos while still holding onto something luminous. It is not about escaping the storm, it is about discovering that even within it, there are veins of something powerful, radiant, and unbreakable." data-image="./artwork/unnamed.jpg">
+            <div class="painting-image" style="background-image: url('./artwork/unnamed.jpg');"></div>
+            <div class="painting-card-body">
+              <h3>Veins of Gold in Violet Chaos</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Ignition of the Soul" data-title="Ignition of the Soul" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="This piece burns with an undeniable intensity, an eruption of fiery passion that refuses to be contained. The sweeping forms feel like flames in motion, petals or embers rising and folding into one another, alive with energy and purpose. Deep reds and molten oranges dominate the canvas, creating a heat that is both consuming and transformative, while flashes of gold cut through like sparks, moments of brilliance born from the blaze. There is no stillness here. Every movement feels charged, as though the painting is driven by something raw and deeply felt. It speaks to a passion that is not quiet or controlled, but fierce, instinctive, and unapologetic. The layers build upon one another like waves of emotion, intensity, desire, strength, all colliding and expanding outward. Rather than destruction, the fire here represents becoming. It is the kind of passion that reshapes, that demands to be seen, that refuses to dim. This painting captures that exact moment where feeling turns into force, where something inside ignites and begins to glow with unstoppable power." data-image="./artwork/1.jpg">
+            <div class="painting-image" style="background-image: url('./artwork/1.jpg');"></div>
+            <div class="painting-card-body">
+              <h3>Ignition of the Soul</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Falling Into You" data-title="Falling Into You" data-medium="To be added" data-size="To be added" data-availability="To be added" data-image-fit="contain" data-description="This piece feels like surrender in its most beautiful and vulnerable form, an unraveling of self in the presence of something deeply consuming. The soft yet striking palette of pinks, mauves, and deep purples creates a dreamlike atmosphere, where emotion flows freely and boundaries begin to dissolve. There is a sense of weightlessness, as though the figure is drifting between control and release, caught in a moment that is both intimate and overwhelming. The intertwining forms and delicate linework suggest connection, hands reaching, holding, perhaps even losing grip. It carries the tension of closeness: the desire to be known fully, paired with the quiet fear of what that exposure brings. The composition draws the eye inward, pulling you into a space where passion and vulnerability exist side by side. This is not just about falling, it is about choosing to fall. To let go, to feel deeply, to be consumed by emotion without resistance. It speaks to the kind of connection that shifts you, softens you, and changes the way you exist within yourself." data-image="./artwork/2.jpg">
+            <div class="painting-image painting-image-contained" style="background-image: url('./artwork/2.jpg');"></div>
+            <div class="painting-card-body">
+              <h3>Falling Into You</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Suffering and Transcendence" data-title="Suffering and Transcendence" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="This piece feels like a moment suspended between suffering and transcendence. At its center, the face of Jesus Christ emerges, not just as a figure, but as a presence. The features are marked by the weight of crucifixion: pain etched into the brow, heaviness in the eyes, a quiet surrender in the mouth. There is a human fragility here, something deeply tangible, skin, strain, exhaustion, yet it is held with a stillness that feels almost sacred. The orange-red background burns like a living force. It evokes fire, blood, and the raw intensity of sacrifice. This is not a passive backdrop, it feels like emotion itself, like the atmosphere of anguish, love, and transformation all at once. The warmth of the tones carries both violence and divinity, suggesting that suffering and redemption are intertwined rather than separate. Spiritually, the painting speaks of endurance, the kind that does not resist pain but moves through it. There is a sense that this face is not only looking outward, but inward, as if holding the burden of humanity while also offering a quiet, unwavering compassion. Tangibly, the texture of the paint likely moves in unpredictable directions, thick in places, almost restless, mirroring the chaos of the moment. Yet the face anchors it all, becoming a focal point of calm within intensity. It is as if the physical act of painting itself became a form of release, each stroke carrying emotion from the artist into the canvas. Overall, the piece feels like fire meeting stillness, pain meeting purpose. It does not just depict crucifixion; it embodies the emotional and spiritual weight of it, inviting the viewer to sit inside that tension rather than look away from it." data-image="./artwork/3.jpg">
+            <div class="painting-image" style="background-image: url('./artwork/3.jpg');"></div>
+            <div class="painting-card-body">
+              <h3>Suffering and Transcendence</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for Where Fire Meets Flesh" data-title="Where Fire Meets Flesh" data-medium="To be added" data-size="To be added" data-availability="To be added" data-description="This piece does not sit quietly, it burns. Every stroke feels like it has been pulled straight from the artist's chest, raw and unfiltered. There is a tension here, a push and pull between control and surrender, where the paint seems to move with a life of its own. The heat in the tones speaks of something deeper than colour, it is emotion at its most exposed. Passion, struggle, longing, all colliding in a single moment. You can feel the artist not just painting, but releasing, letting something internal rise to the surface, unapologetically. There is a human quality embedded in the work, something almost tangible. It feels like skin, like breath, like presence. The textures carry movement, like a story unfolding in real time, one that has not been polished or softened, but left honest. This is not just a visual experience. It is a confrontation. A moment where emotion refuses to stay hidden and instead, demands to be seen." data-image="./artwork/4.jpg">
+            <div class="painting-image" style="background-image: url('./artwork/4.jpg');"></div>
+            <div class="painting-card-body">
+              <h3>Where Fire Meets Flesh</h3>
+              <p>Details to be added</p>
+              <span>Availability to be added</span>
+            </div>
+          </article>
+
+          <article class="painting-card painting-card-placeholder" aria-label="More paintings will be added soon">
+            <div class="painting-image painting-image-placeholder"></div>
+            <div class="painting-card-body">
+              <h3>More works soon</h3>
+              <p>Additional paintings can be added as the collection grows.</p>
+              <span>New uploads welcome</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section story-layout" id="story">
+        <div>
+          <p class="section-label">Artist story</p>
+          <h2>Painting as expression, connection, and continuity.</h2>
+        </div>
+        <div class="story-copy artist-story">
+          <blockquote class="artist-quote">
+            "I'm an ordinary girl, who is becoming extraordinary in ways I never imagined."
+          </blockquote>
+          <p>
+            On 29th May 2020, my world shifted. I was told I had Multiple Sclerosis (MS), a word heavy
+            with fear, uncertainty, and disbelief. The diagnosis hit me like a punch to the chest. Life,
+            as I knew it, suddenly felt fragile, unpredictable, and raw.
+          </p>
+          <p>
+            Every day since has been a dance with my body. Sometimes it moves like I want it to, sometimes
+            it doesn't. I've learned to listen to it, respect it, and push it gently. And in this journey,
+            I've discovered that with courage, persistence, and a tribe of supportive people, life can still
+            be full, rich, and vibrant.
+          </p>
+          <p>
+            As part of my Occupational Therapy, I was introduced to painting. At first, it was just another
+            exercise. But almost immediately, it carried me away to a space untouched by illness, where my mind
+            could breathe, and my spirit could speak. I never thought of myself as an artist, yet with each
+            brushstroke, something stirred inside me: a hidden beauty, a voice I didn't know I had.
+          </p>
+          <p>
+            The act of splashing paint, layering textures, watching colors collide became my therapy. It was
+            messy, wild, freeing, and slowly, I began to see parts of myself I didn't know existed. Strength.
+            Resilience. Wonder.
+          </p>
+          <p>
+            Each piece I create is a mirror of life itself. Some days, the canvas reflects my frustration,
+            my limitations, the weight of MS. Other days, it bursts with gratitude, joy, and the fierce beauty
+            of surviving and discovering new paths in life.
+          </p>
+          <p>
+            I want to say to everyone reading this: pick up a brush. Throw paint. Cry into the canvas. Laugh
+            into it. There is no right or wrong. Art isn't about perfection. It's about expressing the parts of
+            yourself that words can't touch, that your heart can't contain.
+          </p>
+          <p>
+            From my heart to yours, love, courage, and gratitude.
+          </p>
+        </div>
+      </section>
+
+      <section class="section testimonials-section">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">Testimonials</p>
+            <h2>Kind words from people who know her work</h2>
+          </div>
+        </div>
+
+        <div class="testimonials-grid testimonials-placeholder">
+          <blockquote>
+            "MJ's artwork are all one of a kind. They're beautiful and draw you in - I have one that reminds me of my family's beach holidays, and I have ones that help me to pray. They're also great as unique and meaningful birthday gifts!"
+            <cite>Jenny</cite>
+          </blockquote>
+          <blockquote>
+            Add a short quote from a buyer, friend, or visitor here.
+          </blockquote>
+          <blockquote>
+            Add another line here when you are ready.
+          </blockquote>
+        </div>
+      </section>
+
+      <section class="section contact-section" id="contact">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">Contact</p>
+            <h2>Ask about a painting</h2>
+          </div>
+          <p class="section-note">The form opens the visitor's email app so visitors can contact MJ directly.</p>
+        </div>
+
+        <div class="contact-grid">
+          <form class="contact-form" id="inquiry-form">
+            <label>
+              Your name
+              <input type="text" id="customer-name" name="customer-name" placeholder="Jane Smith" required>
+            </label>
+            <label>
+              Your email
+              <input type="email" id="customer-email" name="customer-email" placeholder="jane@example.com" required>
+            </label>
+            <label>
+              Painting
+              <input type="text" id="painting-name" name="painting-name" placeholder="Select from gallery or type the title" required>
+            </label>
+            <label>
+              Message
+              <textarea id="message" name="message" rows="5" placeholder="Hi, I would love to ask about this painting..." required></textarea>
+            </label>
+            <button class="button button-primary" type="submit">Create email inquiry</button>
+          </form>
+
+          <aside class="contact-card">
+            <h3>Ready now, easy to expand later</h3>
+            <p>
+              The site is already usable as a first version. These details can be added gradually without
+              changing the structure.
+            </p>
+            <ul>
+              <li>Final painting titles</li>
+              <li>Sizes, medium, and availability</li>
+              <li>Artwork descriptions</li>
+              <li>MJ's bio and real testimonials</li>
+            </ul>
+            <a class="inline-link" href="mailto:mjdonnellan73@gmail.com">mjdonnellan73@gmail.com</a>
+          </aside>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="painting-dialog" id="painting-dialog">
+    <button class="dialog-close" id="dialog-close" aria-label="Close artwork details">Close</button>
+    <div class="dialog-image" id="dialog-image"></div>
+    <div class="dialog-copy">
+      <p class="section-label">Painting details</p>
+      <h2 id="dialog-title"></h2>
+      <dl class="detail-list">
+        <div>
+          <dt>Medium</dt>
+          <dd id="dialog-medium"></dd>
+        </div>
+        <div>
+          <dt>Size</dt>
+          <dd id="dialog-size"></dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd id="dialog-availability"></dd>
+        </div>
+      </dl>
+      <p id="dialog-description"></p>
+      <button class="button button-primary" id="dialog-inquire" type="button">Inquire about this painting</button>
+    </div>
+  </dialog>
+
+  <script src="./script.js"></script>
+</body>
+</html>

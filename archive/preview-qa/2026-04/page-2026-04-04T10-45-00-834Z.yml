@@ -1,0 +1,26 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - link "Drawer Organiser" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - generic [ref=e6]: Drawer Organiser
+    - generic [ref=e89]:
+      - img [ref=e91]
+      - generic [ref=e94]:
+        - heading "Check your email" [level=1] [ref=e95]
+        - paragraph [ref=e96]: We sent a secure link to review@example.com so you can verify your account and continue into the candidate experience.
+        - paragraph [ref=e97]: Open the email on this device if possible. If you do not see it in a minute, check spam or promotions.
+      - generic [ref=e98]:
+        - button "Resend magic link" [ref=e99]:
+          - img
+          - text: Resend magic link
+        - button "Use a different email" [ref=e100]
+  - region "Notifications (F8)":
+    - list [ref=e76]:
+      - listitem [ref=e102]:
+        - generic [ref=e103]:
+          - generic [ref=e104]: Check your email!
+          - generic [ref=e105]: We sent a magic link to continue into the candidate experience.
+        - button [ref=e106]:
+          - img [ref=e107]
+  - alert [ref=e71]
+  - status [ref=e111]: Notification Check your email!We sent a magic link to continue into the candidate experience.

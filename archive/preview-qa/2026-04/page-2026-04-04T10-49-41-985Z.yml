@@ -1,0 +1,30 @@
+- generic [ref=e1]:
+  - generic [ref=e4]:
+    - link "Drawer Organiser Drawer Organiser" [ref=e5] [cursor=pointer]:
+      - /url: /
+      - img "Drawer Organiser" [ref=e7]
+      - generic [ref=e8]: Drawer Organiser
+    - generic [ref=e9]:
+      - generic [ref=e10]:
+        - img [ref=e11]
+        - text: Returning candidate sign in
+      - heading "Return to your ADC Part 2 preparation." [level=1] [ref=e20]
+      - paragraph [ref=e21]: Use your email to sign in to your candidate experience.
+    - generic [ref=e22]:
+      - generic [ref=e23]:
+        - text: Email address
+        - generic [ref=e24]:
+          - img [ref=e25]
+          - textbox "Email address" [active] [ref=e28]:
+            - /placeholder: you@example.com
+      - button "Send magic link" [disabled]:
+        - text: Send magic link
+        - img
+    - paragraph [ref=e29]: We’ll email you a secure magic link to continue.
+    - paragraph [ref=e31]:
+      - text: New to Drawer Organiser?
+      - link "Create candidate account" [ref=e32] [cursor=pointer]:
+        - /url: /register
+  - region "Notifications (F8)":
+    - list
+  - alert [ref=e33]

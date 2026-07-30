@@ -1,0 +1,66 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - generic [ref=e4]:
+      - link "Drawer Organiser" [ref=e5] [cursor=pointer]:
+        - /url: /
+        - generic [ref=e6]: Drawer Organiser
+      - link "Sign in" [ref=e7] [cursor=pointer]:
+        - /url: /login
+    - generic [ref=e9]:
+      - generic [ref=e11]:
+        - generic [ref=e12]:
+          - generic [ref=e13]: ADC Part 2 candidate community
+          - img "Drawer Organiser" [ref=e15]
+          - heading "Join a serious place to prepare for ADC Part 2." [level=1] [ref=e16]:
+            - text: Join a serious place
+            - text: to prepare for ADC Part 2.
+          - paragraph [ref=e17]: Connect with fellow candidates, discuss OSCE cases responsibly, and find study support in a focused, moderated community built for exam preparation.
+        - generic [ref=e18]:
+          - paragraph [ref=e21]: Discuss OSCE cases in a focused candidate community
+          - paragraph [ref=e24]: Find study partners and preparation support
+          - paragraph [ref=e27]: Join a moderated platform with clear exam boundaries
+        - generic [ref=e29]:
+          - img [ref=e31]
+          - generic [ref=e34]:
+            - paragraph [ref=e35]: Why candidates can trust this start
+            - generic [ref=e36]:
+              - paragraph [ref=e37]: Candidate-only public signup
+              - paragraph [ref=e38]: Moderated community standards
+              - paragraph [ref=e39]: Preparation, community, and study support
+              - paragraph [ref=e40]: Sharing exam content is not allowed
+      - generic [ref=e43]:
+        - generic [ref=e44]:
+          - paragraph [ref=e45]: Create your candidate account
+          - heading "Send your magic link." [level=2] [ref=e46]
+          - paragraph [ref=e47]: Enter your email, accept the community rules, and continue to verification and profile setup.
+        - generic [ref=e48]:
+          - generic [ref=e49]:
+            - text: Email address
+            - generic [ref=e50]:
+              - img [ref=e51]
+              - textbox "Email address" [ref=e54]:
+                - /placeholder: you@example.com
+                - text: review@example.com
+          - generic [ref=e56] [cursor=pointer]:
+            - generic [ref=e57]:
+              - checkbox "I agree to the Community Rules and understand that sharing exam content is not allowed." [checked] [active] [ref=e58]
+              - img [ref=e86]
+            - generic [ref=e60]:
+              - text: I agree to the
+              - link "Community Rules" [ref=e61]:
+                - /url: /rules
+              - text: and understand that
+              - strong [ref=e62]: sharing exam content is not allowed
+              - text: .
+          - generic [ref=e63]:
+            - button "Send magic link" [ref=e72]:
+              - generic [ref=e73]: Send magic link
+              - img
+            - paragraph [ref=e64]: We'll email you a secure link to verify your account and continue.
+            - paragraph [ref=e69]:
+              - text: Already have an account?
+              - link "Sign in" [ref=e70] [cursor=pointer]:
+                - /url: /login
+  - region "Notifications (F8)":
+    - list
+  - alert [ref=e71]

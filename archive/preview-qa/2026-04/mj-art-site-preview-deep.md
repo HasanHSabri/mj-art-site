@@ -1,0 +1,213 @@
+- generic [ref=e2]:
+  - banner [ref=e3]:
+    - navigation [ref=e4]:
+      - link "MJ" [ref=e5] [cursor=pointer]:
+        - /url: "#top"
+      - generic [ref=e6]:
+        - link "Gallery" [ref=e7] [cursor=pointer]:
+          - /url: "#gallery"
+        - link "Story" [ref=e8] [cursor=pointer]:
+          - /url: "#story"
+        - link "Contact" [ref=e9] [cursor=pointer]:
+          - /url: "#contact"
+    - generic [ref=e10]:
+      - generic [ref=e11]:
+        - paragraph [ref=e12]: Original paintings for homes, gifts, and collectors
+        - heading "MJ's paintings, gathered into a simple and personal online gallery." [level=1] [ref=e13]
+        - paragraph [ref=e14]: "A warm first home for MJ's art: browse recent paintings, open each piece for a closer look, and send a direct inquiry if something speaks to you."
+        - generic "Site highlights" [ref=e15]:
+          - generic [ref=e16]: Original works
+          - generic [ref=e17]: Direct inquiries
+          - generic [ref=e18]: More pieces coming soon
+        - generic [ref=e19]:
+          - link "Browse the collection" [ref=e20] [cursor=pointer]:
+            - /url: "#gallery"
+          - link "Ask about a painting" [ref=e21] [cursor=pointer]:
+            - /url: "#contact"
+      - generic [ref=e28]:
+        - paragraph [ref=e29]: Current setup
+        - list [ref=e30]:
+          - listitem [ref=e31]: Single-page site
+          - listitem [ref=e32]: Real uploaded artwork in the gallery
+          - listitem [ref=e33]: Email-based inquiry flow
+          - listitem [ref=e34]: Space ready for bio and testimonials
+  - main [ref=e35]:
+    - generic [ref=e36]:
+      - article [ref=e37]:
+        - paragraph [ref=e38]: Why this site works
+        - heading "Simple enough to launch now, personal enough to grow with her collection." [level=2] [ref=e39]
+        - paragraph [ref=e40]: Instead of building a full ecommerce system right away, this version keeps the focus on the paintings and makes it easy for interested visitors to reach out.
+      - article [ref=e41]:
+        - generic [ref=e42]:
+          - generic [ref=e43]: "1"
+          - text: single landing page
+        - generic [ref=e44]:
+          - generic [ref=e45]: "0"
+          - text: payment complexity for now
+        - generic [ref=e46]:
+          - generic [ref=e47]: 100%
+          - text: art-first presentation
+    - generic [ref=e48]:
+      - generic [ref=e49]:
+        - generic [ref=e50]:
+          - paragraph [ref=e51]: Gallery
+          - heading "Available work" [level=2] [ref=e52]
+        - paragraph [ref=e53]: These are the first uploaded pieces. Titles, sizes, medium, availability, and descriptions can all be filled in later.
+      - generic [ref=e54]:
+        - button "View details for Painting 1" [ref=e55] [cursor=pointer]:
+          - img "Painting 1" [ref=e57]
+          - generic [ref=e58]:
+            - heading "Painting 1" [level=3] [ref=e59]
+            - paragraph [ref=e60]: Details to be added
+            - generic [ref=e61]: Availability to be added
+        - button "View details for Painting 2" [ref=e62] [cursor=pointer]:
+          - img "Painting 2" [ref=e64]
+          - generic [ref=e65]:
+            - heading "Painting 2" [level=3] [ref=e66]
+            - paragraph [ref=e67]: Details to be added
+            - generic [ref=e68]: Availability to be added
+        - button "View details for Painting 3" [ref=e69] [cursor=pointer]:
+          - img "Painting 3" [ref=e71]
+          - generic [ref=e72]:
+            - heading "Painting 3" [level=3] [ref=e73]
+            - paragraph [ref=e74]: Details to be added
+            - generic [ref=e75]: Availability to be added
+        - button "View details for Painting 4" [ref=e76] [cursor=pointer]:
+          - img "Painting 4" [ref=e78]
+          - generic [ref=e79]:
+            - heading "Painting 4" [level=3] [ref=e80]
+            - paragraph [ref=e81]: Details to be added
+            - generic [ref=e82]: Availability to be added
+        - button "View details for Spirit beneath the Ashes" [ref=e83] [cursor=pointer]:
+          - img "Spirit beneath the Ashes" [ref=e85]
+          - generic [ref=e86]:
+            - heading "Spirit beneath the Ashes" [level=3] [ref=e87]
+            - paragraph [ref=e88]: Details to be added
+            - generic [ref=e89]: Availability to be added
+        - button "View details for Painting 6" [ref=e90] [cursor=pointer]:
+          - img "Painting 6" [ref=e92]
+          - generic [ref=e93]:
+            - heading "Painting 6" [level=3] [ref=e94]
+            - paragraph [ref=e95]: Details to be added
+            - generic [ref=e96]: Availability to be added
+        - button "View details for Painting 7" [ref=e97] [cursor=pointer]:
+          - img "Painting 7" [ref=e99]
+          - generic [ref=e100]:
+            - heading "Painting 7" [level=3] [ref=e101]
+            - paragraph [ref=e102]: Details to be added
+            - generic [ref=e103]: Availability to be added
+        - button "View details for Painting 8" [ref=e104] [cursor=pointer]:
+          - img "Painting 8" [ref=e106]
+          - generic [ref=e107]:
+            - heading "Painting 8" [level=3] [ref=e108]
+            - paragraph [ref=e109]: Details to be added
+            - generic [ref=e110]: Availability to be added
+        - button "View details for Painting 9" [ref=e111] [cursor=pointer]:
+          - img "Painting 9" [ref=e113]
+          - generic [ref=e114]:
+            - heading "Painting 9" [level=3] [ref=e115]
+            - paragraph [ref=e116]: Details to be added
+            - generic [ref=e117]: Availability to be added
+        - button "View details for Painting 10" [ref=e118] [cursor=pointer]:
+          - img "Painting 10" [ref=e120]
+          - generic [ref=e121]:
+            - heading "Painting 10" [level=3] [ref=e122]
+            - paragraph [ref=e123]: Details to be added
+            - generic [ref=e124]: Availability to be added
+        - button "View details for Distant Tide" [ref=e125] [cursor=pointer]:
+          - img "Distant Tide" [ref=e127]
+          - generic [ref=e128]:
+            - heading "Distant Tide" [level=3] [ref=e129]
+            - paragraph [ref=e130]: Details to be added
+            - generic [ref=e131]: Availability to be added
+        - button "View details for Veins of Gold in Violet Chaos" [ref=e132] [cursor=pointer]:
+          - img "Veins of Gold in Violet Chaos" [ref=e134]
+          - generic [ref=e135]:
+            - heading "Veins of Gold in Violet Chaos" [level=3] [ref=e136]
+            - paragraph [ref=e137]: Details to be added
+            - generic [ref=e138]: Availability to be added
+        - button "View details for Ignition of the Soul" [ref=e139] [cursor=pointer]:
+          - img "Ignition of the Soul" [ref=e141]
+          - generic [ref=e142]:
+            - heading "Ignition of the Soul" [level=3] [ref=e143]
+            - paragraph [ref=e144]: Details to be added
+            - generic [ref=e145]: Availability to be added
+        - button "View details for Falling Into You" [ref=e146] [cursor=pointer]:
+          - img "Falling Into You" [ref=e148]
+          - generic [ref=e149]:
+            - heading "Falling Into You" [level=3] [ref=e150]
+            - paragraph [ref=e151]: Details to be added
+            - generic [ref=e152]: Availability to be added
+        - button "View details for Suffering and Transcendence" [ref=e153] [cursor=pointer]:
+          - img "Suffering and Transcendence" [ref=e155]
+          - generic [ref=e156]:
+            - heading "Suffering and Transcendence" [level=3] [ref=e157]
+            - paragraph [ref=e158]: Details to be added
+            - generic [ref=e159]: Availability to be added
+        - button "View details for Where Fire Meets Flesh" [ref=e160] [cursor=pointer]:
+          - img "Where Fire Meets Flesh" [ref=e162]
+          - generic [ref=e163]:
+            - heading "Where Fire Meets Flesh" [level=3] [ref=e164]
+            - paragraph [ref=e165]: Details to be added
+            - generic [ref=e166]: Availability to be added
+        - article "More paintings will be added soon" [ref=e167]:
+          - generic [ref=e169]:
+            - heading "More works soon" [level=3] [ref=e170]
+            - paragraph [ref=e171]: Additional paintings can be added as the collection grows.
+            - generic [ref=e172]: New uploads welcome
+    - generic [ref=e173]:
+      - generic [ref=e174]:
+        - paragraph [ref=e175]: Artist story
+        - heading "Painting as expression, connection, and continuity." [level=2] [ref=e176]
+      - generic [ref=e177]:
+        - blockquote [ref=e178]: "\"I'm an ordinary girl, who is becoming extraordinary in ways I never imagined.\""
+        - paragraph [ref=e179]: On 29th May 2020, my world shifted. I was told I had Multiple Sclerosis (MS), a word heavy with fear, uncertainty, and disbelief. The diagnosis hit me like a punch to the chest. Life, as I knew it, suddenly felt fragile, unpredictable, and raw.
+        - paragraph [ref=e180]: Every day since has been a dance with my body. Sometimes it moves like I want it to, sometimes it doesn't. I've learned to listen to it, respect it, and push it gently. And in this journey, I've discovered that with courage, persistence, and a tribe of supportive people, life can still be full, rich, and vibrant.
+        - paragraph [ref=e181]: "As part of my Occupational Therapy, I was introduced to painting. At first, it was just another exercise. But almost immediately, it carried me away to a space untouched by illness, where my mind could breathe, and my spirit could speak. I never thought of myself as an artist, yet with each brushstroke, something stirred inside me: a hidden beauty, a voice I didn't know I had."
+        - paragraph [ref=e182]: The act of splashing paint, layering textures, watching colors collide became my therapy. It was messy, wild, freeing, and slowly, I began to see parts of myself I didn't know existed. Strength. Resilience. Wonder.
+        - paragraph [ref=e183]: Each piece I create is a mirror of life itself. Some days, the canvas reflects my frustration, my limitations, the weight of MS. Other days, it bursts with gratitude, joy, and the fierce beauty of surviving and discovering new paths in life.
+        - paragraph [ref=e184]: "I want to say to everyone reading this: pick up a brush. Throw paint. Cry into the canvas. Laugh into it. There is no right or wrong. Art isn't about perfection. It's about expressing the parts of yourself that words can't touch, that your heart can't contain."
+        - paragraph [ref=e185]: From my heart to yours, love, courage, and gratitude.
+    - generic [ref=e186]:
+      - generic [ref=e188]:
+        - paragraph [ref=e189]: Testimonials
+        - heading "Kind words from people who know her work" [level=2] [ref=e190]
+      - generic [ref=e191]:
+        - blockquote [ref=e192]: Testimonial space reserved.
+        - blockquote [ref=e193]: Add a short quote from a buyer, friend, or visitor here.
+        - blockquote [ref=e194]: Add another line here when you are ready.
+    - generic [ref=e195]:
+      - generic [ref=e196]:
+        - generic [ref=e197]:
+          - paragraph [ref=e198]: Contact
+          - heading "Ask about a painting" [level=2] [ref=e199]
+        - paragraph [ref=e200]: The form opens the visitor's email app so visitors can contact MJ directly.
+      - generic [ref=e201]:
+        - generic [ref=e202]:
+          - generic [ref=e203]:
+            - text: Your name
+            - textbox "Your name" [ref=e204]:
+              - /placeholder: Jane Smith
+          - generic [ref=e205]:
+            - text: Your email
+            - textbox "Your email" [ref=e206]:
+              - /placeholder: jane@example.com
+          - generic [ref=e207]:
+            - text: Painting
+            - textbox "Painting" [ref=e208]:
+              - /placeholder: Select from gallery or type the title
+          - generic [ref=e209]:
+            - text: Message
+            - textbox "Message" [ref=e210]:
+              - /placeholder: Hi, I would love to ask about this painting...
+          - button "Create email inquiry" [ref=e211] [cursor=pointer]
+        - complementary [ref=e212]:
+          - heading "Ready now, easy to expand later" [level=3] [ref=e213]
+          - paragraph [ref=e214]: The site is already usable as a first version. These details can be added gradually without changing the structure.
+          - list [ref=e215]:
+            - listitem [ref=e216]: Final painting titles
+            - listitem [ref=e217]: Sizes, medium, and availability
+            - listitem [ref=e218]: Artwork descriptions
+            - listitem [ref=e219]: MJ's bio and real testimonials
+          - link "mjdonnellan73@gmail.com" [ref=e220] [cursor=pointer]:
+            - /url: mailto:mjdonnellan73@gmail.com

@@ -1,7 +1,7 @@
 Put the artwork image files in this folder.
 
 Folder path:
-/workspace/projects/bmad/docs/artwork
+apps/web/public/artwork
 
 You can name the files however you want.
 

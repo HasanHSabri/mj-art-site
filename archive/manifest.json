@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "register": {
+    "name": "MJ-ART archive register",
+    "registerDate": "2026-07-29",
+    "registerDateNote": "Consolidation/register date. The exact original capture date of each collection prior to 2026-07-29 was not recorded in the existing archive documentation; 2026-07-29 is the date this register and the current archive reorganization were created.",
+    "preArchiveBaseline": {
+      "gitHead": "e44c1fd145858810ec8da75b2579bec592d286ac",
+      "gitBranch": "main",
+      "note": "Working-tree state immediately before archiving. Identifies the pre-archive commit."
+    },
+    "productionAccessed": false,
+    "productionAccessedNote": "No production, Cloudflare, R2, database, secrets, network, deploy, or external access was performed during archiving or the creation of this register."
+  },
+  "taxonomy": {
+    "classificationValues": ["permanent history", "retired", "duplicate", "deletion candidate"],
+    "reviewDatesNote": "Review dates are review/reminders only — they are NOT expiry or deletion dates. No item is ever deleted automatically or by reaching a date. Deletion always requires explicit human confirmation."
+  },
+  "deletionEvidenceSchema": {
+    "description": "Optional structure for future duplicate/deletion-candidate records. A record may only receive a DELETE recommendation from archive/review.mjs when deletionEvidence.hasDuplicateRecoverableEvidence is true, the content is checksum-valid, unreferenced, and due. No current record carries deletion approval (every current record has deletionEvidence: null). The review tool never performs or exposes deletion.",
+    "fields": {
+      "hasDuplicateRecoverableEvidence": "boolean — true ONLY when byte-identical content is independently verified to exist in a recoverable non-archive location and removal would not cause data loss.",
+      "verifiedAgainst": "string — path or identifier of the verified duplicate source.",
+      "verifiedMethod": "string — how the duplicate was verified (e.g., 'SHA-256 + byte-size match at same relative path').",
+      "verifiedDate": "string (strict YYYY-MM-DD) — date the duplicate evidence was independently verified.",
+      "evidence": "string — human-readable summary of the duplicate/recoverable evidence."
+    },
+    "note": "When deletionEvidence is null or absent, the record can never receive a DELETE recommendation regardless of classification or due status."
+  },
+  "checksumAlgorithm": {
+    "id": "tree-sha256-sorted-path-content-v1",
+    "description": "Deterministic aggregate tree checksum. For every regular file under the collection directory, sorted by POSIX relative path, emit the UTF-8 line `relpath|sha256(fileBytes)|size\\n`; the checksum is the SHA-256 hex of that concatenated byte stream. It is independent of on-disk absolute pathing and sensitive to both content and the set of relative paths.",
+    "fileHash": "sha256"
+  },
+  "records": [
+    {
+      "id": "retired-legacy-github-pages",
+      "originalPath": "docs/",
+      "provenance": "Former top-level GitHub Pages site. Moved verbatim from the repository's former docs/ tree. Byte-identical to the pre-archive git HEAD docs/ tree (26/26 files matched by path, size, and SHA-256).",
+      "currentArchivePath": "archive/retired/legacy-github-pages/",
+      "reason": "Superseded by the active Cloudflare Worker app (apps/web). The legacy static site is no longer wired into any build or deploy step; retained as a historical fallback.",
+      "archivedDate": "2026-07-29",
+      "classification": "retired",
+      "fileCount": 26,
+      "totalBytes": 12576271,
+      "treeChecksum": {
+        "algorithm": "tree-sha256-sorted-path-content-v1",
+        "sha256": "b9cbdbf0529ce7392203debaf9a12c2fac37124ed1d19f10d9dc81e72212d062"
+      },
+      "dependenciesAndReferences": "Not imported, built, deployed, or referenced by any active app code, config, or workflow. Independently verified content overlap against apps/web/public: 21 of 26 files are byte-identical (same relative path, SHA-256, and byte size) — all 17 artwork images, artworks.json, admin.css, styles.css, and artwork/inventory-template.txt. The 5 differing files (index.html, admin.html, admin.js, script.js, artwork/README.txt) have divergent content vs their apps/web counterparts. These duplicate bytes are retained because they are internal dependencies of the self-contained legacy snapshot; this does NOT make the record a deletion candidate (deletionEvidence is null).",
+      "proposedReviewDate": "2027-07-29",
+      "proposedReviewDateRationale": "Annual integrity review for retired/permanent-history material.",
+      "finalDeletionStatus": "not a deletion candidate — preserved indefinitely",
+      "deletionEvidence": null
+    },
+    {
+      "id": "history-pre-refactor-snapshot",
+      "originalPath": "not recorded",
+      "provenance": "Snapshot of the seven divergent, non-generated files from a retired older duplicate of the project (referred to in the existing archive notes as 'MJ art'). The exact filesystem path of that duplicate workspace was not recorded in the existing archive documentation; relative paths within the snapshot are preserved exactly.",
+      "currentArchivePath": "archive/history/superseded/pre-refactor-snapshot/",
+      "reason": "Superseded older revisions retained for zero content loss. These versions diverged from the canonical apps/web source (e.g., bucket names, endpoints, secret references, paths); kept as a permanent historical record.",
+      "archivedDate": "2026-07-29",
+      "classification": "permanent history",
+      "fileCount": 7,
+      "totalBytes": 57104,
+      "treeChecksum": {
+        "algorithm": "tree-sha256-sorted-path-content-v1",
+        "sha256": "47c83dcd59c6edcf06ada7606d508ee65f85c2b2866aa7df43ab68062753d016"
+      },
+      "dependenciesAndReferences": "None found in active repo paths (apps/web, .github, root configs).",
+      "proposedReviewDate": "2027-07-29",
+      "proposedReviewDateRationale": "Annual integrity review for retired/permanent-history material.",
+      "finalDeletionStatus": "not a deletion candidate — preserved indefinitely",
+      "deletionEvidence": null
+    },
+    {
+      "id": "history-preview-qa-2026-04",
+      "originalPath": "not recorded",
+      "provenance": "Early preview/QA captures of the MJ art site, consolidated here from an unrelated workspace folder (referred to in the existing archive notes as 'bmad'). The exact filesystem path of that source workspace was not recorded in the existing archive documentation.",
+      "currentArchivePath": "archive/preview-qa/2026-04/",
+      "reason": "Historical preview/QA record (human-readable preview notes plus Playwright page/console captures for April 2026). Not imported by the app; kept as a permanent historical record.",
+      "archivedDate": "2026-07-29",
+      "classification": "permanent history",
+      "fileCount": 21,
+      "totalBytes": 88866,
+      "treeChecksum": {
+        "algorithm": "tree-sha256-sorted-path-content-v1",
+        "sha256": "a1ec443e451a8c4f79d17251c7dbe7957c807ae07eb9c5cb4c4d6a0655cd7fec"
+      },
+      "dependenciesAndReferences": "None found in active repo paths (apps/web, .github, root configs).",
+      "proposedReviewDate": "2027-07-29",
+      "proposedReviewDateRationale": "Annual integrity review for retired/permanent-history material.",
+      "finalDeletionStatus": "not a deletion candidate — preserved indefinitely",
+      "deletionEvidence": null
+    }
+  ],
+  "deletionCandidatesNote": {
+    "currentCount": 0,
+    "statement": "There are currently NO deletion candidates. Unique or ambiguous material was conservatively preserved. The quarantine/deletion-candidates/ directory is intentionally empty.",
+    "defaultReviewPeriodDays": 90,
+    "defaultFutureReviewDate": "2026-10-27",
+    "defaultFutureReviewDateRationale": "For illustration only (no candidate exists): a deletion candidate archived on 2026-07-29 would default to a review date of 2026-07-29 + 90 days = 2026-10-27. This is a review reminder, NOT an expiry or deletion date; deletion always requires explicit human confirmation."
+  }
+}
