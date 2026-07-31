@@ -1,5 +1,5 @@
 # Deploy to Cloudflare Workers
-# Triggers on push to main branch or manual dispatch
+# Push/PR run checks only. Deployment is manual via workflow_dispatch only.
 name: Deploy to Cloudflare
 
 on:
@@ -18,9 +18,9 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: 'Environment to deploy to'
+        description: 'Environment to deploy to (preview by default; production requires explicit selection)'
         required: true
-        default: 'production'
+        default: 'preview'
         type: choice
         options:
           - preview
@@ -67,8 +67,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     needs: check
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
-    environment: ${{ github.event.inputs.environment || 'production' }}
+    if: github.event_name == 'workflow_dispatch'
+    environment: ${{ inputs.environment }}
 
     steps:
       - name: Checkout code
@@ -100,11 +100,18 @@ jobs:
         run: |
           deploy_args=()
 
-          if [ "${{ github.event.inputs.environment }}" = "preview" ]; then
-            deploy_args+=(--env preview)
-          else
-            deploy_args+=(--env production)
-          fi
+          case "${{ inputs.environment }}" in
+            preview)
+              deploy_args+=(--env preview)
+              ;;
+            production)
+              deploy_args+=(--env production)
+              ;;
+            *)
+              echo "Unsupported environment: ${{ inputs.environment }}" >&2
+              exit 1
+              ;;
+          esac
 
           printf '%s' "$ADMIN_PASSWORD" | pnpm exec wrangler secret put ADMIN_PASSWORD "${deploy_args[@]}"
           printf '%s' "$ADMIN_SESSION_SECRET" | pnpm exec wrangler secret put ADMIN_SESSION_SECRET "${deploy_args[@]}"
@@ -119,21 +126,35 @@ jobs:
         run: |
           deploy_args=()
 
-          if [ "${{ github.event.inputs.environment }}" = "preview" ]; then
-            deploy_args+=(--env preview)
-          else
-            deploy_args+=(--env production)
-          fi
+          case "${{ inputs.environment }}" in
+            preview)
+              deploy_args+=(--env preview)
+              ;;
+            production)
+              deploy_args+=(--env production)
+              ;;
+            *)
+              echo "Unsupported environment: ${{ inputs.environment }}" >&2
+              exit 1
+              ;;
+          esac
 
           pnpm exec wrangler deploy "${deploy_args[@]}" | tee deploy.log
 
           DEPLOY_URL=$(grep -Eo 'https://[^[:space:]]+\.workers\.dev' deploy.log | tail -n 1 || true)
           if [ -z "$DEPLOY_URL" ]; then
-            if [ "${{ github.event.inputs.environment }}" = "preview" ]; then
-              DEPLOY_URL="https://mj-art-preview.drhasansabri.workers.dev"
-            else
-              DEPLOY_URL="https://mj-art.drhasansabri.workers.dev"
-            fi
+            case "${{ inputs.environment }}" in
+              preview)
+                DEPLOY_URL="https://mj-art-preview.drhasansabri.workers.dev"
+                ;;
+              production)
+                DEPLOY_URL="https://mj-art.drhasansabri.workers.dev"
+                ;;
+              *)
+                echo "Unsupported environment: ${{ inputs.environment }}" >&2
+                exit 1
+                ;;
+            esac
           fi
 
           echo "DEPLOY_URL=$DEPLOY_URL" >> "$GITHUB_ENV"

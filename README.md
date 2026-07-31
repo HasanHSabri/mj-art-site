@@ -26,8 +26,8 @@ Current setup:
 - email inquiry flow remains mail-based
 
 Deploy flow:
-- Pushes to `main` deploy production through GitHub Actions.
-- Manual workflow dispatch can deploy `preview` or `production`.
+- Pushes to `main` and pull requests run checks only through GitHub Actions; no deployment is triggered.
+- Manual workflow dispatch deploys the selected `preview` (default) or `production` environment.
 - Local deploy is prohibited. The `wrangler deploy` / `cf:deploy*` scripts in `apps/web` are CI implementation details used by the GitHub Actions workflow and must not be run from a local terminal. See [docs/OPERATIONS.md](docs/OPERATIONS.md).
 
 Required GitHub secrets:

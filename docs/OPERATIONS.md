@@ -35,9 +35,9 @@ are never reflected in Git, and Git commits never change live R2.
 
 ## 3. Existing deploy workflow behavior (`.github/workflows/deploy-cloudflare.yml`)
 
-- **Push to `main`** -> production deploy.
+- **Push to `main`** -> checks only (no deploy). Production is never deployed automatically.
 - **Pull request against `main`** -> checks only (no deploy).
-- **Manual `workflow_dispatch`** -> deploys the chosen `preview` or `production`.
+- **Manual `workflow_dispatch`** -> deploys the chosen `preview` (default) or `production`.
 
 This workflow **mutates** state: it creates R2 buckets, puts admin secrets, and
 deploys the Worker. It is therefore **not safe for inventory or backup**. Do not

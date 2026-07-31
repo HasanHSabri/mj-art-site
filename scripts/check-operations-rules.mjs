@@ -209,7 +209,70 @@ function main() {
     }
   }
   if (!/method:\s*'GET'/.test(script)) {
-    fail(scriptPath + ' must issue GET network requests via method: ' + "'GET'");
+    fail(scriptPath + " must issue GET network requests via method: 'GET'");
+  }
+
+  // 5) Active deploy workflow assertions: deployment is manual-only.
+  //    push/pull_request must still run checks, but the deploy job must be
+  //    gated to workflow_dispatch only, with preview as the default and no
+  //    automatic production fallback or implicit else->production path.
+  const deployWfPath = '.github/workflows/deploy-cloudflare.yml';
+  const deployWf = readText(deployWfPath);
+  if (deployWf === null) {
+    fail(deployWfPath + ' is missing');
+  } else {
+    // push, pull_request, and workflow_dispatch triggers must all be declared
+    // so push/PR validation is preserved while deployment stays manual.
+    const deployTriggers = extractOnTriggers(deployWf);
+    if (deployTriggers === null) {
+      fail(deployWfPath + ' has no top-level on: trigger block');
+    } else {
+      for (const required of ['push', 'pull_request', 'workflow_dispatch']) {
+        if (!deployTriggers.includes(required)) {
+          fail(deployWfPath + ' must declare the ' + required + ' trigger');
+        }
+      }
+    }
+
+    // Manual deploy default must be preview, never production.
+    if (!/^(\s*)default:\s*'?preview'?\s*$/m.test(deployWf)) {
+      fail(deployWfPath + " workflow_dispatch environment input must default to 'preview'");
+    }
+    if (/default:\s*'?production'?\s*$/m.test(deployWf)) {
+      fail(deployWfPath + " workflow_dispatch environment input must not default to 'production'");
+    }
+
+    // The deploy job if: condition (4-space job-level indent) must be gated to
+    // workflow_dispatch only and must not reference push.
+    const deployIf = deployWf.match(/^    if:\s*(.+)$/m);
+    if (!deployIf) {
+      fail(deployWfPath + ' deploy job must declare a job-level if: condition');
+    } else {
+      const cond = deployIf[1];
+      if (!/workflow_dispatch/.test(cond)) {
+        fail(deployWfPath + ' deploy job if: must be gated to workflow_dispatch only');
+      }
+      if (/\bpush\b/.test(cond)) {
+        fail(deployWfPath + ' deploy job if: must not be triggered by push (manual deploy only)');
+      }
+    }
+
+    // Job environment must come from inputs with no implicit production fallback.
+    if (!/inputs\.environment/.test(deployWf)) {
+      fail(deployWfPath + ' must set the deploy environment from inputs.environment');
+    }
+    if (/\|\|\s*'?production'?/.test(deployWf)) {
+      fail(deployWfPath + " must not fall back to 'production' for the deploy environment");
+    }
+
+    // Environment selection must use an explicit case over the supported targets
+    // (preview/production). No implicit else->production fallback may remain.
+    if (!/case\s+[^;]*inputs\.environment/.test(deployWf)) {
+      fail(deployWfPath + ' must select environment via an explicit case on inputs.environment');
+    }
+    if (/\belse\b/.test(deployWf)) {
+      fail(deployWfPath + ' must use explicit case targets (preview/production), no else fallback');
+    }
   }
 
   if (process.exitCode) {
