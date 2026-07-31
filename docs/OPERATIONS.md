@@ -67,17 +67,29 @@ Read-only inventory/backup uses a **separate, dedicated** token
 
 - The production admin writes to the **production** bucket; the preview admin writes
   to the **preview** bucket (driven by the deployed environment's binding).
-- Image upload writes an object at key `artwork/<timestamp>-<slug>` and returns a URL
-  of the form `/artwork-uploaded/artwork/<timestamp>-<slug>`.
+- Image upload is **canonical**: the admin must enter a catalog number first, then
+  sends two in-browser JPEG derivatives (full ~2000px, thumb ~640px). The Worker
+  writes exactly two keys and returns canonical public URLs:
+  - `artwork/catalog/<catalogNumber-lower>/full.jpg`
+  - `artwork/catalog/<catalogNumber-lower>/thumb.jpg`
+  Both are stored with `image/jpeg` metadata and served with
+  `X-Content-Type-Options: nosniff`. There is no user-controlled path and no
+  upload delete path. The previous timestamp-based upload path (`artwork/<timestamp>-<slug>`)
+  is removed.
 - Add / edit / remove perform a **full overwrite** of the root `artworks.json`
-  object in the bucket.
-- The current admin UI has **no explicit reorder controls**. Array order in
-  `artworks.json` is the metadata order; the public display reverses it.
+  object in the bucket. Records are canonicalized (exact canonical field set,
+  deep-cloned) and sorted by `sortOrder` before persistence.
+- The admin has explicit **Move Up / Move Down** reorder controls. Reordering
+  renumbers `sortOrder` to a contiguous `1..N` sequence. The public display is
+  sorted **ascending** by `sortOrder` (it does not reverse the array).
+- `id` always equals `catalogNumber.toLowerCase()`; there are no title-slug ids.
 - Remove / replace **never delete** old image objects. Replacing an artwork's image
   therefore can **orphan** the previous object (it remains in the bucket but is no
   longer referenced). Orphans accumulate until handled explicitly.
-- Static fallback (when a live object is absent or the Worker serves build-time
-  data): `apps/web/public/artworks.json` and `apps/web/public/artwork/`.
+- There is **no static fallback**. The Worker hydrates the gallery from the live R2
+  `artworks.json`; a missing object renders an empty gallery and an invalid object
+  returns 500. `apps/web/public/artwork/` holds build-time source images only and is
+  not a runtime data path.
 
 **Admin edits never become Git commits.** They are live R2 mutations only.
 

@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { Readable } from 'node:stream';
 import worker from '../src/worker.js';
+import { MAX_PUT_BODY_BYTES } from '../src/artwork-schema.js';
 
 const ARTWORKS_KEY = 'artworks.json';
 const SESSION_COOKIE = 'mj_art_admin';
@@ -287,4 +289,261 @@ test('admin PUT rejects invalid JSON body with 400', async () => {
   });
   const res = await worker.fetch(request, env);
   assert.equal(res.status, 400);
+});
+
+test('admin PUT accepts application/json with charset parameter', async () => {
+  const env = makeEnv(undefined);
+  const request = await authedReq('/api/admin/artworks', env.ADMIN_SESSION_SECRET, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json; charset=utf-8' },
+    body: JSON.stringify(twoValidRecords())
+  });
+  const res = await worker.fetch(request, env);
+  assert.equal(res.status, 200);
+});
+
+test('admin PUT rejects empty body with 400', async () => {
+  const env = makeEnv(undefined);
+  const request = await authedReq('/api/admin/artworks', env.ADMIN_SESSION_SECRET, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: ''
+  });
+  const res = await worker.fetch(request, env);
+  assert.equal(res.status, 400);
+});
+
+test('admin PUT rejects oversized body declared by content-length with 413 and stores nothing', async () => {
+  const env = makeEnv(undefined);
+  const huge = 'x'.repeat(MAX_PUT_BODY_BYTES + 1);
+  const request = await authedReq('/api/admin/artworks', env.ADMIN_SESSION_SECRET, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: huge
+  });
+  const res = await worker.fetch(request, env);
+  assert.equal(res.status, 413);
+  const publicRes = await worker.fetch(req('/api/artworks'), env);
+  assert.deepEqual(await body(publicRes), []);
+});
+
+test('admin PUT uses UTF-8 byte length (not char count): multibyte body over cap is 413', async () => {
+  const env = makeEnv(undefined);
+  // 3 bytes/char: char count stays well under the cap while byte length exceeds it.
+  const char = '☃';
+  const count = Math.ceil((MAX_PUT_BODY_BYTES + 1024) / 3) + 1;
+  const bodyBuf = Buffer.from(char.repeat(count));
+  assert.ok(bodyBuf.length > MAX_PUT_BODY_BYTES);
+  assert.ok(bodyBuf.length / 3 <= MAX_PUT_BODY_BYTES);
+  const stream = Readable.toWeb(Readable.from([bodyBuf]));
+  const request = await authedReq('/api/admin/artworks', env.ADMIN_SESSION_SECRET, {
+    method: 'PUT',
+    body: stream,
+    duplex: 'half',
+    headers: { 'content-type': 'application/json' }
+  });
+  const res = await worker.fetch(request, env);
+  assert.equal(res.status, 413);
+  const publicRes = await worker.fetch(req('/api/artworks'), env);
+  assert.deepEqual(await body(publicRes), []);
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/admin/upload (canonical two-derivative pipeline)
+// ---------------------------------------------------------------------------
+
+// R2 stub backed by a Map that supports artworks.json (json/text) and image
+// objects (body + writeHttpMetadata) under arbitrary keys.
+function makeStoreEnv() {
+  const store = new Map();
+  return {
+    _store: store,
+    ARTWORK_IMAGES: {
+      async get(key) {
+        return store.has(key) ? store.get(key) : null;
+      },
+      async put(key, value, options = {}) {
+        if (key === ARTWORKS_KEY) {
+          const text = typeof value === 'string' ? value : String(value);
+          store.set(key, { async json() { return JSON.parse(text); }, async text() { return text; } });
+        } else {
+          const headerMap = {
+            contentType: 'content-type',
+            contentLanguage: 'content-language',
+            contentDisposition: 'content-disposition',
+            contentEncoding: 'content-encoding',
+            cacheControl: 'cache-control',
+            cacheExpiry: 'cache-expiry'
+          };
+          store.set(key, {
+            body: value,
+            httpMetadata: options.httpMetadata || {},
+            writeHttpMetadata(headers) {
+              for (const [hk, hv] of Object.entries(this.httpMetadata)) {
+                headers.set(headerMap[hk] || hk, hv);
+              }
+            }
+          });
+        }
+      }
+    },
+    ASSETS: {
+      async fetch() {
+        return new Response('<html><!-- artwork-gallery:start -->x<!-- artwork-gallery:end --></html>', { headers: { 'content-type': 'text/html; charset=UTF-8' } });
+      }
+    },
+    ADMIN_PASSWORD: 'secret',
+    ADMIN_SESSION_SECRET: 'test-secret-key'
+  };
+}
+
+function jpegBytes() {
+  const bytes = new Uint8Array(32);
+  bytes[0] = 0xff;
+  bytes[1] = 0xd8;
+  return bytes;
+}
+
+function jpegFile(name = 'full.jpg') {
+  return new File([jpegBytes()], name, { type: 'image/jpeg' });
+}
+
+test('upload without auth returns 401', async () => {
+  const env = makeStoreEnv();
+  const fd = new FormData();
+  fd.append('catalogNumber', 'MJ-001');
+  fd.append('image', jpegFile());
+  fd.append('thumbnail', jpegFile('thumb.jpg'));
+  const res = await worker.fetch(req('/api/admin/upload', { method: 'POST', body: fd }), env);
+  assert.equal(res.status, 401);
+});
+
+test('upload missing thumbnail returns 400 and writes nothing', async () => {
+  const env = makeStoreEnv();
+  const fd = new FormData();
+  fd.append('catalogNumber', 'MJ-001');
+  fd.append('image', jpegFile());
+  const request = await authedReq('/api/admin/upload', env.ADMIN_SESSION_SECRET, { method: 'POST', body: fd });
+  const res = await worker.fetch(request, env);
+  assert.equal(res.status, 400);
+  assert.equal(env._store.size, 0);
+});
+
+test('upload with bad catalog number returns 400', async () => {
+  const env = makeStoreEnv();
+  const fd = new FormData();
+  fd.append('catalogNumber', 'XYZ-9');
+  fd.append('image', jpegFile());
+  fd.append('thumbnail', jpegFile('thumb.jpg'));
+  const request = await authedReq('/api/admin/upload', env.ADMIN_SESSION_SECRET, { method: 'POST', body: fd });
+  const res = await worker.fetch(request, env);
+  assert.equal(res.status, 400);
+});
+
+test('upload with non-JPEG type (PNG) returns 400', async () => {
+  const env = makeStoreEnv();
+  const fd = new FormData();
+  fd.append('catalogNumber', 'MJ-001');
+  fd.append('image', new File([jpegBytes()], 'f.png', { type: 'image/png' }));
+  fd.append('thumbnail', jpegFile('thumb.jpg'));
+  const request = await authedReq('/api/admin/upload', env.ADMIN_SESSION_SECRET, { method: 'POST', body: fd });
+  const res = await worker.fetch(request, env);
+  assert.equal(res.status, 400);
+});
+
+test('upload rejects SVG regardless of extension', async () => {
+  const env = makeStoreEnv();
+  const svg = new File([new Uint8Array([0x3c, 0x73, 0x76, 0x67])], 'evil.svg', { type: 'image/svg+xml' });
+  const fd = new FormData();
+  fd.append('catalogNumber', 'MJ-001');
+  fd.append('image', svg);
+  fd.append('thumbnail', svg);
+  const request = await authedReq('/api/admin/upload', env.ADMIN_SESSION_SECRET, { method: 'POST', body: fd });
+  const res = await worker.fetch(request, env);
+  assert.equal(res.status, 400);
+});
+
+test('upload rejects JPEG-typed file missing JPEG magic bytes', async () => {
+  const env = makeStoreEnv();
+  const fake = new File([new Uint8Array([0x00, 0x00, 0x00, 0x00])], 'fake.jpg', { type: 'image/jpeg' });
+  const fd = new FormData();
+  fd.append('catalogNumber', 'MJ-001');
+  fd.append('image', fake);
+  fd.append('thumbnail', fake);
+  const request = await authedReq('/api/admin/upload', env.ADMIN_SESSION_SECRET, { method: 'POST', body: fd });
+  const res = await worker.fetch(request, env);
+  assert.equal(res.status, 400);
+});
+
+test('upload rejects full image exceeding the size cap with 413', async () => {
+  const env = makeStoreEnv();
+  const oversize = new Uint8Array(4 * 1024 * 1024 + 1);
+  oversize[0] = 0xff;
+  oversize[1] = 0xd8;
+  const fd = new FormData();
+  fd.append('catalogNumber', 'MJ-001');
+  fd.append('image', new File([oversize], 'full.jpg', { type: 'image/jpeg' }));
+  fd.append('thumbnail', jpegFile('thumb.jpg'));
+  const request = await authedReq('/api/admin/upload', env.ADMIN_SESSION_SECRET, { method: 'POST', body: fd });
+  const res = await worker.fetch(request, env);
+  assert.equal(res.status, 413);
+});
+
+test('upload success writes exactly two canonical keys and returns canonical URLs', async () => {
+  const env = makeStoreEnv();
+  const fd = new FormData();
+  fd.append('catalogNumber', 'mj-001');
+  fd.append('image', jpegFile('full.jpg'));
+  fd.append('thumbnail', jpegFile('thumb.jpg'));
+  const request = await authedReq('/api/admin/upload', env.ADMIN_SESSION_SECRET, { method: 'POST', body: fd });
+  const res = await worker.fetch(request, env);
+  assert.equal(res.status, 200);
+  const result = await body(res);
+  assert.equal(result.image, '/artwork-uploaded/artwork/catalog/mj-001/full.jpg');
+  assert.equal(result.thumbnail, '/artwork-uploaded/artwork/catalog/mj-001/thumb.jpg');
+  // Exactly two image keys written, at the canonical paths, with JPEG metadata.
+  assert.deepEqual([...env._store.keys()].sort(), ['artwork/catalog/mj-001/full.jpg', 'artwork/catalog/mj-001/thumb.jpg']);
+  assert.equal(env._store.get('artwork/catalog/mj-001/full.jpg').httpMetadata.contentType, 'image/jpeg');
+});
+
+test('uploaded record round-trips: PUT with returned paths validates and serves publicly', async () => {
+  const env = makeStoreEnv();
+  const fd = new FormData();
+  fd.append('catalogNumber', 'MJ-001');
+  fd.append('image', jpegFile('full.jpg'));
+  fd.append('thumbnail', jpegFile('thumb.jpg'));
+  const uploadReq = await authedReq('/api/admin/upload', env.ADMIN_SESSION_SECRET, { method: 'POST', body: fd });
+  const uploadRes = await worker.fetch(uploadReq, env);
+  const { image, thumbnail } = await body(uploadRes);
+
+  const record = validRecord({ image, thumbnail });
+  const putReq = await authedReq('/api/admin/artworks', env.ADMIN_SESSION_SECRET, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify([record])
+  });
+  const putRes = await worker.fetch(putReq, env);
+  assert.equal(putRes.status, 200);
+
+  const publicRes = await worker.fetch(req('/api/artworks'), env);
+  const list = await body(publicRes);
+  assert.equal(list.length, 1);
+  assert.equal(list[0].image, image);
+  assert.equal(list[0].thumbnail, thumbnail);
+});
+
+test('served uploaded image carries X-Content-Type-Options: nosniff', async () => {
+  const env = makeStoreEnv();
+  const fd = new FormData();
+  fd.append('catalogNumber', 'MJ-001');
+  fd.append('image', jpegFile('full.jpg'));
+  fd.append('thumbnail', jpegFile('thumb.jpg'));
+  const uploadReq = await authedReq('/api/admin/upload', env.ADMIN_SESSION_SECRET, { method: 'POST', body: fd });
+  const uploadRes = await worker.fetch(uploadReq, env);
+  const { thumbnail } = await body(uploadRes);
+
+  const imgRes = await worker.fetch(req(thumbnail), env);
+  assert.equal(imgRes.status, 200);
+  assert.equal(imgRes.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(imgRes.headers.get('content-type'), 'image/jpeg');
 });

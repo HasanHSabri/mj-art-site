@@ -53,6 +53,32 @@ const ALLOWED_ORIENTATIONS = new Set(['Horizontal', 'Vertical', 'Square', 'Unkno
 const ID_RE = /^[a-z]+-\d{3}$/;
 const R2_IMAGE_PATH_RE = /^\/artwork-uploaded\/artwork\/catalog\/[a-z]+-\d{3}\/(full|thumb)\.jpg$/;
 
+// Strict provenance contract. Only these internal-only keys may ever appear on
+// a persisted record. Every key present in catalog/catalog.json is covered.
+export const PROVENANCE_FIELDS = [
+  'source',
+  'sha256',
+  'driveFileId',
+  'driveFolder',
+  'sourceFilename',
+  'sourceBytes',
+  'photoTimestamp',
+  'mappedFromMiscLabel',
+  'mappedFromLiveId',
+  'originalMiscLabel',
+  'liveId',
+  'originalImageUrl',
+  'r2BackupRun'
+];
+
+// source enum. `admin` is the only source created by the admin surface and is
+// the one source that does not require (and must not carry) a content hash.
+export const ALLOWED_SOURCES = new Set(['google-drive', 'r2-backup-or-live-fetch', 'admin']);
+
+const SHA256_RE = /^[a-f0-9]{64}$/;
+const PROV_LEAK_RE = /\/tmp\/|\/workspace\/|\/home\/|\/Users\/|[A-Za-z]:[\\/]/i;
+const PROV_SECRET_RE = /(secret|token|password|api[_-]?key|authorization|bearer|credential)/i;
+
 // Reasonable ceiling for an admin PUT body. The canonical 86-record catalogue is
 // well under 1 MB; this leaves generous headroom for growth without allowing
 // unbounded payloads.
@@ -178,6 +204,7 @@ export function validateArtworkRecord(r, ctx = '(unknown)') {
 
   // sortOrder
   if (!Number.isInteger(r.sortOrder)) return `[${ctx}] sortOrder must be an integer.`;
+  if (r.sortOrder <= 0) return `[${ctx}] sortOrder must be a positive integer.`;
 
   // dimensions
   const dimsError = validateDimensions(r.dimensions, ctx);
@@ -255,9 +282,64 @@ function validateProvenance(prov, ctx) {
   if (!prov || typeof prov !== 'object' || Array.isArray(prov)) {
     return `[${ctx}] provenance must be an object.`;
   }
+
+  // Strict key allowlist: no unknown keys (this also blocks secret smuggling).
+  for (const key of Object.keys(prov)) {
+    if (!PROVENANCE_FIELDS.includes(key)) {
+      return `[${ctx}] unknown provenance field: ${key}`;
+    }
+  }
+
   if (typeof prov.source !== 'string' || prov.source.length === 0) {
     return `[${ctx}] provenance.source must be a non-empty string.`;
   }
+  if (!ALLOWED_SOURCES.has(prov.source)) {
+    return `[${ctx}] invalid provenance.source: ${safeStr(prov.source)}`;
+  }
+
+  if (prov.sha256 !== undefined) {
+    if (typeof prov.sha256 !== 'string' || !SHA256_RE.test(prov.sha256)) {
+      return `[${ctx}] provenance.sha256 must be 64-char lowercase hex.`;
+    }
+  }
+
+  if (prov.sourceBytes !== undefined) {
+    if (!Number.isInteger(prov.sourceBytes) || prov.sourceBytes < 0) {
+      return `[${ctx}] provenance.sourceBytes must be a non-negative integer.`;
+    }
+  }
+
+  const stringFields = [
+    'driveFileId',
+    'driveFolder',
+    'sourceFilename',
+    'photoTimestamp',
+    'mappedFromMiscLabel',
+    'mappedFromLiveId',
+    'originalMiscLabel',
+    'liveId',
+    'originalImageUrl',
+    'r2BackupRun'
+  ];
+  for (const field of stringFields) {
+    if (prov[field] !== undefined && typeof prov[field] !== 'string') {
+      return `[${ctx}] provenance.${field} must be a string.`;
+    }
+  }
+
+  // Reject secret-like or local-path values anywhere in provenance. Values are
+  // internal-only references; none should ever resemble a secret or a path.
+  for (const value of Object.values(prov)) {
+    if (typeof value === 'string') {
+      if (PROV_SECRET_RE.test(value)) {
+        return `[${ctx}] secret-like value in provenance.`;
+      }
+      if (PROV_LEAK_RE.test(value)) {
+        return `[${ctx}] local-path value in provenance.`;
+      }
+    }
+  }
+
   return null;
 }
 
@@ -271,6 +353,30 @@ function safeStr(value) {
 // Ordering & projection
 // ---------------------------------------------------------------------------
 
+// Deep clone a plain JSON value (records are JSON-serializable). Used so that
+// persisted/public objects never share mutable references with caller input or
+// with each other.
+export function clone(value) {
+  if (value === null || typeof value !== 'object') return value;
+  return JSON.parse(JSON.stringify(value));
+}
+
+// Return a canonical, deep-cloned copy of a record containing exactly the
+// CANONICAL_FIELDS (in canonical order). Used before persistence so the stored
+// shape is stable and free of stray/foreign references.
+export function canonicalizeRecord(record) {
+  const out = {};
+  for (const field of CANONICAL_FIELDS) {
+    out[field] = clone(record[field]);
+  }
+  return out;
+}
+
+// Canonicalize every record in a list (deep clone, exact field set/order).
+export function canonicalizeList(records) {
+  return records.map(canonicalizeRecord);
+}
+
 // Return a shallow-copied list sorted by sortOrder ascending (stable).
 export function sortByOrder(records) {
   return [...records].sort((a, b) => {
@@ -281,12 +387,15 @@ export function sortByOrder(records) {
 
 // Project a single canonical record to its public shape, omitting
 // catalogNumber, sortOrder, and provenance. Returns a new object containing
-// only PUBLIC_FIELDS.
+// only PUBLIC_FIELDS. Nested dimensions/price are deep-cloned so mutating a
+// public record can never corrupt the canonical source.
 export function projectPublic(record) {
   const out = {};
   for (const field of PUBLIC_FIELDS) {
     out[field] = record[field];
   }
+  if (out.dimensions) out.dimensions = clone(out.dimensions);
+  if (out.price) out.price = clone(out.price);
   return out;
 }
 

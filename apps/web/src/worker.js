@@ -1,5 +1,6 @@
 import {
   MAX_PUT_BODY_BYTES,
+  canonicalizeList,
   dimensionsLabel,
   toPublicList,
   sortByOrder,
@@ -9,6 +10,14 @@ import {
 const ARTWORKS_KEY = 'artworks.json';
 const SESSION_COOKIE = 'mj_art_admin';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
+
+// Canonical upload pipeline constants. The admin produces two JPEG derivatives
+// (full ~2000px, thumb ~640px); these caps bound the uploaded multipart parts.
+const UPLOAD_CATALOG_RE = /^(MJ|MISC)-\d{3}$/i;
+const MAX_FULL_BYTES = 4 * 1024 * 1024;
+const MAX_THUMB_BYTES = 1 * 1024 * 1024;
+const MAX_UPLOAD_COMBINED_BYTES = MAX_FULL_BYTES + MAX_THUMB_BYTES;
+const JPEG = 'image/jpeg';
 
 export default {
   async fetch(request, env) {
@@ -157,23 +166,28 @@ function renderArtworkCards(artworks) {
   return cards.join('\n\n');
 }
 
-// Admin PUT: strict canonical-schema validation, full overwrite. Enforces JSON
-// content type and a reasonable body-size cap. No legacy-schema acceptance.
+// Admin PUT: strict canonical-schema validation, full overwrite. Enforces an
+// exact JSON content type (with optional parameters) and a UTF-8 *byte-length*
+// cap. Records are canonicalized (deep-cloned, exact field set) before they
+// are persisted or returned. No legacy-schema acceptance.
 async function saveArtworks(request, env) {
   const contentType = request.headers.get('content-type') || '';
-  if (!contentType.toLowerCase().includes('application/json')) {
+  const mediaType = contentType.split(';')[0].trim().toLowerCase();
+  if (mediaType !== 'application/json') {
     return jsonResponse({ error: 'Request must be JSON.' }, 415);
   }
 
   const contentLength = Number(request.headers.get('content-length') || 0);
-  if (contentLength && contentLength > MAX_PUT_BODY_BYTES) {
+  if (contentLength > MAX_PUT_BODY_BYTES) {
     return jsonResponse({ error: 'Request body is too large.' }, 413);
   }
 
   let artworks;
   try {
     const text = await request.text();
-    if (text.length > MAX_PUT_BODY_BYTES) {
+    // Actual UTF-8 byte length, not JS char count, so multibyte payloads are
+    // measured correctly even when no content-length header is present.
+    if (new TextEncoder().encode(text).length > MAX_PUT_BODY_BYTES) {
       return jsonResponse({ error: 'Request body is too large.' }, 413);
     }
     artworks = JSON.parse(text);
@@ -186,35 +200,86 @@ async function saveArtworks(request, env) {
     return jsonResponse({ error: validation.error }, 400);
   }
 
-  await env.ARTWORK_IMAGES.put(ARTWORKS_KEY, JSON.stringify(validation.records, null, 2), {
+  const canonical = canonicalizeList(validation.records);
+  await env.ARTWORK_IMAGES.put(ARTWORKS_KEY, JSON.stringify(canonical, null, 2), {
     httpMetadata: { contentType: 'application/json' }
   });
 
-  return jsonResponse({ ok: true, artworks: sortByOrder(validation.records) });
+  return jsonResponse({ ok: true, artworks: sortByOrder(canonical) });
 }
 
+// Canonical upload pipeline. The admin sends catalogNumber plus two JPEG
+// derivatives (full + thumb). We validate auth (route level), catalog number
+// format, presence and type of both files, JPEG magic bytes, and per-file and
+// combined size caps. We then write exactly two canonical keys and return their
+// canonical public URLs. There is no delete path and no user-controlled path.
 async function uploadArtworkImage(request, env) {
-  const form = await request.formData();
-  const file = form.get('image');
-
-  if (!file || typeof file === 'string') {
-    return jsonResponse({ error: 'Choose an image to upload.' }, 400);
+  let form;
+  try {
+    form = await request.formData();
+  } catch (error) {
+    return jsonResponse({ error: 'Upload must be a multipart form.' }, 400);
   }
 
-  if (!file.type.startsWith('image/')) {
-    return jsonResponse({ error: 'Only image uploads are allowed.' }, 400);
+  const catalogNumber = form.get('catalogNumber');
+  if (typeof catalogNumber !== 'string' || !UPLOAD_CATALOG_RE.test(catalogNumber.trim())) {
+    return jsonResponse({ error: 'A valid catalog number (MJ-xxx or MISC-xxx) is required first.' }, 400);
+  }
+  const catalog = catalogNumber.trim();
+  const folder = catalog.toLowerCase();
+
+  const image = form.get('image');
+  const thumbnail = form.get('thumbnail');
+  if (!image || typeof image === 'string' || !thumbnail || typeof thumbnail === 'string') {
+    return jsonResponse({ error: 'Both image and thumbnail files are required.' }, 400);
   }
 
-  const key = `artwork/${Date.now()}-${slugify(file.name)}`;
-  await env.ARTWORK_IMAGES.put(key, file.stream(), {
-    httpMetadata: { contentType: file.type }
+  if (image.type !== JPEG || thumbnail.type !== JPEG) {
+    return jsonResponse({ error: 'Both files must be JPEG images.' }, 400);
+  }
+
+  const imageBuf = await image.arrayBuffer();
+  const thumbBuf = await thumbnail.arrayBuffer();
+
+  if (!isJpeg(imageBuf) || !isJpeg(thumbBuf)) {
+    return jsonResponse({ error: 'Files are not valid JPEG images.' }, 400);
+  }
+
+  if (imageBuf.byteLength > MAX_FULL_BYTES) {
+    return jsonResponse({ error: 'Full image exceeds the size limit.' }, 413);
+  }
+  if (thumbBuf.byteLength > MAX_THUMB_BYTES) {
+    return jsonResponse({ error: 'Thumbnail exceeds the size limit.' }, 413);
+  }
+  if (imageBuf.byteLength + thumbBuf.byteLength > MAX_UPLOAD_COMBINED_BYTES) {
+    return jsonResponse({ error: 'Combined upload exceeds the size limit.' }, 413);
+  }
+
+  const fullKey = `artwork/catalog/${folder}/full.jpg`;
+  const thumbKey = `artwork/catalog/${folder}/thumb.jpg`;
+  await env.ARTWORK_IMAGES.put(fullKey, imageBuf, { httpMetadata: { contentType: JPEG } });
+  await env.ARTWORK_IMAGES.put(thumbKey, thumbBuf, { httpMetadata: { contentType: JPEG } });
+
+  return jsonResponse({
+    image: `/artwork-uploaded/${fullKey}`,
+    thumbnail: `/artwork-uploaded/${thumbKey}`
   });
+}
 
-  return jsonResponse({ image: `/artwork-uploaded/${key}` });
+// JPEG SOI magic bytes (FF D8).
+function isJpeg(buf) {
+  const view = new Uint8Array(buf);
+  return view.length >= 2 && view[0] === 0xff && view[1] === 0xd8;
 }
 
 async function serveUploadedImage(url, env) {
   const key = url.pathname.replace('/artwork-uploaded/', '');
+
+  // No arbitrary user path: only canonical image keys are ever served here.
+  if (key.includes('..') || key.includes('\0')) {
+    return new Response('Not found', { status: 404 });
+  }
+
   const object = await env.ARTWORK_IMAGES.get(key);
 
   if (!object) {
@@ -224,6 +289,7 @@ async function serveUploadedImage(url, env) {
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set('cache-control', 'public, max-age=31536000, immutable');
+  headers.set('x-content-type-options', 'nosniff');
   return new Response(object.body, { headers });
 }
 
@@ -316,10 +382,6 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value).replaceAll('"', '&quot;');
-}
-
-function slugify(value) {
-  return value.toLowerCase().replace(/[^a-z0-9.]+/g, '-').replace(/^-|-$/g, '') || 'image';
 }
 
 function base64UrlEncode(value) {

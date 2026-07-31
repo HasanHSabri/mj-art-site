@@ -6,10 +6,15 @@ import {
   projectPublic,
   toPublicList,
   sortByOrder,
+  canonicalizeRecord,
+  canonicalizeList,
+  clone,
   dimensionsLabel,
   priceDisplay,
   PUBLIC_FIELDS,
   CANONICAL_FIELDS,
+  PROVENANCE_FIELDS,
+  ALLOWED_SOURCES,
   MAX_PUT_BODY_BYTES
 } from '../src/artwork-schema.js';
 
@@ -268,4 +273,124 @@ test('MAX_PUT_BODY_BYTES is a sane positive cap', () => {
   assert.ok(typeof MAX_PUT_BODY_BYTES === 'number');
   assert.ok(MAX_PUT_BODY_BYTES > 0);
   assert.ok(MAX_PUT_BODY_BYTES <= 4 * 1024 * 1024);
+});
+
+// ----- provenance hardening (allowlist / source enum / hash / leak) -----
+
+test('PROVENANCE_FIELDS allowlist matches the canonical catalogue keys', () => {
+  assert.deepEqual(PROVENANCE_FIELDS, [
+    'source',
+    'sha256',
+    'driveFileId',
+    'driveFolder',
+    'sourceFilename',
+    'sourceBytes',
+    'photoTimestamp',
+    'mappedFromMiscLabel',
+    'mappedFromLiveId',
+    'originalMiscLabel',
+    'liveId',
+    'originalImageUrl',
+    'r2BackupRun'
+  ]);
+});
+
+test('ALLOWED_SOURCES is exactly the supported source enum', () => {
+  assert.deepEqual([...ALLOWED_SOURCES].sort(), ['admin', 'google-drive', 'r2-backup-or-live-fetch']);
+});
+
+test('validateArtworkRecord rejects unknown provenance field', () => {
+  const r = validRecord({ provenance: { source: 'google-drive', malicious: 'x' } });
+  assert.match(validateArtworkRecord(r), /unknown provenance field: malicious/);
+});
+
+test('validateArtworkRecord rejects disallowed provenance source', () => {
+  const r = validRecord({ provenance: { source: 'manual-upload' } });
+  assert.match(validateArtworkRecord(r), /invalid provenance.source/);
+});
+
+test('validateArtworkRecord rejects malformed sha256', () => {
+  const r = validRecord({ provenance: { source: 'google-drive', sha256: 'XYZ' } });
+  assert.match(validateArtworkRecord(r), /sha256 must be 64-char lowercase hex/);
+});
+
+test('validateArtworkRecord accepts admin source without a hash', () => {
+  const r = validRecord({ provenance: { source: 'admin' } });
+  assert.equal(validateArtworkRecord(r), null);
+});
+
+test('validateArtworkRecord accepts full canonical provenance with sourceBytes', () => {
+  const r = validRecord({
+    provenance: {
+      source: 'google-drive',
+      sha256: 'a'.repeat(64),
+      driveFileId: 'id',
+      driveFolder: 'folder',
+      sourceFilename: 'full.jpg',
+      sourceBytes: 12345,
+      photoTimestamp: '2024-01-01T00:00:00Z'
+    }
+  });
+  assert.equal(validateArtworkRecord(r), null);
+});
+
+test('validateArtworkRecord rejects non-integer sourceBytes', () => {
+  const r = validRecord({ provenance: { source: 'google-drive', sourceBytes: 1.5 } });
+  assert.match(validateArtworkRecord(r), /sourceBytes must be a non-negative integer/);
+});
+
+test('validateArtworkRecord rejects secret-like provenance value', () => {
+  const r = validRecord({ provenance: { source: 'google-drive', driveFileId: 'my-api-key-leak' } });
+  assert.match(validateArtworkRecord(r), /secret-like value in provenance/);
+});
+
+test('validateArtworkRecord rejects local-path provenance value', () => {
+  const r = validRecord({ provenance: { source: 'google-drive', sourceFilename: '/tmp/evil.jpg' } });
+  assert.match(validateArtworkRecord(r), /local-path value in provenance/);
+});
+
+test('validateArtworkRecord rejects non-positive sortOrder', () => {
+  assert.match(validateArtworkRecord(validRecord({ sortOrder: 0 })), /sortOrder must be a positive integer/);
+  assert.match(validateArtworkRecord(validRecord({ sortOrder: -1 })), /sortOrder must be a positive integer/);
+});
+
+// ----- deep-copy projection & canonicalization -----
+
+test('projectPublic deep-copies dimensions and price (no shared reference)', () => {
+  const record = validRecord();
+  const projected = projectPublic(record);
+  assert.notEqual(projected.dimensions, record.dimensions);
+  assert.notEqual(projected.price, record.price);
+  projected.dimensions.widthCm = 9999;
+  projected.price.amount = 9999;
+  assert.equal(record.dimensions.widthCm, 20);
+  assert.equal(record.price.amount, 40);
+});
+
+test('canonicalizeRecord returns exactly the canonical field set, deep-cloned', () => {
+  const record = validRecord();
+  const canon = canonicalizeRecord(record);
+  assert.deepEqual(Object.keys(canon), CANONICAL_FIELDS);
+  assert.notEqual(canon.dimensions, record.dimensions);
+  assert.notEqual(canon.provenance, record.provenance);
+  canon.dimensions.widthCm = 0;
+  assert.equal(record.dimensions.widthCm, 20);
+});
+
+test('canonicalizeList maps over records and drops stray keys', () => {
+  const list = canonicalizeList([validRecord({ extra: 'stray', another: 1 })]);
+  assert.equal(list.length, 1);
+  assert.deepEqual(Object.keys(list[0]), CANONICAL_FIELDS);
+  assert.equal('extra' in list[0], false);
+});
+
+test('clone handles primitives, null, and nested structures', () => {
+  assert.equal(clone(5), 5);
+  assert.equal(clone('x'), 'x');
+  assert.equal(clone(null), null);
+  const obj = { a: [1, { b: 2 }] };
+  const copy = clone(obj);
+  assert.deepEqual(copy, obj);
+  assert.notEqual(copy, obj);
+  assert.notEqual(copy.a, obj.a);
 });

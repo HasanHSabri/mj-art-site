@@ -5,10 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "build": "node --check src/artwork-schema.js && node --check src/worker.js && node --check public/script.js && node --check public/admin.js && echo 'build checks passed'",
-    "lint": "node --check src/artwork-schema.js && node --check src/worker.js && node --check public/script.js && node --check public/admin.js",
+    "build": "node --check src/artwork-schema.js && node --check src/worker.js && node --check public/script.js && node --check public/admin-artwork.js && node --check public/admin.js && echo 'build checks passed'",
+    "lint": "node --check src/artwork-schema.js && node --check src/worker.js && node --check public/script.js && node --check public/admin-artwork.js && node --check public/admin.js",
     "test": "node --test",
-    "type-check": "node --check src/artwork-schema.js && node --check src/worker.js && node --check public/script.js && node --check public/admin.js",
+    "type-check": "node --check src/artwork-schema.js && node --check src/worker.js && node --check public/script.js && node --check public/admin-artwork.js && node --check public/admin.js",
     "cf:dev": "wrangler dev",
     "cf:deploy": "wrangler deploy",
     "cf:deploy:preview": "wrangler deploy --env preview",
