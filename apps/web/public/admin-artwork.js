@@ -205,12 +205,13 @@ export function nextSortOrder(records) {
 }
 
 // Move the item at `index` one step in `direction` ('up' | 'down'). Returns a
-// new array (no mutation). At list boundaries the array is returned unchanged.
+// new array (no mutation). At list boundaries returns the *same* array reference
+// so callers can detect a no-op and skip saving.
 export function reorder(records, index, direction) {
-  const list = [...records];
-  if (index < 0 || index >= list.length) return list;
+  if (index < 0 || index >= records.length) return records;
   const swap = direction === 'up' ? index - 1 : index + 1;
-  if (swap < 0 || swap >= list.length) return list;
+  if (swap < 0 || swap >= records.length) return records;
+  const list = [...records];
   [list[index], list[swap]] = [list[swap], list[index]];
   return list;
 }

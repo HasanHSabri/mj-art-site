@@ -171,6 +171,30 @@ test('reorder swaps and respects boundaries, returning a new array', () => {
   assert.notEqual(reorder(list, 0, 'down'), list);
 });
 
+test('reorder boundary no-op returns the same array reference (no save needed)', () => {
+  const list = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+  // First item move-up -> same reference (boundary no-op)
+  assert.equal(reorder(list, 0, 'up'), list);
+  // Last item move-down -> same reference (boundary no-op)
+  assert.equal(reorder(list, list.length - 1, 'down'), list);
+  // Out-of-range index -> same reference
+  assert.equal(reorder(list, -1, 'up'), list);
+  assert.equal(reorder(list, 99, 'down'), list);
+});
+
+test('reorder non-boundary returns a new array reference', () => {
+  const list = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+  assert.notEqual(reorder(list, 0, 'down'), list);
+  assert.notEqual(reorder(list, 1, 'up'), list);
+  assert.notEqual(reorder(list, 2, 'up'), list);
+});
+
+test('reorder does not mutate the source array on boundary no-op', () => {
+  const list = [{ id: 'a' }, { id: 'b' }, { id: 'c' }];
+  reorder(list, 0, 'up');
+  assert.deepEqual(list.map((r) => r.id), ['a', 'b', 'c']);
+});
+
 test('renumber produces contiguous 1..N preserving order, new array', () => {
   const list = [{ id: 'a', sortOrder: 9 }, { id: 'b', sortOrder: 4 }, { id: 'c', sortOrder: 7 }];
   const out = renumber(list);

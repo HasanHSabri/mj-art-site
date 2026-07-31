@@ -547,3 +547,200 @@ test('served uploaded image carries X-Content-Type-Options: nosniff', async () =
   assert.equal(imgRes.headers.get('x-content-type-options'), 'nosniff');
   assert.equal(imgRes.headers.get('content-type'), 'image/jpeg');
 });
+
+// ---------------------------------------------------------------------------
+// serveUploadedImage strict canonical-path allowlist (metadata-leak prevention)
+// ---------------------------------------------------------------------------
+
+// Helper: store artworks.json plus a canonical image so we can prove the image
+// route refuses to serve the metadata key.
+function makeLeakProbeEnv() {
+  const env = makeStoreEnv();
+  const store = env._store;
+  // Store raw artworks.json metadata.
+  store.set(ARTWORKS_KEY, {
+    async json() { return JSON.parse(JSON.stringify([validRecord()])); },
+    async text() { return JSON.stringify([validRecord()]); }
+  });
+  // Store a canonical full.jpg image object.
+  const headerMap = {
+    contentType: 'content-type',
+    contentLanguage: 'content-language',
+    contentDisposition: 'content-disposition',
+    contentEncoding: 'content-encoding',
+    cacheControl: 'cache-control',
+    cacheExpiry: 'cache-expiry'
+  };
+  store.set('artwork/catalog/mj-001/full.jpg', {
+    body: jpegBytes(),
+    httpMetadata: { contentType: 'image/jpeg' },
+    writeHttpMetadata(headers) {
+      for (const [hk, hv] of Object.entries(this.httpMetadata)) {
+        headers.set(headerMap[hk] || hk, hv);
+      }
+    }
+  });
+  return env;
+}
+
+test('image route refuses to serve raw artworks.json metadata (404)', async () => {
+  const env = makeLeakProbeEnv();
+  const res = await worker.fetch(req('/artwork-uploaded/artworks.json'), env);
+  assert.equal(res.status, 404);
+  const text = await res.text();
+  assert.equal(text.includes('catalogNumber'), false);
+  assert.equal(text.includes('provenance'), false);
+  assert.equal(text.includes('MJ-001'), false);
+});
+
+test('image route refuses arbitrary keys (404)', async () => {
+  const env = makeLeakProbeEnv();
+  for (const badPath of [
+    '/artwork-uploaded/some-random-key',
+    '/artwork-uploaded/artwork/catalog/mj-001',
+    '/artwork-uploaded/artwork/catalog/mj-001/medium.jpg',
+    '/artwork-uploaded/artwork/catalog/mj-001/full.png',
+    '/artwork-uploaded/artwork/catalog/xyz-001/full.jpg'
+  ]) {
+    const res = await worker.fetch(req(badPath), env);
+    assert.equal(res.status, 404, `expected 404 for ${badPath}`);
+  }
+});
+
+test('image route refuses SVG and noncanonical paths (404)', async () => {
+  const env = makeLeakProbeEnv();
+  for (const badPath of [
+    '/artwork-uploaded/artwork/catalog/mj-001/evil.svg',
+    '/artwork-uploaded/artwork/catalog/mj-001/full.svg',
+    '/artwork-uploaded/artwork/catalog/MJ-001/full.jpg',
+    '/artwork-uploaded/artwork/catalog/mj-1/full.jpg'
+  ]) {
+    const res = await worker.fetch(req(badPath), env);
+    assert.equal(res.status, 404, `expected 404 for ${badPath}`);
+  }
+});
+
+test('image route serves canonical full.jpg and thumb.jpg only', async () => {
+  const env = makeLeakProbeEnv();
+  const fullRes = await worker.fetch(req('/artwork-uploaded/artwork/catalog/mj-001/full.jpg'), env);
+  assert.equal(fullRes.status, 200);
+  assert.equal(fullRes.headers.get('content-type'), 'image/jpeg');
+  assert.equal(fullRes.headers.get('x-content-type-options'), 'nosniff');
+});
+
+test('image route serves canonical misc path', async () => {
+  const env = makeLeakProbeEnv();
+  const headerMap = { contentType: 'content-type' };
+  env._store.set('artwork/catalog/misc-001/thumb.jpg', {
+    body: jpegBytes(),
+    httpMetadata: { contentType: 'image/jpeg' },
+    writeHttpMetadata(headers) {
+      for (const [hk, hv] of Object.entries(this.httpMetadata)) {
+        headers.set(headerMap[hk] || hk, hv);
+      }
+    }
+  });
+  const res = await worker.fetch(req('/artwork-uploaded/artwork/catalog/misc-001/thumb.jpg'), env);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/jpeg');
+});
+
+test('image route never calls R2.get for rejected paths', async () => {
+  const env = makeLeakProbeEnv();
+  const originalGet = env.ARTWORK_IMAGES.get;
+  let calledKeys = [];
+  env.ARTWORK_IMAGES.get = async function (key) {
+    calledKeys.push(key);
+    return originalGet.call(this, key);
+  };
+  // artworks.json path must be rejected without R2 lookup.
+  await worker.fetch(req('/artwork-uploaded/artworks.json'), env);
+  assert.equal(calledKeys.includes('artworks.json'), false,
+    'R2.get must not be called for artworks.json');
+});
+
+// ---------------------------------------------------------------------------
+// Login hardening (malformed JSON, constant-time, session token segments)
+// ---------------------------------------------------------------------------
+
+test('login with malformed JSON body returns 400', async () => {
+  const env = makeEnv(undefined);
+  const res = await worker.fetch(req('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{not valid json'
+  }), env);
+  assert.equal(res.status, 400);
+});
+
+test('login with empty body returns 400', async () => {
+  const env = makeEnv(undefined);
+  const res = await worker.fetch(req('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: ''
+  }), env);
+  assert.equal(res.status, 400);
+});
+
+test('login with correct password succeeds and sets session cookie', async () => {
+  const env = makeEnv(undefined);
+  const res = await worker.fetch(req('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: 'secret' })
+  }), env);
+  assert.equal(res.status, 200);
+  const cookie = res.headers.get('set-cookie');
+  assert.ok(cookie && cookie.startsWith('mj_art_admin='), 'session cookie is set');
+});
+
+test('login with wrong password returns 401', async () => {
+  const env = makeEnv(undefined);
+  const res = await worker.fetch(req('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: 'wrong' })
+  }), env);
+  assert.equal(res.status, 401);
+});
+
+test('login with non-object JSON body returns 401 (no crash)', async () => {
+  const env = makeEnv(undefined);
+  const res = await worker.fetch(req('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '"just a string"'
+  }), env);
+  assert.equal(res.status, 401);
+});
+
+test('session token with three segments is rejected (401)', async () => {
+  const env = makeEnv(JSON.stringify(twoValidRecords()));
+  const token = await mintToken(env.ADMIN_SESSION_SECRET);
+  const tampered = `${token}.extra`;
+  const res = await worker.fetch(req('/api/admin/artworks', {
+    headers: { cookie: `${SESSION_COOKIE}=${tampered}` }
+  }), env);
+  assert.equal(res.status, 401);
+});
+
+test('session token with one segment is rejected (401)', async () => {
+  const env = makeEnv(JSON.stringify(twoValidRecords()));
+  const token = await mintToken(env.ADMIN_SESSION_SECRET);
+  const single = token.split('.')[0];
+  const res = await worker.fetch(req('/api/admin/artworks', {
+    headers: { cookie: `${SESSION_COOKIE}=${single}` }
+  }), env);
+  assert.equal(res.status, 401);
+});
+
+test('session token with tampered signature is rejected (401)', async () => {
+  const env = makeEnv(JSON.stringify(twoValidRecords()));
+  const token = await mintToken(env.ADMIN_SESSION_SECRET);
+  const [payload] = token.split('.');
+  const res = await worker.fetch(req('/api/admin/artworks', {
+    headers: { cookie: `${SESSION_COOKIE}=${payload}.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA` }
+  }), env);
+  assert.equal(res.status, 401);
+});

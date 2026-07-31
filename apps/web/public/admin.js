@@ -326,6 +326,7 @@ function writeArtworkToForm(record) {
   fields.sortOrder.value = record.sortOrder == null ? '' : String(record.sortOrder);
   fields.category.value = values.category;
   fields.catalogNumber.value = values.catalogNumber;
+  fields.catalogNumber.disabled = true;
   fields.title.value = values.title;
   fields.image.value = values.image;
   fields.thumbnail.value = values.thumbnail;
@@ -355,6 +356,7 @@ function resetForm(statusMessage) {
   editingId = null;
   fields.id.value = '';
   fields.sortOrder.value = '';
+  fields.catalogNumber.disabled = false;
   fields.availability.value = 'Available';
   fields.category.value = 'catalogue';
   provenanceBlock.hidden = true;
@@ -413,10 +415,17 @@ function parseOptionalNumber(value) {
 function renderArtworkList() {
   artworkList.innerHTML = '';
   const term = artworkSearch.value.trim().toLowerCase();
+  const isFiltered = !!term;
   const items = artworks.map((artwork, index) => ({ artwork, index })).filter(({ artwork }) => {
     if (!term) return true;
     return (artwork.title || '').toLowerCase().includes(term) || (artwork.catalogNumber || '').toLowerCase().includes(term);
   });
+
+  if (isFiltered) {
+    reorderNote.textContent = 'Search is active. Clear the search to reorder items.';
+  } else if (!reorderNote.textContent || reorderNote.textContent.includes('Search is active')) {
+    reorderNote.textContent = '';
+  }
 
   if (!items.length) {
     artworkList.innerHTML = '<p class="empty-state">No artwork entries match.</p>';
@@ -427,13 +436,15 @@ function renderArtworkList() {
     const card = document.createElement('article');
     card.className = 'draft-card';
     if (artwork.id === editingId) card.classList.add('editing');
+    const moveUpDisabled = isFiltered || index === 0;
+    const moveDownDisabled = isFiltered || index === artworks.length - 1;
     card.innerHTML = `
       <img src="${escapeAttribute(artwork.thumbnail || artwork.image)}" alt="${escapeAttribute(artwork.title)}">
       <h3>${escapeHtml(artwork.title)}</h3>
       <p class="card-meta">${escapeHtml(artwork.catalogNumber)} · ${escapeHtml(artwork.availability)} · #${artwork.sortOrder}</p>
       <div class="card-buttons">
-        <button class="button ghost-button icon-button" type="button" data-move="up" ${index === 0 ? 'disabled' : ''}>Move up</button>
-        <button class="button ghost-button icon-button" type="button" data-move="down" ${index === items.length - 1 ? 'disabled' : ''}>Move down</button>
+        <button class="button ghost-button icon-button" type="button" data-move="up" ${moveUpDisabled ? 'disabled' : ''}>Move up</button>
+        <button class="button ghost-button icon-button" type="button" data-move="down" ${moveDownDisabled ? 'disabled' : ''}>Move down</button>
       </div>
       <div class="card-buttons">
         <button class="button ghost-button" type="button" data-edit>Edit</button>

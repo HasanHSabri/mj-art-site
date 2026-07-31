@@ -19,6 +19,12 @@ const MAX_THUMB_BYTES = 1 * 1024 * 1024;
 const MAX_UPLOAD_COMBINED_BYTES = MAX_FULL_BYTES + MAX_THUMB_BYTES;
 const JPEG = 'image/jpeg';
 
+// Strict allowlist for served uploaded-image keys. Only canonical catalog JPEG
+// paths (full/thumb) ever match; everything else -- including artworks.json,
+// arbitrary keys, SVG, or noncanonical paths -- is rejected with 404 before any
+// R2 lookup. This mirrors the canonical regex semantics used for validation.
+const SERVED_IMAGE_KEY_RE = /^artwork\/catalog\/(mj|misc)-\d{3}\/(full|thumb)\.jpg$/;
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -275,8 +281,11 @@ function isJpeg(buf) {
 async function serveUploadedImage(url, env) {
   const key = url.pathname.replace('/artwork-uploaded/', '');
 
-  // No arbitrary user path: only canonical image keys are ever served here.
-  if (key.includes('..') || key.includes('\0')) {
+  // Strict canonical-path allowlist: only artwork/catalog/(mj|misc)-NNN/(full|thumb).jpg
+  // is ever served. artworks.json, arbitrary keys, SVG, and noncanonical paths
+  // all fall through to 404 here -- before any R2 lookup -- so raw metadata can
+  // never be fetched through this route.
+  if (!SERVED_IMAGE_KEY_RE.test(key)) {
     return new Response('Not found', { status: 404 });
   }
 
@@ -298,8 +307,15 @@ async function login(request, env) {
     return jsonResponse({ error: 'Admin secrets are not configured.' }, 503);
   }
 
-  const { password } = await request.json();
-  if (password !== env.ADMIN_PASSWORD) {
+  let body;
+  try {
+    body = await request.json();
+  } catch (error) {
+    return jsonResponse({ error: 'Request body must be valid JSON.' }, 400);
+  }
+
+  const password = body && typeof body === 'object' ? body.password : undefined;
+  if (typeof password !== 'string' || !timingSafeEqual(password, env.ADMIN_PASSWORD)) {
     return jsonResponse({ error: 'Incorrect password.' }, 401);
   }
 
@@ -331,11 +347,12 @@ async function createSessionToken(env) {
 }
 
 async function verifySessionToken(token, env) {
-  const [payload, signature] = token.split('.');
-  if (!payload || !signature) return false;
+  const parts = token.split('.');
+  if (parts.length !== 2) return false;
+  const [payload, signature] = parts;
 
   const expected = await sign(payload, env.ADMIN_SESSION_SECRET);
-  if (signature !== expected) return false;
+  if (!timingSafeEqual(signature, expected)) return false;
 
   try {
     const data = JSON.parse(base64UrlDecode(payload));
@@ -364,6 +381,23 @@ function getCookie(request, name) {
     .map((item) => item.trim())
     .find((item) => item.startsWith(`${name}=`))
     ?.slice(name.length + 1);
+}
+
+// Constant-time string comparison (dependency-free). Compares the UTF-8 byte
+// sequences of two strings, always scanning the full length of the shorter.
+// Returns false immediately on length mismatch (length itself is not secret
+// here: passwords and HMAC signatures have known lengths).
+function timingSafeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const encoder = new TextEncoder();
+  const bufA = encoder.encode(a);
+  const bufB = encoder.encode(b);
+  if (bufA.length !== bufB.length) return false;
+  let diff = 0;
+  for (let i = 0; i < bufA.length; i++) {
+    diff |= bufA[i] ^ bufB[i];
+  }
+  return diff === 0;
 }
 
 function jsonResponse(body, status = 200) {

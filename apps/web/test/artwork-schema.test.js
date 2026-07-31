@@ -15,7 +15,9 @@ import {
   CANONICAL_FIELDS,
   PROVENANCE_FIELDS,
   ALLOWED_SOURCES,
-  MAX_PUT_BODY_BYTES
+  MAX_PUT_BODY_BYTES,
+  ALLOWED_CATALOGUE_SIZES,
+  MISC_SIZE_CATEGORY
 } from '../src/artwork-schema.js';
 
 // A minimal valid canonical record. Fields mirror catalog/catalog.json.
@@ -393,4 +395,56 @@ test('clone handles primitives, null, and nested structures', () => {
   assert.deepEqual(copy, obj);
   assert.notEqual(copy, obj);
   assert.notEqual(copy.a, obj.a);
+});
+
+// ---------------------------------------------------------------------------
+// sizeCategory strict allowlist (runtime defence)
+// ---------------------------------------------------------------------------
+
+test('ALLOWED_CATALOGUE_SIZES is exactly the 11 canonical catalogue sizes', () => {
+  assert.deepEqual([...ALLOWED_CATALOGUE_SIZES].sort(), [
+    '20x20', '20x25', '25x25', '30x23', '30x30',
+    '35x28', '40x30', '47x57', '50x25', '55x30', '58x73'
+  ]);
+  assert.equal(ALLOWED_CATALOGUE_SIZES.size, 11);
+});
+
+test('MISC_SIZE_CATEGORY is the miscellaneous sentinel', () => {
+  assert.equal(MISC_SIZE_CATEGORY, 'miscellaneous');
+});
+
+test('validateArtworkRecord rejects catalogue sizeCategory not in canonical set', () => {
+  const r = validRecord({ sizeCategory: '99x99' });
+  assert.match(validateArtworkRecord(r), /canonical catalogue sizes/);
+});
+
+test('validateArtworkRecord rejects catalogue sizeCategory with arbitrary string', () => {
+  const r = validRecord({ sizeCategory: 'small' });
+  assert.match(validateArtworkRecord(r), /canonical catalogue sizes/);
+});
+
+test('validateArtworkRecord accepts all 11 canonical catalogue sizes', () => {
+  for (const size of ALLOWED_CATALOGUE_SIZES) {
+    const dims = { widthCm: 20, heightCm: 20, label: size + ' cm', orientation: 'Square' };
+    assert.equal(validateArtworkRecord(validRecord({ sizeCategory: size, dimensions: dims })), null,
+      `sizeCategory ${size} should be accepted`);
+  }
+});
+
+test('validateArtworkRecord rejects misc sizeCategory != miscellaneous', () => {
+  const r = validRecord({
+    category: 'miscellaneous',
+    id: 'misc-001',
+    catalogNumber: 'MISC-001',
+    sizeCategory: '20x20',
+    dimensions: { widthCm: null, heightCm: null, label: '', orientation: 'Unknown' }
+  });
+  assert.match(validateArtworkRecord(r), /must be 'miscellaneous'/);
+});
+
+test('validateArtworkList rejects PUT with non-canonical sizeCategory', () => {
+  const r = validRecord({ sizeCategory: 'huge' });
+  const result = validateArtworkList([r]);
+  assert.equal(result.ok, false);
+  assert.match(result.error, /canonical catalogue sizes/);
 });

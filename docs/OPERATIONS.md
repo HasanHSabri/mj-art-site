@@ -73,9 +73,13 @@ Read-only inventory/backup uses a **separate, dedicated** token
   - `artwork/catalog/<catalogNumber-lower>/full.jpg`
   - `artwork/catalog/<catalogNumber-lower>/thumb.jpg`
   Both are stored with `image/jpeg` metadata and served with
-  `X-Content-Type-Options: nosniff`. There is no user-controlled path and no
-  upload delete path. The previous timestamp-based upload path (`artwork/<timestamp>-<slug>`)
-  is removed.
+  `X-Content-Type-Options: nosniff`. The `/artwork-uploaded/` route
+  strict-whitelists only canonical catalog JPEG keys
+  (`artwork/catalog/(mj|misc)-NNN/(full|thumb).jpg`); `artworks.json`,
+  arbitrary keys, SVG, and noncanonical paths all return 404 before any R2
+  lookup, so raw metadata is never fetchable through the image route. There is
+  no upload delete path. The previous timestamp-based upload path
+  (`artwork/<timestamp>-<slug>`) is removed.
 - Add / edit / remove perform a **full overwrite** of the root `artworks.json`
   object in the bucket. Records are canonicalized (exact canonical field set,
   deep-cloned) and sorted by `sortOrder` before persistence.

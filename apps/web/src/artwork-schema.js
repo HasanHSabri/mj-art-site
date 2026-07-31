@@ -50,6 +50,25 @@ const ALLOWED_AVAILABILITY = new Set(['Available', 'Sold']);
 const ALLOWED_CURRENCY = new Set(['AUD']);
 const ALLOWED_ORIENTATIONS = new Set(['Horizontal', 'Vertical', 'Square', 'Unknown']);
 
+// Exact canonical size set for catalogue works. Must match the client-side
+// CANONICAL_SIZES list in public/admin-artwork.js. Miscellaneous works use the
+// single sentinel MISC_SIZE_CATEGORY. The server-side validateArtworkRecord
+// enforces this as the authoritative allowlist.
+export const ALLOWED_CATALOGUE_SIZES = new Set([
+  '20x20',
+  '20x25',
+  '25x25',
+  '30x23',
+  '30x30',
+  '35x28',
+  '40x30',
+  '47x57',
+  '50x25',
+  '55x30',
+  '58x73'
+]);
+export const MISC_SIZE_CATEGORY = 'miscellaneous';
+
 const ID_RE = /^[a-z]+-\d{3}$/;
 const R2_IMAGE_PATH_RE = /^\/artwork-uploaded\/artwork\/catalog\/[a-z]+-\d{3}\/(full|thumb)\.jpg$/;
 
@@ -181,9 +200,19 @@ export function validateArtworkRecord(r, ctx = '(unknown)') {
     return `[${ctx}] medium must be a string or null.`;
   }
 
-  // sizeCategory
+  // sizeCategory - strict allowlist per category. Catalogue works must use one
+  // of the exact canonical sizes; miscellaneous works must use the sentinel.
   if (typeof r.sizeCategory !== 'string' || r.sizeCategory.length === 0) {
     return `[${ctx}] sizeCategory must be a non-empty string.`;
+  }
+  if (r.category === 'catalogue') {
+    if (!ALLOWED_CATALOGUE_SIZES.has(r.sizeCategory)) {
+      return `[${ctx}] sizeCategory must be one of the canonical catalogue sizes, got: ${safeStr(r.sizeCategory)}`;
+    }
+  } else {
+    if (r.sizeCategory !== MISC_SIZE_CATEGORY) {
+      return `[${ctx}] sizeCategory for miscellaneous works must be '${MISC_SIZE_CATEGORY}', got: ${safeStr(r.sizeCategory)}`;
+    }
   }
 
   // availability
