@@ -3,9 +3,12 @@
 Canonical, validated 86-record MJ painting catalogue. Single schema for all
 records. This is the **authoritative source of truth** for the MJ art catalogue.
 
-> **Runtime import is a future step.** This package defines the catalogue data;
-> uploading images to R2 and wiring the web app to consume `catalog.json` are
-> **not** part of this phase.
+> **Runtime is now wired to this catalogue's schema.** The web Worker reads
+> artwork metadata from the R2 `ARTWORK_IMAGES` key `artworks.json`, validated
+> against the single schema below. Public endpoints serve a projected, ordered
+> view (no `catalogNumber`, `sortOrder`, or `provenance`). The admin PUT accepts
+> only this canonical schema. Uploading images to R2 and full admin/public UI
+> are separate phases.
 
 ## Counts
 

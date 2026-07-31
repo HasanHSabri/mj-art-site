@@ -24,31 +24,40 @@ async function loadArtworks() {
   try {
     const response = await fetch(`/api/artworks?published=${Date.now()}`, { cache: 'no-store' });
     if (!response.ok) {
-      throw new Error('Artwork data could not be loaded.');
+      renderEmptyGallery();
+      return;
     }
 
     const artworks = await response.json();
     renderGallery(artworks);
   } catch (error) {
-    setupGalleryCards(document.querySelectorAll('.painting-card'));
+    renderEmptyGallery();
   }
+}
+
+// Clear any server-rendered/legacy cards and show an empty gallery container.
+// The public API is the only data source; there is no legacy data path.
+function renderEmptyGallery() {
+  galleryGrid.innerHTML = '';
+  setupGalleryCards([]);
 }
 
 function renderGallery(artworks) {
   galleryGrid.innerHTML = '';
 
-  [...artworks].reverse().forEach((artwork) => {
+  // The API returns records already ordered (ascending); render as-is.
+  artworks.forEach((artwork) => {
     const card = document.createElement('article');
     card.className = 'painting-card';
     card.role = 'button';
     card.setAttribute('aria-haspopup', 'dialog');
     card.setAttribute('aria-label', `View details for ${artwork.title}`);
     card.dataset.title = artwork.title;
-    card.dataset.medium = artwork.medium;
-    card.dataset.size = artwork.size;
+    card.dataset.medium = artwork.medium || '';
+    card.dataset.size = artwork.dimensions ? artwork.dimensions.label || '' : '';
     card.dataset.availability = artwork.availability;
     card.dataset.description = artwork.description;
-    card.dataset.image = artwork.image;
+    card.dataset.image = artwork.thumbnail || artwork.image;
 
     const imageClass = artwork.containImage ? 'painting-image painting-image-contained' : 'painting-image';
     card.innerHTML = `
@@ -151,5 +160,5 @@ inquiryForm.addEventListener('submit', (event) => {
 });
 
 function escapeHtml(value) {
-  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }

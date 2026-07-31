@@ -177,16 +177,22 @@ async function verifyPublicArtwork(artworkId) {
 
 function readArtworkFromForm() {
   const title = fields.title.value.trim() || 'Untitled painting';
+  const dimensionsLabelValue = fields.size.value.trim();
 
   return {
     id: fields.id.value || slugify(title),
     title,
     image: fields.image.value.trim(),
-    medium: fields.medium.value.trim() || 'To be added',
-    size: fields.size.value.trim() || 'To be added',
-    availability: fields.availability.value.trim() || 'To be added',
-    cardNote: fields.cardNote.value.trim() || 'Details to be added',
-    description: fields.description.value.trim() || 'Artwork details to be added later.',
+    medium: fields.medium.value.trim() || null,
+    dimensions: {
+      widthCm: null,
+      heightCm: null,
+      label: dimensionsLabelValue,
+      orientation: 'Unknown'
+    },
+    availability: fields.availability.value.trim() || 'Available',
+    cardNote: fields.cardNote.value.trim(),
+    description: fields.description.value.trim(),
     containImage: fields.containImage.checked
   };
 }
@@ -195,11 +201,11 @@ function writeArtworkToForm(artwork) {
   fields.id.value = artwork.id;
   fields.title.value = artwork.title;
   fields.image.value = artwork.image;
-  fields.medium.value = artwork.medium;
-  fields.size.value = artwork.size;
-  fields.availability.value = artwork.availability;
-  fields.cardNote.value = artwork.cardNote;
-  fields.description.value = artwork.description;
+  fields.medium.value = artwork.medium || '';
+  fields.size.value = artwork.dimensions ? artwork.dimensions.label || '' : '';
+  fields.availability.value = artwork.availability || '';
+  fields.cardNote.value = artwork.cardNote || '';
+  fields.description.value = artwork.description || '';
   fields.containImage.checked = Boolean(artwork.containImage);
   updatePreview();
   window.scrollTo({ top: 0, behavior: 'smooth' });

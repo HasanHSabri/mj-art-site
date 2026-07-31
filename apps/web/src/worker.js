@@ -1,3 +1,11 @@
+import {
+  MAX_PUT_BODY_BYTES,
+  dimensionsLabel,
+  toPublicList,
+  sortByOrder,
+  validateArtworkList
+} from './artwork-schema.js';
+
 const ARTWORKS_KEY = 'artworks.json';
 const SESSION_COOKIE = 'mj_art_admin';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
@@ -11,7 +19,7 @@ export default {
     }
 
     if (url.pathname === '/api/artworks' && request.method === 'GET') {
-      return jsonResponse(await getArtworks(request, env));
+      return handlePublicArtworks(env);
     }
 
     if ((url.pathname === '/' || url.pathname === '/index.html') && request.method === 'GET') {
@@ -29,7 +37,7 @@ export default {
     if (url.pathname === '/api/admin/artworks' && request.method === 'GET') {
       const auth = await requireAdmin(request, env);
       if (auth) return auth;
-      return jsonResponse(await getArtworks(request, env));
+      return handleAdminArtworks(env);
     }
 
     if (url.pathname === '/api/admin/artworks' && request.method === 'PUT') {
@@ -52,29 +60,67 @@ export default {
   }
 };
 
-async function getArtworks(request, env) {
+// Read the persisted catalogue from R2. Single runtime metadata source.
+// Returns { state: 'present', records } | { state: 'missing' } | { state: 'invalid' }.
+async function readStoredCatalog(env) {
   const stored = await env.ARTWORK_IMAGES.get(ARTWORKS_KEY);
-  if (stored) {
-    return stored.json();
+  if (!stored) return { state: 'missing' };
+
+  let parsed;
+  try {
+    parsed = await stored.json();
+  } catch (error) {
+    return { state: 'invalid' };
   }
 
-  const fallbackUrl = new URL('/artworks.json', request.url);
-  const fallback = await env.ASSETS.fetch(new Request(fallbackUrl, request));
-  return fallback.json();
+  const result = validateArtworkList(parsed);
+  if (!result.ok) return { state: 'invalid' };
+
+  return { state: 'present', records: result.records };
+}
+
+// GET /api/artworks -> public projection, sorted by sortOrder ascending.
+// Missing metadata returns an empty array (empty preview is valid). Invalid
+// stored metadata returns a generic 500.
+async function handlePublicArtworks(env) {
+  const catalog = await readStoredCatalog(env);
+  if (catalog.state === 'invalid') return jsonResponse({ error: 'Stored artwork data is invalid.' }, 500);
+  if (catalog.state === 'missing') return jsonResponse([]);
+  return jsonResponse(toPublicList(catalog.records));
+}
+
+// GET /api/admin/artworks -> full canonical records, sorted by sortOrder ascending.
+// Missing metadata returns an empty array. Invalid stored metadata returns 500.
+async function handleAdminArtworks(env) {
+  const catalog = await readStoredCatalog(env);
+  if (catalog.state === 'invalid') return jsonResponse({ error: 'Stored artwork data is invalid.' }, 500);
+  if (catalog.state === 'missing') return jsonResponse([]);
+  return jsonResponse(sortByOrder(catalog.records));
 }
 
 async function servePublicIndex(request, env) {
   const indexUrl = new URL('/index.html', request.url);
   const asset = await env.ASSETS.fetch(indexUrl);
   const html = await asset.text();
-  const artworks = await getArtworks(request, env);
-  const galleryHtml = renderArtworkCards(artworks);
+
+  const catalog = await readStoredCatalog(env);
+  let galleryHtml;
+  if (catalog.state === 'present') {
+    galleryHtml = renderArtworkCards(toPublicList(catalog.records));
+  } else {
+    // Missing or invalid metadata: render an empty gallery container. There is
+    // no legacy/static data path; the client hydrates from /api/artworks.
+    galleryHtml = '';
+  }
+
+  const status = catalog.state === 'invalid' ? 500 : 200;
   const rendered = html.replace(
     /<!-- artwork-gallery:start -->[\s\S]*<!-- artwork-gallery:end -->/,
-    `<!-- artwork-gallery:start -->\n${galleryHtml}\n          <!-- artwork-gallery:end -->`
+    `<!-- artwork-gallery:start -->\n${galleryHtml}          <!-- artwork-gallery:end -->`
   );
 
   return new Response(rendered, {
+    status,
     headers: {
       'cache-control': 'no-store',
       'content-type': 'text/html; charset=UTF-8'
@@ -82,12 +128,16 @@ async function servePublicIndex(request, env) {
   });
 }
 
+// Renders the server-side gallery from already-projected public records (no
+// catalogNumber, sortOrder, or provenance). Ordered by sortOrder ascending.
 function renderArtworkCards(artworks) {
-  const cards = [...artworks].reverse().map((artwork) => {
+  const cards = artworks.map((artwork) => {
     const imageClass = artwork.containImage ? 'painting-image painting-image-contained' : 'painting-image';
+    const imageSrc = artwork.thumbnail || artwork.image;
+    const medium = artwork.medium || '';
 
-    return `          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for ${escapeAttribute(artwork.title)}" data-title="${escapeAttribute(artwork.title)}" data-medium="${escapeAttribute(artwork.medium)}" data-size="${escapeAttribute(artwork.size)}" data-availability="${escapeAttribute(artwork.availability)}" data-description="${escapeAttribute(artwork.description)}" data-image="${escapeAttribute(artwork.image)}">
-            <div class="${imageClass}"><img src="${escapeAttribute(artwork.image)}" alt="${escapeAttribute(artwork.title)}"></div>
+    return `          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for ${escapeAttribute(artwork.title)}" data-title="${escapeAttribute(artwork.title)}" data-medium="${escapeAttribute(medium)}" data-size="${escapeAttribute(dimensionsLabel(artwork))}" data-availability="${escapeAttribute(artwork.availability)}" data-description="${escapeAttribute(artwork.description)}" data-image="${escapeAttribute(imageSrc)}">
+            <div class="${imageClass}"><img src="${escapeAttribute(imageSrc)}" alt="${escapeAttribute(artwork.title)}"></div>
             <div class="painting-card-body">
               <h3>${escapeHtml(artwork.title)}</h3>
               <p>${escapeHtml(artwork.cardNote)}</p>
@@ -107,18 +157,40 @@ function renderArtworkCards(artworks) {
   return cards.join('\n\n');
 }
 
+// Admin PUT: strict canonical-schema validation, full overwrite. Enforces JSON
+// content type and a reasonable body-size cap. No legacy-schema acceptance.
 async function saveArtworks(request, env) {
-  const artworks = await request.json();
-  const validation = validateArtworks(artworks);
-
-  if (validation) {
-    return jsonResponse({ error: validation }, 400);
+  const contentType = request.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    return jsonResponse({ error: 'Request must be JSON.' }, 415);
   }
 
-  await env.ARTWORK_IMAGES.put(ARTWORKS_KEY, JSON.stringify(artworks, null, 2), {
+  const contentLength = Number(request.headers.get('content-length') || 0);
+  if (contentLength && contentLength > MAX_PUT_BODY_BYTES) {
+    return jsonResponse({ error: 'Request body is too large.' }, 413);
+  }
+
+  let artworks;
+  try {
+    const text = await request.text();
+    if (text.length > MAX_PUT_BODY_BYTES) {
+      return jsonResponse({ error: 'Request body is too large.' }, 413);
+    }
+    artworks = JSON.parse(text);
+  } catch (error) {
+    return jsonResponse({ error: 'Request body is not valid JSON.' }, 400);
+  }
+
+  const validation = validateArtworkList(artworks);
+  if (!validation.ok) {
+    return jsonResponse({ error: validation.error }, 400);
+  }
+
+  await env.ARTWORK_IMAGES.put(ARTWORKS_KEY, JSON.stringify(validation.records, null, 2), {
     httpMetadata: { contentType: 'application/json' }
   });
-  return jsonResponse({ ok: true, artworks });
+
+  return jsonResponse({ ok: true, artworks: sortByOrder(validation.records) });
 }
 
 async function uploadArtworkImage(request, env) {
@@ -219,26 +291,6 @@ async function sign(value, secret) {
   return base64UrlEncode(String.fromCharCode(...new Uint8Array(signature)));
 }
 
-function validateArtworks(artworks) {
-  if (!Array.isArray(artworks)) {
-    return 'Artwork data must be a list.';
-  }
-
-  for (const artwork of artworks) {
-    for (const key of ['id', 'title', 'image', 'medium', 'size', 'availability', 'cardNote', 'description']) {
-      if (!artwork[key] || typeof artwork[key] !== 'string') {
-        return `Missing ${key} on one artwork entry.`;
-      }
-    }
-
-    if (typeof artwork.containImage !== 'boolean') {
-      return 'containImage must be true or false.';
-    }
-  }
-
-  return null;
-}
-
 function getCookie(request, name) {
   const cookie = request.headers.get('cookie') || '';
   return cookie
@@ -259,7 +311,7 @@ function jsonResponse(body, status = 200) {
 }
 
 function escapeHtml(value) {
-  return value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
 function escapeAttribute(value) {
