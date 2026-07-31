@@ -23,6 +23,7 @@ import { Readable } from 'node:stream';
 
 const API_HOST = 'api.cloudflare.com';
 const API_BASE = `https://${API_HOST}`;
+const API_PREFIX = '/client/v4';
 const BUCKETS = ['mj-art-images', 'mj-art-images-preview'];
 const ARTWORKS_KEY = 'artworks.json';
 const UPLOADED_PREFIX = '/artwork-uploaded/';
@@ -235,17 +236,27 @@ function captureHeaders(headers) {
   return out;
 }
 
+// Pure Cloudflare API URL builder. Applies the /client/v4 REST prefix and
+// host-locks the result. The prefix is prepended to the argument rather than
+// folded into API_BASE because an absolute-path argument to the URL constructor
+// discards any path component of the base; prepending keeps the prefix for
+// every endpoint. No network access; fully unit-testable.
+function buildCfUrl(pathAndQuery) {
+  if (typeof pathAndQuery !== 'string' || pathAndQuery[0] !== '/') {
+    throw new Error('internal: path must start with /');
+  }
+  const url = new URL(API_PREFIX + pathAndQuery, API_BASE);
+  if (url.host !== API_HOST) {
+    throw new Error('blocked: request to non-cloudflare host ' + url.host);
+  }
+  return url;
+}
+
 // The only network function. It accepts no method argument and therefore can
 // only ever issue GET requests by construction. It restricts the host, blocks
 // redirects, retries bounded transient failures, and never returns credentials.
 async function cfGet(pathAndQuery, { token, expectJson }) {
-  if (typeof pathAndQuery !== 'string' || pathAndQuery[0] !== '/') {
-    throw new Error('internal: path must start with /');
-  }
-  const url = new URL(pathAndQuery, API_BASE);
-  if (url.host !== API_HOST) {
-    throw new Error('blocked: request to non-cloudflare host ' + url.host);
-  }
+  const url = buildCfUrl(pathAndQuery);
   // JSON endpoints negotiate application/json; raw object GETs negotiate bytes.
   const accept = expectJson ? 'application/json' : 'application/octet-stream, */*';
   let lastErr = null;
@@ -886,12 +897,53 @@ async function selfTest() {
     assert('norm: missing etag explicit null', rec.etag === null, String(rec.etag));
   }
 
+  // --- Cloudflare API URL building (REST prefix + host lock) ---
+  {
+    const acct = 'a'.repeat(32);
+    const verify = buildCfUrl('/user/tokens/verify');
+    assert('url: verify includes client prefix', verify.pathname === '/client/v4/user/tokens/verify', verify.pathname);
+    assert('url: verify host correct', verify.host === API_HOST, verify.host);
+    assert('url: verify href', verify.href === 'https://api.cloudflare.com/client/v4/user/tokens/verify', verify.href);
+
+    const list = buildCfUrl('/accounts/' + acct + '/r2/buckets/mj-art-images/objects');
+    assert('url: list includes client prefix', list.pathname === '/client/v4/accounts/' + acct + '/r2/buckets/mj-art-images/objects', list.pathname);
+    assert('url: list host correct', list.host === API_HOST, list.host);
+
+    const get = buildCfUrl('/accounts/' + acct + '/r2/buckets/mj-art-images/objects/artwork/x.jpg');
+    assert('url: get includes client prefix', get.pathname === '/client/v4/accounts/' + acct + '/r2/buckets/mj-art-images/objects/artwork/x.jpg', get.pathname);
+  }
+  {
+    // Query string is preserved verbatim (cursor pagination survives the prefix).
+    const acct = 'a'.repeat(32);
+    const q = buildCfUrl('/accounts/' + acct + '/r2/buckets/foo/objects?cursor=cur-9');
+    assert('url: query preserved', q.search === '?cursor=cur-9', q.search);
+    assert('url: query href', q.href === 'https://api.cloudflare.com/client/v4/accounts/' + acct + '/r2/buckets/foo/objects?cursor=cur-9', q.href);
+  }
+  {
+    // The suffix-in-base trap: a /client/v4 suffix on the base is discarded by
+    // an absolute-path argument, so the prefix must be applied to the argument
+    // instead. Show the constructor behavior directly.
+    const naive = new URL('/user/tokens/verify', 'https://' + API_HOST + '/client/v4');
+    assert('url: absolute path discards base suffix', naive.pathname === '/user/tokens/verify', naive.pathname);
+    const correct = buildCfUrl('/user/tokens/verify');
+    assert('url: prefix survives via arg prepend', correct.pathname === '/client/v4/user/tokens/verify', correct.pathname);
+  }
+  {
+    // Leading slash is required; other shapes must throw.
+    let threw = false;
+    try { buildCfUrl('no-leading-slash'); } catch { threw = true; }
+    assert('url: missing leading slash throws', threw, 'expected throw');
+    threw = false;
+    try { buildCfUrl(''); } catch { threw = true; }
+    assert('url: empty path throws', threw, 'expected throw');
+  }
+
   if (failures.length) {
     console.error('self-test FAILED:\n  - ' + failures.join('\n  - '));
     process.exitCode = 1;
     return;
   }
-  console.log('self-test OK: key encoding, path mapping, checksum, reference analysis, list parsing, field normalization');
+  console.log('self-test OK: key encoding, path mapping, checksum, reference analysis, list parsing, field normalization, API URL building');
 }
 
 async function main() {
