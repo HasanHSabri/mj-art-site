@@ -1,0 +1,87 @@
+sortOrder,id,catalogNumber,category,title,medium,dimensions.label,dimensions.orientation,widthCm,heightCm,sizeCategory,availability,price.amount,price.currency,cardNote,containImage,description.length,provenance.source
+1,mj-001,MJ-001,catalogue,"Still Waters, Moving Souls",Acrylic pouring paint,20x20 cm,Square,20,20,20x20,Available,40,AUD,$40 (postage extra),True,457,google-drive
+2,mj-002,MJ-002,catalogue,UMJ-002,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+3,mj-003,MJ-003,catalogue,UMJ-003,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+4,mj-004,MJ-004,catalogue,UMJ-004,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+5,mj-005,MJ-005,catalogue,UMJ-005,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+6,mj-006,MJ-006,catalogue,UMJ-006,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+7,mj-007,MJ-007,catalogue,UMJ-007,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+8,mj-008,MJ-008,catalogue,UMJ-008,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+9,mj-009,MJ-009,catalogue,UMJ-009,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+10,mj-010,MJ-010,catalogue,UMJ-010,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+11,mj-011,MJ-011,catalogue,UMJ-011,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+12,mj-012,MJ-012,catalogue,UMJ-012,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+13,mj-013,MJ-013,catalogue,UMJ-013,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+14,mj-014,MJ-014,catalogue,UMJ-014,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+15,mj-015,MJ-015,catalogue,UMJ-015,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+16,mj-016,MJ-016,catalogue,UMJ-016,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+17,mj-017,MJ-017,catalogue,UMJ-017,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+18,mj-018,MJ-018,catalogue,UMJ-018,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+19,mj-019,MJ-019,catalogue,UMJ-019,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+20,mj-020,MJ-020,catalogue,UMJ-020,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+21,mj-021,MJ-021,catalogue,UMJ-021,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+22,mj-022,MJ-022,catalogue,UMJ-022,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+23,mj-023,MJ-023,catalogue,Where the Light Breaks Through,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,False,1055,google-drive
+24,mj-024,MJ-024,catalogue,UMJ-024,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+25,mj-025,MJ-025,catalogue,UMJ-025,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+26,mj-026,MJ-026,catalogue,UMJ-026,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+27,mj-027,MJ-027,catalogue,UMJ-027,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+28,mj-028,MJ-028,catalogue,UMJ-028,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+29,mj-029,MJ-029,catalogue,UMJ-029,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+30,mj-030,MJ-030,catalogue,UMJ-030,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+31,mj-031,MJ-031,catalogue,UMJ-031,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+32,mj-032,MJ-032,catalogue,UMJ-032,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+33,mj-033,MJ-033,catalogue,UMJ-033,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+34,mj-034,MJ-034,catalogue,UMJ-034,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+35,mj-035,MJ-035,catalogue,UMJ-035,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+36,mj-036,MJ-036,catalogue,UMJ-036,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+37,mj-037,MJ-037,catalogue,UMJ-037,,20x20 cm,Square,20,20,20x20,Available,,,Details to be added,True,0,google-drive
+38,mj-038,MJ-038,catalogue,UMJ-038,,25x20 cm,Horizontal,25,20,20x25,Available,,,Details to be added,True,0,google-drive
+39,mj-039,MJ-039,catalogue,UMJ-039,,25x20 cm,Horizontal,25,20,20x25,Available,,,Details to be added,True,0,google-drive
+40,mj-040,MJ-040,catalogue,UMJ-040,,25x20 cm,Horizontal,25,20,20x25,Available,,,Details to be added,True,0,google-drive
+41,mj-041,MJ-041,catalogue,UMJ-041,,25x20 cm,Horizontal,25,20,20x25,Available,,,Details to be added,True,0,google-drive
+42,mj-042,MJ-042,catalogue,UMJ-042,,20x25 cm,Vertical,20,25,20x25,Available,,,Details to be added,True,0,google-drive
+43,mj-043,MJ-043,catalogue,UMJ-043,,20x25 cm,Vertical,20,25,20x25,Available,,,Details to be added,True,0,google-drive
+44,mj-044,MJ-044,catalogue,UMJ-044,,20x25 cm,Vertical,20,25,20x25,Available,,,Details to be added,True,0,google-drive
+45,mj-045,MJ-045,catalogue,UMJ-045,,20x25 cm,Vertical,20,25,20x25,Available,,,Details to be added,True,0,google-drive
+46,mj-046,MJ-046,catalogue,UMJ-046,,20x25 cm,Vertical,20,25,20x25,Available,,,Details to be added,True,0,google-drive
+47,mj-047,MJ-047,catalogue,UMJ-047,,20x25 cm,Vertical,20,25,20x25,Available,,,Details to be added,True,0,google-drive
+48,mj-048,MJ-048,catalogue,UMJ-048,,20x25 cm,Vertical,20,25,20x25,Available,,,Details to be added,True,0,google-drive
+49,mj-049,MJ-049,catalogue,UMJ-049,,25x25 cm,Square,25,25,25x25,Available,,,Details to be added,True,0,google-drive
+50,mj-050,MJ-050,catalogue,UMJ-050,,25x25 cm,Square,25,25,25x25,Available,,,Details to be added,True,0,google-drive
+51,mj-051,MJ-051,catalogue,UMJ-051,,25x25 cm,Square,25,25,25x25,Available,,,Details to be added,True,0,google-drive
+52,mj-052,MJ-052,catalogue,UMJ-052,,25x25 cm,Square,25,25,25x25,Available,,,Details to be added,True,0,google-drive
+53,mj-053,MJ-053,catalogue,Peace That Stayed,,30x23 cm,Horizontal,30,23,30x23,Available,,,Details to be added,False,1540,google-drive
+54,mj-054,MJ-054,catalogue,UMJ-054,,30x30 cm,Square,30,30,30x30,Available,,,Details to be added,True,0,google-drive
+55,mj-055,MJ-055,catalogue,Blooming Through the Breaking,Acrylic pouring paint,30x30 cm,Square,30,30,30x30,Available,,,Details to be added,True,1723,google-drive
+56,mj-056,MJ-056,catalogue,UMJ-056,,30x30 cm,Square,30,30,30x30,Available,,,Details to be added,True,0,google-drive
+57,mj-057,MJ-057,catalogue,UMJ-057,,30x30 cm,Square,30,30,30x30,Available,,,Details to be added,True,0,google-drive
+58,mj-058,MJ-058,catalogue,UMJ-058,,30x30 cm,Square,30,30,30x30,Available,,,Details to be added,True,0,google-drive
+59,mj-059,MJ-059,catalogue,Beautiful Chaos,Acrylic pouring paint,30x30 cm,Square,30,30,30x30,Available,70,AUD,$70,True,916,google-drive
+60,mj-060,MJ-060,catalogue,"Still Chosen, Still Held",,28x35 cm,Vertical,28,35,35x28,Available,,,Details to be added,False,3106,google-drive
+61,mj-061,MJ-061,catalogue,Still Blooming Through the Bruise,,28x35 cm,Vertical,28,35,35x28,Available,,,Details to be added,False,1157,google-drive
+62,mj-062,MJ-062,catalogue,UMJ-062,,30x40 cm,Vertical,30,40,40x30,Available,,,Details to be added,True,0,google-drive
+63,mj-063,MJ-063,catalogue,The Calm that Fought to Stay,,30x40 cm,Vertical,30,40,40x30,Available,,,Details to be added,False,1044,google-drive
+64,mj-064,MJ-064,catalogue,Falling Into You,Acrylic pouring paint,30x40 cm,Vertical,30,40,40x30,Available,,,Details to be added,False,1061,google-drive
+65,mj-065,MJ-065,catalogue,Where Colour Tries to Remember Light,,30x40 cm,Vertical,30,40,40x30,Available,,,Details to be added,False,1052,google-drive
+66,mj-066,MJ-066,catalogue,I Disappeared to Survive,,30x40 cm,Vertical,30,40,40x30,Available,,,Details to be added,False,1036,google-drive
+67,mj-067,MJ-067,catalogue,UMJ-067,,30x40 cm,Vertical,30,40,40x30,Available,,,Details to be added,True,0,google-drive
+68,mj-068,MJ-068,catalogue,UMJ-068,,30x40 cm,Vertical,30,40,40x30,Available,,,Details to be added,True,0,google-drive
+69,mj-069,MJ-069,catalogue,She Moves Like Water,,30x40 cm,Vertical,30,40,40x30,Available,,,Details to be added,False,1200,google-drive
+70,mj-070,MJ-070,catalogue,UMJ-070,,30x40 cm,Vertical,30,40,40x30,Available,,,Details to be added,True,0,google-drive
+71,mj-071,MJ-071,catalogue,UMJ-071,,30x40 cm,Vertical,30,40,40x30,Available,,,Details to be added,True,0,google-drive
+72,mj-072,MJ-072,catalogue,UMJ-072,,47x57 cm,Vertical,47,57,47x57,Available,,,Details to be added,True,0,google-drive
+73,mj-073,MJ-073,catalogue,UMJ-073,,25x50 cm,Vertical,25,50,50x25,Available,,,Details to be added,True,0,google-drive
+74,mj-074,MJ-074,catalogue,Veins of Gold in Violet Chaos,Acrylic pouring paint,30x55 cm,Vertical,30,55,55x30,Available,,,Details to be added,True,1090,google-drive
+75,mj-075,MJ-075,catalogue,UMJ-075,,58x73 cm,Vertical,58,73,58x73,Available,,,Details to be added,True,0,google-drive
+76,misc-001,MISC-001,miscellaneous,“Held in the Mess”,Acrylic pouring paint,To be added,Unknown,,,miscellaneous,Sold,,,Details to be added,False,849,r2-backup-or-live-fetch
+77,misc-002,MISC-002,miscellaneous,Painting 3,,To be added,Unknown,,,miscellaneous,Sold,,,Details to be added,False,34,r2-backup-or-live-fetch
+78,misc-003,MISC-003,miscellaneous,I Am Becoming,Acrylic paint with transfer print,To be added,Unknown,,,miscellaneous,Sold,,,Details to be added,False,869,r2-backup-or-live-fetch
+79,misc-004,MISC-004,miscellaneous,Spirit beneath the Ashes,Acrylic pouring paint,To be added,Unknown,,,miscellaneous,Sold,,,Details to be added,False,819,r2-backup-or-live-fetch
+80,misc-005,MISC-005,miscellaneous,Veil of Agony,Acrylic paint with transfer,30x30 cm,Square,30,30,miscellaneous,Available,100,AUD,$100,True,537,r2-backup-or-live-fetch
+81,misc-006,MISC-006,miscellaneous,Distant Tide,Acrylic Amsterdam paints,20x20 cm,Square,20,20,miscellaneous,Sold,30,AUD,$30,True,584,r2-backup-or-live-fetch
+82,misc-007,MISC-007,miscellaneous,Ignition of the Soul,Acrylic paint with sticker,To be added,Unknown,,,miscellaneous,Sold,,,Details to be added,False,1077,r2-backup-or-live-fetch
+83,misc-008,MISC-008,miscellaneous,Suffering and Transcendence,,To be added,Unknown,,,miscellaneous,Available,,,Details to be added,False,1701,r2-backup-or-live-fetch
+84,misc-009,MISC-009,miscellaneous,Where Fire Meets Flesh,,To be added,Unknown,,,miscellaneous,Sold,,,Details to be added,False,937,r2-backup-or-live-fetch
+85,misc-010,MISC-010,miscellaneous,Where I Still Grow,,To be added,Unknown,,,miscellaneous,Sold,,,Details to be added,False,1232,r2-backup-or-live-fetch
+86,misc-011,MISC-011,miscellaneous,The Lion Within,Acrylic pouring paint with transfer,30x40 cm,Vertical,30,40,miscellaneous,Available,,,Details to be added,False,2020,r2-backup-or-live-fetch

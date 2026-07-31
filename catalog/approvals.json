@@ -1,0 +1,177 @@
+{
+  "generatedFrom": "user-approved decisions (2026-07-31)",
+  "approvedMappings": [
+    {
+      "catalogNumber": "MJ-001",
+      "originalMiscLabel": "MISC-022",
+      "title": "Still Waters, Moving Souls",
+      "liveId": "still-waters-moving-souls"
+    },
+    {
+      "catalogNumber": "MJ-023",
+      "originalMiscLabel": "MISC-020",
+      "title": "Where the Light Breaks Through",
+      "liveId": "where-the-light-breaks-through"
+    },
+    {
+      "catalogNumber": "MJ-053",
+      "originalMiscLabel": "MISC-015",
+      "title": "Peace That Stayed",
+      "liveId": "peace-that-stayed"
+    },
+    {
+      "catalogNumber": "MJ-055",
+      "originalMiscLabel": "MISC-024",
+      "title": "Blooming Through the Breaking",
+      "liveId": "blooming-through-the-breaking"
+    },
+    {
+      "catalogNumber": "MJ-059",
+      "originalMiscLabel": "MISC-001",
+      "title": "Beautiful Chaos",
+      "liveId": "painting-1"
+    },
+    {
+      "catalogNumber": "MJ-060",
+      "originalMiscLabel": "MISC-014",
+      "title": "Still Chosen, Still Held",
+      "liveId": "still-chosen-still-held"
+    },
+    {
+      "catalogNumber": "MJ-061",
+      "originalMiscLabel": "MISC-013",
+      "title": "Still Blooming Through the Bruise",
+      "liveId": "still-blooming-through-the-bruise"
+    },
+    {
+      "catalogNumber": "MJ-063",
+      "originalMiscLabel": "MISC-018",
+      "title": "The Calm that Fought to Stay",
+      "liveId": "the-calm-that-fought-to-stay"
+    },
+    {
+      "catalogNumber": "MJ-064",
+      "originalMiscLabel": "MISC-010",
+      "title": "Falling Into You",
+      "liveId": "falling-into-you"
+    },
+    {
+      "catalogNumber": "MJ-065",
+      "originalMiscLabel": "MISC-021",
+      "title": "Where Colour Tries to Remember Light",
+      "liveId": "where-colour-tries-to-remember-light"
+    },
+    {
+      "catalogNumber": "MJ-066",
+      "originalMiscLabel": "MISC-019",
+      "title": "I Disappeared to Survive",
+      "liveId": "i-disappeared-to-survive"
+    },
+    {
+      "catalogNumber": "MJ-069",
+      "originalMiscLabel": "MISC-017",
+      "title": "She Moves Like Water",
+      "liveId": "she-moves-like-water"
+    },
+    {
+      "catalogNumber": "MJ-074",
+      "originalMiscLabel": "MISC-008",
+      "title": "Veins of Gold in Violet Chaos",
+      "liveId": "veins-of-gold-in-violet-chaos"
+    }
+  ],
+  "rejectedMappings": [
+    {
+      "drive": "MJ-046",
+      "misc": "MISC-023",
+      "reason": "size mismatch (Drive 20x25 vs live 30x40 arch canvas) + conflicting evidence; remains distinct"
+    },
+    {
+      "drive": "MJ-052",
+      "misc": "MISC-011",
+      "reason": "rejected by user decision; remains distinct"
+    },
+    {
+      "drive": "MJ-052",
+      "misc": "MISC-006",
+      "reason": "weak coincidental texture match (23 inliers, size mismatch, not mutual-best); remains distinct"
+    }
+  ],
+  "remainingMiscRenumbers": [
+    {
+      "originalLabel": "MISC-002",
+      "newLabel": "MISC-001",
+      "title": "“Held in the Mess”"
+    },
+    {
+      "originalLabel": "MISC-003",
+      "newLabel": "MISC-002",
+      "title": "Painting 3"
+    },
+    {
+      "originalLabel": "MISC-004",
+      "newLabel": "MISC-003",
+      "title": "I Am Becoming"
+    },
+    {
+      "originalLabel": "MISC-005",
+      "newLabel": "MISC-004",
+      "title": "Spirit beneath the Ashes"
+    },
+    {
+      "originalLabel": "MISC-006",
+      "newLabel": "MISC-005",
+      "title": "Veil of Agony"
+    },
+    {
+      "originalLabel": "MISC-007",
+      "newLabel": "MISC-006",
+      "title": "Distant Tide"
+    },
+    {
+      "originalLabel": "MISC-009",
+      "newLabel": "MISC-007",
+      "title": "Ignition of the Soul"
+    },
+    {
+      "originalLabel": "MISC-011",
+      "newLabel": "MISC-008",
+      "title": "Suffering and Transcendence"
+    },
+    {
+      "originalLabel": "MISC-012",
+      "newLabel": "MISC-009",
+      "title": "Where Fire Meets Flesh"
+    },
+    {
+      "originalLabel": "MISC-016",
+      "newLabel": "MISC-010",
+      "title": "Where I Still Grow"
+    },
+    {
+      "originalLabel": "MISC-023",
+      "newLabel": "MISC-011",
+      "title": "The Lion Within"
+    }
+  ],
+  "miscAvailabilityDecisions": {
+    "sold": [
+      "MISC-002",
+      "MISC-003",
+      "MISC-004",
+      "MISC-005",
+      "MISC-007",
+      "MISC-009",
+      "MISC-012",
+      "MISC-016"
+    ],
+    "available": [
+      "MISC-006",
+      "MISC-011",
+      "MISC-023"
+    ]
+  },
+  "approvedCount": 13,
+  "rejectedCount": 3,
+  "remainingMiscCount": 11
+}

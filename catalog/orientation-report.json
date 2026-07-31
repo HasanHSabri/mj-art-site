@@ -1,0 +1,260 @@
+{
+  "description": "Deterministic offline canvas/frame orientation analysis for 6 Drive photos whose source folders lack an orientation suffix. Multi-candidate quadrilateral/edge/contour detection (Canny + adaptive threshold + bounding rect). No source writes or rotation performed.",
+  "method": "OpenCV edge detection (Canny + adaptive threshold), morphological closing, contour quadrilateral approximation, bounding-rect coverage scoring. Photos are all portrait (3072x4080). Detected frame aspect ratio < 1.0 => painting taller than wide => Vertical.",
+  "analyzedAt": "2026-07-31T08:58:07Z",
+  "items": [
+    {
+      "catalogNumber": "MJ-060",
+      "folder": "35*28",
+      "physicalDimsCm": {
+        "a": 35,
+        "b": 28
+      },
+      "photoDimensions": {
+        "widthPx": 3072,
+        "heightPx": 4080,
+        "scaledWidth": 771,
+        "scaledHeight": 1024
+      },
+      "orientation": "Vertical",
+      "confidence": "high",
+      "reason": "median detected aspect ratio 0.738 (tall); 1/1 methods agree; physical 35x28cm -> horizontal 1.250 / vertical 0.800",
+      "expectedRatios": {
+        "horizontal": 1.25,
+        "vertical": 0.8
+      },
+      "methods": {
+        "boundingRect": {
+          "widthPx": 756,
+          "heightPx": 1024,
+          "aspectRatio": 0.7383,
+          "imageCoverage": 0.9805
+        }
+      },
+      "assignedWidthCm": 28,
+      "assignedHeightCm": 35
+    },
+    {
+      "catalogNumber": "MJ-061",
+      "folder": "35*28",
+      "physicalDimsCm": {
+        "a": 35,
+        "b": 28
+      },
+      "photoDimensions": {
+        "widthPx": 3072,
+        "heightPx": 4080,
+        "scaledWidth": 771,
+        "scaledHeight": 1024
+      },
+      "orientation": "Vertical",
+      "confidence": "high",
+      "reason": "median detected aspect ratio 0.663 (tall); 3/3 methods agree; physical 35x28cm -> horizontal 1.250 / vertical 0.800",
+      "expectedRatios": {
+        "horizontal": 1.25,
+        "vertical": 0.8
+      },
+      "methods": {
+        "canny": {
+          "quadWidthPx": 624.0,
+          "quadHeightPx": 941.0,
+          "aspectRatio": 0.6631,
+          "imageCoverage": 0.7437,
+          "score": 481087.1
+        },
+        "adaptive": {
+          "quadWidthPx": 624.0,
+          "quadHeightPx": 941.0,
+          "aspectRatio": 0.6631,
+          "imageCoverage": 0.7437,
+          "score": 503095.9
+        },
+        "boundingRect": {
+          "widthPx": 669,
+          "heightPx": 1024,
+          "aspectRatio": 0.6533,
+          "imageCoverage": 0.8677
+        }
+      },
+      "assignedWidthCm": 28,
+      "assignedHeightCm": 35
+    },
+    {
+      "catalogNumber": "MJ-072",
+      "folder": "47*57",
+      "physicalDimsCm": {
+        "a": 47,
+        "b": 57
+      },
+      "photoDimensions": {
+        "widthPx": 3072,
+        "heightPx": 4080,
+        "scaledWidth": 771,
+        "scaledHeight": 1024
+      },
+      "orientation": "Vertical",
+      "confidence": "high",
+      "reason": "median detected aspect ratio 0.668 (tall); 3/3 methods agree; physical 47x57cm -> horizontal 1.213 / vertical 0.825",
+      "expectedRatios": {
+        "horizontal": 1.2128,
+        "vertical": 0.8246
+      },
+      "methods": {
+        "canny": {
+          "quadWidthPx": 641.0,
+          "quadHeightPx": 960.0,
+          "aspectRatio": 0.6677,
+          "imageCoverage": 0.7794,
+          "score": 477848.3
+        },
+        "adaptive": {
+          "quadWidthPx": 640.0,
+          "quadHeightPx": 961.0,
+          "aspectRatio": 0.666,
+          "imageCoverage": 0.779,
+          "score": 496148.8
+        },
+        "boundingRect": {
+          "widthPx": 695,
+          "heightPx": 1004,
+          "aspectRatio": 0.6922,
+          "imageCoverage": 0.8838
+        }
+      },
+      "assignedWidthCm": 47,
+      "assignedHeightCm": 57
+    },
+    {
+      "catalogNumber": "MJ-073",
+      "folder": "50*25",
+      "physicalDimsCm": {
+        "a": 50,
+        "b": 25
+      },
+      "photoDimensions": {
+        "widthPx": 3072,
+        "heightPx": 4080,
+        "scaledWidth": 771,
+        "scaledHeight": 1024
+      },
+      "orientation": "Vertical",
+      "confidence": "high",
+      "reason": "median detected aspect ratio 0.487 (tall); 3/3 methods agree; physical 50x25cm -> horizontal 2.000 / vertical 0.500",
+      "expectedRatios": {
+        "horizontal": 2.0,
+        "vertical": 0.5
+      },
+      "methods": {
+        "canny": {
+          "quadWidthPx": 488.0,
+          "quadHeightPx": 1002.0,
+          "aspectRatio": 0.487,
+          "imageCoverage": 0.6193,
+          "score": 381679.4
+        },
+        "adaptive": {
+          "quadWidthPx": 487.0,
+          "quadHeightPx": 1001.0,
+          "aspectRatio": 0.4865,
+          "imageCoverage": 0.6175,
+          "score": 392294.4
+        },
+        "boundingRect": {
+          "widthPx": 533,
+          "heightPx": 1024,
+          "aspectRatio": 0.5205,
+          "imageCoverage": 0.6913
+        }
+      },
+      "assignedWidthCm": 25,
+      "assignedHeightCm": 50
+    },
+    {
+      "catalogNumber": "MJ-074",
+      "folder": "55*30",
+      "physicalDimsCm": {
+        "a": 55,
+        "b": 30
+      },
+      "photoDimensions": {
+        "widthPx": 3072,
+        "heightPx": 4080,
+        "scaledWidth": 771,
+        "scaledHeight": 1024
+      },
+      "orientation": "Vertical",
+      "confidence": "high",
+      "reason": "median detected aspect ratio 0.430 (tall); 3/3 methods agree; physical 55x30cm -> horizontal 1.833 / vertical 0.545",
+      "expectedRatios": {
+        "horizontal": 1.8333,
+        "vertical": 0.5455
+      },
+      "methods": {
+        "canny": {
+          "quadWidthPx": 426.0,
+          "quadHeightPx": 983.0,
+          "aspectRatio": 0.4334,
+          "imageCoverage": 0.5304,
+          "score": 332945.0
+        },
+        "adaptive": {
+          "quadWidthPx": 424.0,
+          "quadHeightPx": 985.0,
+          "aspectRatio": 0.4305,
+          "imageCoverage": 0.529,
+          "score": 342570.6
+        },
+        "boundingRect": {
+          "widthPx": 440,
+          "heightPx": 1024,
+          "aspectRatio": 0.4297,
+          "imageCoverage": 0.5707
+        }
+      },
+      "assignedWidthCm": 30,
+      "assignedHeightCm": 55
+    },
+    {
+      "catalogNumber": "MJ-075",
+      "folder": "58*73",
+      "physicalDimsCm": {
+        "a": 58,
+        "b": 73
+      },
+      "photoDimensions": {
+        "widthPx": 3072,
+        "heightPx": 4080,
+        "scaledWidth": 771,
+        "scaledHeight": 1024
+      },
+      "orientation": "Vertical",
+      "confidence": "high",
+      "reason": "median detected aspect ratio 0.734 (tall); 2/2 methods agree; physical 58x73cm -> horizontal 1.259 / vertical 0.795",
+      "expectedRatios": {
+        "horizontal": 1.2586,
+        "vertical": 0.7945
+      },
+      "methods": {
+        "adaptive": {
+          "quadWidthPx": 719.0,
+          "quadHeightPx": 981.0,
+          "aspectRatio": 0.7329,
+          "imageCoverage": 0.8934,
+          "score": 522632.0
+        },
+        "boundingRect": {
+          "widthPx": 721,
+          "heightPx": 982,
+          "aspectRatio": 0.7342,
+          "imageCoverage": 0.8968
+        }
+      },
+      "assignedWidthCm": 58,
+      "assignedHeightCm": 73
+    }
+  ],
+  "summary": {
+    "allVertical": true,
+    "count": 6
+  }
+}
