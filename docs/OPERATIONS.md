@@ -165,3 +165,80 @@ Read-only inspection and backup use a **separate** workflow:
 - **ETags are not always full-file hashes.** For multipart objects the ETag is not a
   simple content digest; rely on the computed SHA-256 of the downloaded bytes for
   integrity, and treat ETags as advisory only.
+
+## 11. Catalogue import (PREVIEW only)
+
+The canonical 86-record catalogue (`catalog/catalog.json`) is published to an R2
+bucket as a set of image derivatives plus a single `artworks.json`. This is a
+**separate, dedicated, preview-only** workflow:
+`.github/workflows/catalog-import.yml`, backed by `scripts/generate-catalog-derivatives.mjs`
+(generation), `scripts/import-catalog-preview.mjs` (preview import client), and
+`scripts/lib/catalog-import-core.mjs` (shared pure helpers).
+
+### Scope and hard limits
+
+- **Preview only.** The import client (`assertPreviewBucket`) accepts **only** the
+  literal preview bucket `mj-art-images-preview`. The production bucket is never a
+  valid target. **Production catalogue import remains blocked until the Stop 2
+  milestone.**
+- **Workflow dispatch only**, with a mandatory `confirm_preview_only` confirmation
+  input and a `set -euo pipefail` fail-closed gate. Triggers `push`/`pull_request`/
+  `schedule` are forbidden.
+- **Credentials follow the existing deployment convention** only:
+  `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The workflow never references
+  the read token, the admin password, or the session secret. No Cloudflare secret
+  lives in the repository.
+- **Assets are not in Git.** The operator supplies a protected `assets_archive_url`
+  (HTTPS only) and its `assets_archive_sha256`. The archive is downloaded with curl
+  and **rejected on checksum mismatch**. Expected archive layout: a root containing
+  `originals/` (75 Drive JPEGs), `misc-originals/` (11 misc images, mixed `.jpg`/
+  `.jpeg`), and `SHA256SUMS`. Generated derivatives and the source tree are written
+  to `${RUNNER_TEMP}` and are never committed.
+
+### How derivatives are produced
+
+- Each source image is resolved **solely** through `SHA256SUMS` + the record's
+  `provenance.sha256` (never by filename). The source bytes are re-hashed and
+  compared before generation (checksum guard).
+- Derivatives are EXIF-orientation-normalized JPEGs produced by system ImageMagick
+  (`-auto-orient -strip -resize <box>> -quality <q>`): `full.jpg` longest edge 2000
+  @0.9, `thumb.jpg` longest edge 640 @0.85, **never upscaled**. Output is re-verified
+  as JPEG with sane dimensions. This mirrors the in-browser reference in
+  `apps/web/public/admin.js`.
+- Exact counts are enforced: **86 records / 172 derivatives**, else fail closed.
+- Staging paths are deterministic: `artwork/catalog/<id>/{full,thumb}.jpg` (the R2
+  key). A machine-readable `manifest.json` (key, relative file, hashes, dimensions,
+  bytes, source sha) drives the import client.
+
+### Import order and gates
+
+1. Validate the catalogue (`pnpm check:catalog`) and operations policy
+   (`pnpm check:operations`).
+2. Generate derivatives into runner temp; write `manifest.json`.
+3. **Dry-run** (`import-catalog-preview.mjs` without `--execute`): validate the
+   catalogue against the runtime schema, canonicalize + sort, enforce the `<2MiB`
+   `artworks.json` ceiling, validate the manifest, and print the plan — **no
+   uploads, no network**.
+4. **Execute** (only when `execute_upload` is enabled): upload **all 172 images
+   first**, then **verify 172 reads** (wrangler `r2 object get` + sha256 compare),
+   and only then **PUT the complete canonical `artworks.json` last**.
+
+### Invocation inputs
+
+- `confirm_preview_only` (required boolean) — fail closed unless true.
+- `assets_archive_url` (required) — HTTPS URL to the checksum-protected archive.
+- `assets_archive_sha256` (required) — 64-char hex of the archive.
+- `execute_upload` (default false) — when disabled, the run validates + generates +
+  plans only; when enabled, it uploads to PREVIEW after all gates pass.
+
+### Drift and rollback
+
+- The preview bucket is **overwrite-only on the canonical key set**: there is no
+  delete path. Re-running with the same catalogue idempotently overwrites each
+  `artwork/catalog/<id>/{full,thumb}.jpg` and `artworks.json`.
+- Orphan detection/drift between Git, the preview bucket, and production is
+  reported by the **read-only** R2 inventory workflow (§7), not by this workflow.
+- **Rollback** is a separate deliberate operation: it is never inferred from an
+  import run. To revert the preview `artworks.json`, re-run the import against a
+  prior catalogue commit (or restore from a read-only backup artifact per §8).
+  Production rollback is not available from this code path.

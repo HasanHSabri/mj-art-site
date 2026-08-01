@@ -275,6 +275,123 @@ function main() {
     }
   }
 
+  // 6) Catalogue import (preview-only) workflow + support scripts.
+  //    This workflow WRITES to R2 (unlike the read-only backup), so it must be
+  //    workflow_dispatch only, hard-target the PREVIEW bucket literal, and never
+  //    reference the production bucket, production environment, or admin secrets.
+  const importWfPath = '.github/workflows/catalog-import.yml';
+  const importWf = readText(importWfPath);
+  if (importWf === null) {
+    fail(importWfPath + ' is missing');
+  } else {
+    const importTriggers = extractOnTriggers(importWf);
+    if (importTriggers === null) {
+      fail(importWfPath + ' has no top-level on: trigger block');
+    } else {
+      const forbidden = ['push', 'pull_request', 'schedule', 'repository_dispatch', 'workflow_run', 'workflow_call'];
+      const presentForbidden = importTriggers.filter((t) => forbidden.includes(t));
+      if (presentForbidden.length) {
+        fail(importWfPath + ' must be workflow_dispatch only; found: ' + importTriggers.join(', '));
+      }
+      if (!(importTriggers.length === 1 && importTriggers[0] === 'workflow_dispatch')) {
+        fail(importWfPath + ' must declare only workflow_dispatch; found: ' + importTriggers.join(', '));
+      }
+    }
+
+    if (!hasWorkflowLevelContentsRead(importWf)) {
+      fail(importWfPath + ' must declare workflow-level permissions with contents: read');
+    }
+    if (!/set -euo pipefail/.test(importWf)) {
+      fail(importWfPath + ' must declare a prerequisite shell gate using "set -euo pipefail"');
+    }
+
+    // No secrets.* may appear in a step if: condition (GitHub Actions does not
+    // safely evaluate secrets in if:).
+    const importWfLines = importWf.split(/\r?\n/);
+    for (let i = 0; i < importWfLines.length; i++) {
+      if (/^\s*if:/.test(importWfLines[i]) && /secrets\./i.test(importWfLines[i])) {
+        fail(importWfPath + ' must not reference secrets.* in a step if: condition (line ' + (i + 1) + ')');
+      }
+    }
+
+    // Required confirmation + asset-protection inputs.
+    for (const inputName of ['confirm_preview_only', 'assets_archive_url', 'assets_archive_sha256', 'execute_upload']) {
+      if (!new RegExp('^\\s+' + inputName + ':', 'm').test(importWf)) {
+        fail(importWfPath + ' must declare input ' + inputName);
+      }
+    }
+    if (!/confirm_preview_only/.test(importWf)) {
+      fail(importWfPath + ' must reference the confirm_preview_only confirmation input');
+    }
+
+    // PREVIEW bucket literal must be present; the production bucket must NEVER
+    // appear. Negative lookahead: "mj-art-images" not immediately followed by
+    // "-preview" is a production-bucket leak.
+    if (!/mj-art-images-preview/.test(importWf)) {
+      fail(importWfPath + ' must reference the preview bucket literal mj-art-images-preview');
+    }
+    if (/mj-art-images(?!-preview)/.test(importWf)) {
+      fail(importWfPath + ' must not reference the production bucket (mj-art-images without -preview)');
+    }
+
+    // No production environment / production deploy paths.
+    if (/--env\s+production/.test(importWf)) {
+      fail(importWfPath + ' must not target a production environment');
+    }
+    if (/environment:\s*production/.test(importWf)) {
+      fail(importWfPath + ' must not declare a production environment');
+    }
+
+    // The execute step must be gated on the execute_upload input (not secrets),
+    // and write credentials must be the deployment convention only.
+    if (!/inputs\.execute_upload/.test(importWf)) {
+      fail(importWfPath + ' must gate the upload step on inputs.execute_upload');
+    }
+    const importReqRefs = [
+      '${{ secrets.CLOUDFLARE_API_TOKEN }}',
+      '${{ secrets.CLOUDFLARE_ACCOUNT_ID }}'
+    ];
+    for (const ref of importReqRefs) {
+      if (!importWf.includes(ref)) {
+        fail(importWfPath + ' must reference ' + ref + ' for the preview upload step');
+      }
+    }
+    const importForbiddenRefs = [
+      'ADMIN_PASSWORD',
+      'ADMIN_SESSION_SECRET',
+      'CLOUDFLARE_R2_READ_TOKEN'
+    ];
+    for (const ref of importForbiddenRefs) {
+      if (importWf.includes(ref)) {
+        fail(importWfPath + ' must not reference ' + ref);
+      }
+    }
+  }
+
+  // Support scripts for the catalogue import.
+  const genPath = 'scripts/generate-catalog-derivatives.mjs';
+  const importScriptPath = 'scripts/import-catalog-preview.mjs';
+  const corePath = 'scripts/lib/catalog-import-core.mjs';
+  const genScript = readText(genPath);
+  const importScript = readText(importScriptPath);
+  const coreLib = readText(corePath);
+  if (genScript === null) fail(genPath + ' is missing');
+  if (importScript === null) fail(importScriptPath + ' is missing');
+  if (coreLib === null) fail(corePath + ' is missing');
+  if (importScript !== null) {
+    if (!/assertPreviewBucket/.test(importScript)) {
+      fail(importScriptPath + ' must call assertPreviewBucket before any upload');
+    }
+    if (/mj-art-images(?!-preview)/.test(importScript)) {
+      fail(importScriptPath + ' must not embed the production bucket literal');
+    }
+  }
+  if (coreLib !== null) {
+    if (!/assertPreviewBucket/.test(coreLib) || !/mj-art-images-preview/.test(coreLib)) {
+      fail(corePath + ' must define the preview-only bucket guard');
+    }
+  }
+
   if (process.exitCode) {
     console.error('check-operations-rules: one or more assertions failed.');
     return;

@@ -5,3 +5,6 @@ apps/web/.wrangler/
 _bmad/
 .opencode/node_modules/
 _bmad-output/
+# Generated catalogue derivatives are never committed (preview-import artifacts).
+.catalog-derivatives/
+catalog-derivatives/

@@ -1,0 +1,210 @@
+# Preview-only catalogue image + artworks.json import for MJ-ART.
+#
+# This workflow generates deterministic EXIF-normalized JPEG derivatives from a
+# protected asset archive, validates the catalogue, and (only when explicitly
+# confirmed AND executed) uploads ALL images first, verifies 172 reads, then
+# publishes the canonical artworks.json LAST — to the PREVIEW bucket only.
+#
+# The production bucket is never a valid target here. Production catalogue
+# import remains blocked until the Stop 2 milestone (see docs/OPERATIONS.md).
+#
+# Assets are NOT in Git. The operator supplies a protected HTTPS archive URL and
+# its SHA-256; the archive is downloaded, checksum-verified, and extracted into
+# runner temp. No source images or generated derivatives are committed.
+#
+# Read docs/OPERATIONS.md before changing anything here.
+
+name: Catalog Import (Preview)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_preview_only:
+        description: 'Required confirmation that this run targets PREVIEW ONLY. The run fails closed unless this is enabled.'
+        required: true
+        type: boolean
+        default: false
+      assets_archive_url:
+        description: 'HTTPS URL to a protected asset archive (.tar.gz) containing originals/, misc-originals/, SHA256SUMS at its root.'
+        required: true
+        type: string
+      assets_archive_sha256:
+        description: 'Required SHA-256 (64-char lowercase hex) of the asset archive. The download is rejected on mismatch.'
+        required: true
+        type: string
+      execute_upload:
+        description: 'When disabled (default) the run validates + generates + plans only. When enabled, uploads to PREVIEW after all gates pass.'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-import-preview
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24'
+  # Hard-coded preview bucket. This is the only bucket string this workflow may
+  # reference; the import client rejects any other value.
+  PREVIEW_BUCKET: mj-art-images-preview
+
+jobs:
+  catalog-import-preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Fail closed unless preview-only scope is confirmed
+        if: always()
+        env:
+          CONFIRM_INPUT: ${{ inputs.confirm_preview_only }}
+          ARCHIVE_URL: ${{ inputs.assets_archive_url }}
+          ARCHIVE_SHA: ${{ inputs.assets_archive_sha256 }}
+          PREVIEW_BUCKET: ${{ env.PREVIEW_BUCKET }}
+        run: |
+          set -euo pipefail
+          # Always-running prerequisite gate. Production is never a valid target.
+          if [ "${CONFIRM_INPUT}" != "true" ]; then
+            echo "fail closed: dispatch input confirm_preview_only must be true"
+            exit 1
+          fi
+          if [ "${PREVIEW_BUCKET}" != "mj-art-images-preview" ]; then
+            echo "fail closed: PREVIEW_BUCKET must be exactly mj-art-images-preview"
+            exit 1
+          fi
+          # Asset URL must be HTTPS. No http, file, ssh, or embedded credentials.
+          case "${ARCHIVE_URL}" in
+            https://*) : ;;
+            *) echo "fail closed: assets_archive_url must start with https://"; exit 1 ;;
+          esac
+          if printf '%s' "${ARCHIVE_URL}" | grep -Eq '[[:space:]]'; then
+            echo "fail closed: assets_archive_url must not contain whitespace"; exit 1
+          fi
+          # Archive checksum must be 64-char lowercase hex.
+          if ! printf '%s' "${ARCHIVE_SHA}" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "fail closed: assets_archive_sha256 must be 64-char lowercase hex"
+            exit 1
+          fi
+          echo "preview-only scope confirmed (bucket value not echoed beyond the literal above)"
+          echo "Production catalogue import remains blocked until the Stop 2 milestone."
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Ensure ImageMagick is available
+        run: |
+          set -euo pipefail
+          if command -v magick >/dev/null 2>&1; then
+            magick --version | head -n 1
+          elif command -v convert >/dev/null 2>&1 && command -v identify >/dev/null 2>&1; then
+            identify --version | head -n 1
+          else
+            echo "ImageMagick not found on runner; installing..."
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq imagemagick
+            identify --version | head -n 1
+          fi
+
+      - name: Download and checksum-verify the asset archive
+        run: |
+          set -euo pipefail
+          : > /dev/null
+          ARCHIVE="${RUNNER_TEMP}/catalog-assets.tar.gz"
+          # HTTPS only (re-asserted); curl fails closed on HTTP errors.
+          curl --fail --location --proto =https --output "$ARCHIVE" "${{ inputs.assets_archive_url }}"
+          printf '%s  %s\n' "${{ inputs.assets_archive_sha256 }}" "$ARCHIVE" | sha256sum -c -
+          echo "asset archive downloaded and checksum-verified"
+
+      - name: Extract archive and locate SHA256SUMS root
+        id: assets
+        run: |
+          set -euo pipefail
+          EXTRACT="${RUNNER_TEMP}/catalog-assets"
+          mkdir -p "$EXTRACT"
+          tar -xzf "${RUNNER_TEMP}/catalog-assets.tar.gz" -C "$EXTRACT"
+          # The archive root may wrap the tree in one directory. Find the dir
+          # that contains SHA256SUMS + originals/ + misc-originals/.
+          ROOT="$(find "$EXTRACT" -type f -name SHA256SUMS -print0 \
+            | while IFS= read -r -d '' f; do
+                d="$(dirname "$f")"
+                if [ -d "$d/originals" ] && [ -d "$d/misc-originals" ]; then
+                  printf '%s\n' "$d"
+                  break
+                fi
+              done)"
+          if [ -z "$ROOT" ]; then
+            echo "fail closed: archive does not contain SHA256SUMS + originals/ + misc-originals/"
+            echo "expected layout: <root>/{originals,misc-originals}/, <root>/SHA256SUMS"
+            exit 1
+          fi
+          echo "ASSETS_DIR=$ROOT" >> "$GITHUB_ENV"
+          echo "assets root: $ROOT"
+
+      - name: Verify every source image against SHA256SUMS
+        run: |
+          set -euo pipefail
+          # Reject any checksum mismatch before generating derivatives.
+          ( cd "$ASSETS_DIR" && sha256sum -c SHA256SUMS --quiet )
+          echo "all source checksums verified"
+
+      - name: Validate catalogue
+        run: pnpm check:catalog
+
+      - name: Validate operations policy
+        run: pnpm check:operations
+
+      - name: Generate derivatives
+        run: |
+          set -euo pipefail
+          node scripts/generate-catalog-derivatives.mjs \
+            --assets-dir "$ASSETS_DIR" \
+            --output-dir "${RUNNER_TEMP}/derivatives"
+
+      - name: Validate import plan (dry-run, no uploads)
+        run: |
+          set -euo pipefail
+          node scripts/import-catalog-preview.mjs \
+            --manifest "${RUNNER_TEMP}/derivatives/manifest.json" \
+            --catalog catalog/catalog.json \
+            --bucket "$PREVIEW_BUCKET"
+
+      - name: Execute preview upload (images first, artworks.json last)
+        if: ${{ inputs.execute_upload == true }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "fail closed: secret CLOUDFLARE_API_TOKEN is empty or missing"; exit 1
+          fi
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "fail closed: secret CLOUDFLARE_ACCOUNT_ID is empty or missing"; exit 1
+          fi
+          node scripts/import-catalog-preview.mjs \
+            --manifest "${RUNNER_TEMP}/derivatives/manifest.json" \
+            --catalog catalog/catalog.json \
+            --bucket "$PREVIEW_BUCKET" \
+            --execute \
+            --wrangler "pnpm exec wrangler"
+
+      - name: Clean runner temp
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf "${RUNNER_TEMP}/derivatives" "${RUNNER_TEMP}/catalog-assets" "${RUNNER_TEMP}/catalog-assets.tar.gz" || true
