@@ -190,21 +190,37 @@ bucket as a set of image derivatives plus a single `artworks.json`. This is a
   lives in the repository.
 - **Assets are not in Git.** The operator supplies a protected `assets_archive_url`
   (HTTPS only) and its `assets_archive_sha256`. The archive is downloaded with curl
-  and **rejected on checksum mismatch**. Expected archive layout: a root containing
-  `originals/` (75 Drive JPEGs), `misc-originals/` (11 misc images, mixed `.jpg`/
-  `.jpeg`), and `SHA256SUMS`. Generated derivatives and the source tree are written
-  to `${RUNNER_TEMP}` and are never committed.
+  and **rejected on checksum mismatch**. **The operator-supplied URL + SHA-256
+  provides transport integrity only: it confirms the bytes downloaded are the
+  bytes the operator pinned. It does NOT authenticate the source of the archive,
+  the operator who supplied it, or the provenance of the originals.** Treat the
+  archive as untrusted input: it is extracted only after a hardened listing check
+  rejects symlinks, hardlinks, absolute, and parent-traversal paths, and each
+  source is re-resolved and re-hashed through `SHA256SUMS` + `provenance.sha256`.
+  Expected archive layout: a root containing `originals/` (75 Drive JPEGs),
+  `misc-originals/` (11 misc images, mixed `.jpg`/`.jpeg`), and `SHA256SUMS`.
+  Generated derivatives and the source tree are written to `${RUNNER_TEMP}` and
+  are never committed.
 
 ### How derivatives are produced
 
 - Each source image is resolved **solely** through `SHA256SUMS` + the record's
   `provenance.sha256` (never by filename). The source bytes are re-hashed and
-  compared before generation (checksum guard).
+  compared before generation (checksum guard). Source integrity therefore relies
+  on the generator's strict rehash; a separate `sha256sum -c` pass is intentionally
+  not run (it would read untrusted paths from `SHA256SUMS` and is fully redundant
+  with the rehash).
+- Each source is size-capped (50 MiB) and dimension-checked (≤8000px) **before**
+  decode, and every ImageMagick `convert`/`identify` invocation applies bounded
+  resource limits (`-limit memory/disk/width/height`). EXIF auto-orient behavior
+  is preserved. Residual risk: a runner-installed `policy.xml` would be more
+  comprehensive than CLI limits, but is version/path-specific; the CLI limits plus
+  the source caps are the portable, IM6/IM7-agnostic defence used here.
 - Derivatives are EXIF-orientation-normalized JPEGs produced by system ImageMagick
   (`-auto-orient -strip -resize <box>> -quality <q>`): `full.jpg` longest edge 2000
   @0.9, `thumb.jpg` longest edge 640 @0.85, **never upscaled**. Output is re-verified
-  as JPEG with sane dimensions. This mirrors the in-browser reference in
-  `apps/web/public/admin.js`.
+  as JPEG with sane **per-variant** dimensions (full ≤2000, thumb ≤640). This
+  mirrors the in-browser reference in `apps/web/public/admin.js`.
 - Exact counts are enforced: **86 records / 172 derivatives**, else fail closed.
 - Staging paths are deterministic: `artwork/catalog/<id>/{full,thumb}.jpg` (the R2
   key). A machine-readable `manifest.json` (key, relative file, hashes, dimensions,
@@ -221,7 +237,10 @@ bucket as a set of image derivatives plus a single `artworks.json`. This is a
    uploads, no network**.
 4. **Execute** (only when `execute_upload` is enabled): upload **all 172 images
    first**, then **verify 172 reads** (wrangler `r2 object get` + sha256 compare),
-   and only then **PUT the complete canonical `artworks.json` last**.
+   and only then **PUT the complete canonical `artworks.json` last**. The
+   `artworks.json` readback is verified by **exact sha256 + byte size + parsed
+   count**, not by parsed count alone, so silent corruption or a partial rewrite
+   is detected.
 
 ### Invocation inputs
 

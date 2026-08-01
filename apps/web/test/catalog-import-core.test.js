@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
@@ -15,14 +16,19 @@ import {
   buildCanonicalArtworksPayload,
   buildRequiredKeys,
   buildSourceMap,
+  findInputsInRunBlocks,
   isProductionBucketName,
   isSafeRelPath,
+  isSafeTarPath,
+  maxDimensionForVariant,
   objectKeyFor,
   parseArgs,
   parseSha256Sums,
   runtimeUrl,
   utf8Bytes,
-  validateManifest
+  validateManifest,
+  validateTarVerboseListing,
+  verifyArtworksReadback
 } from '../../../scripts/lib/catalog-import-core.mjs';
 import * as schema from '../src/artwork-schema.js';
 
@@ -137,9 +143,12 @@ test('isProductionBucketName: only the exact prod literal', () => {
 
 // ---- validateManifest ------------------------------------------------------
 function manifestEntryFor(id, variant, key, sha) {
+  // Dimensions are per-variant: full <=2000, thumb <=640 (enforced by validateManifest).
+  const w = variant === 'full' ? 2000 : 640;
+  const h = variant === 'full' ? 1500 : 480;
   return {
     id, variant, key, localRelFile: key, sha256: sha, sourceSha: SHA_A,
-    width: 2000, height: 1500, bytes: 12345
+    width: w, height: h, bytes: 12345
   };
 }
 
@@ -234,3 +243,213 @@ test('generate-catalog-derivatives: real assets -> 172 derivatives + manifest', 
     rmSync(out, { recursive: true, force: true });
   }
 });
+
+// ===========================================================================
+// Finding 4: per-variant dimension caps (thumb <=640, full <=2000)
+// ===========================================================================
+
+test('maxDimensionForVariant: returns 640 for thumb, 2000 for full', () => {
+  assert.equal(maxDimensionForVariant('thumb'), 640);
+  assert.equal(maxDimensionForVariant('full'), 2000);
+  assert.throws(() => maxDimensionForVariant('huge'), /Invalid variant/);
+});
+
+test('validateManifest: enforces per-variant dimension cap (thumb rejects >640)', () => {
+  const records = [rec('mj-001', SHA_A)];
+  const mk = (entries) => ({ expectedImages: entries.length, baseDir: '/tmp/x', entries });
+  const good = () => mk([
+    manifestEntryFor('mj-001', 'full', 'artwork/catalog/mj-001/full.jpg', 'c'.repeat(64)),
+    manifestEntryFor('mj-001', 'thumb', 'artwork/catalog/mj-001/thumb.jpg', 'd'.repeat(64))
+  ]);
+  // Baseline: a valid manifest with thumb 640 passes.
+  const okThumb = good();
+  okThumb.entries[1] = { ...okThumb.entries[1], width: 640, height: 480 };
+  assert.equal(validateManifest(okThumb, records), true);
+  // A thumb at 1000px (under the OLD full-only cap of 2000) must now be rejected.
+  const bigThumb = good();
+  bigThumb.entries[1] = { ...bigThumb.entries[1], width: 1000, height: 800 };
+  assert.throws(() => validateManifest(bigThumb, records), /cap 640 for thumb/);
+  // A full at 2000 passes; a full at 2001 fails.
+  const okFull = good();
+  okFull.entries[0] = { ...okFull.entries[0], width: 2000, height: 1500 };
+  assert.equal(validateManifest(okFull, records), true);
+  const bigFull = good();
+  bigFull.entries[0] = { ...bigFull.entries[0], width: 2001, height: 1500 };
+  assert.throws(() => validateManifest(bigFull, records), /cap 2000 for full/);
+});
+
+// ===========================================================================
+// Finding 5: artworks.json readback exact hash/bytes/count verification
+// ===========================================================================
+
+test('verifyArtworksReadback: accepts an exact byte-for-byte match', () => {
+  const json = '[{"id":"mj-001"}]\n';
+  const { sha256 } = { sha256: requireSha(json) };
+  const buf = Buffer.from(json, 'utf8');
+  assert.equal(
+    verifyArtworksReadback(buf, { sha256, size: buf.length, count: 1 }),
+    true
+  );
+});
+
+test('verifyArtworksReadback: rejects size/hash/count mismatch + bad JSON', () => {
+  const json = '[{"id":"mj-001"}]\n';
+  const buf = Buffer.from(json, 'utf8');
+  const goodSha = requireSha(json);
+  // Wrong size (truncated).
+  assert.throws(
+    () => verifyArtworksReadback(buf.slice(0, buf.length - 1), { sha256: goodSha, size: buf.length, count: 1 }),
+    /size mismatch/
+  );
+  // Wrong hash (corrupted byte).
+  const corrupt = Buffer.from(json, 'utf8'); corrupt[0] = 32;
+  assert.throws(
+    () => verifyArtworksReadback(corrupt, { sha256: goodSha, size: corrupt.length, count: 1 }),
+    /sha256 mismatch/
+  );
+  // Wrong count (valid JSON, wrong length).
+  const two = Buffer.from('[{"id":"a"},{"id":"b"}]\n', 'utf8');
+  assert.throws(
+    () => verifyArtworksReadback(two, { sha256: requireSha('[{"id":"a"},{"id":"b"}]\n'), size: two.length, count: 1 }),
+    /record count mismatch/
+  );
+  // Invalid JSON with a matching size/hash of the garbage bytes -> JSON parse error.
+  const garbage = Buffer.from('not json at all!!', 'utf8');
+  assert.throws(
+    () => verifyArtworksReadback(garbage, { sha256: requireShaBytes(garbage), size: garbage.length, count: 1 }),
+    /not valid JSON/
+  );
+  // Bad expected spec.
+  assert.throws(() => verifyArtworksReadback(buf, { sha256: 'x', size: 1, count: 1 }), /64-char/);
+});
+
+test('buildCanonicalArtworksPayload: now exposes sha256 for readback verification', () => {
+  const catalog = JSON.parse(readFileSync(path.join(REPO_ROOT, 'catalog', 'catalog.json'), 'utf8'));
+  const { json, size, count, sha256 } = buildCanonicalArtworksPayload(catalog, schema);
+  assert.equal(typeof sha256, 'string');
+  assert.match(sha256, /^[a-f0-9]{64}$/);
+  // The exposed sha256 must match a fresh hash of the exact uploaded bytes.
+  assert.equal(sha256, requireSha(json));
+  assert.equal(size, Buffer.byteLength(json, 'utf8'));
+  // readback of those exact bytes must verify.
+  assert.equal(verifyArtworksReadback(Buffer.from(json, 'utf8'), { sha256, size, count }), true);
+});
+
+// ===========================================================================
+// Finding 2: archive extraction safety (malicious tar entry rejection)
+// ===========================================================================
+
+test('isSafeTarPath: accepts clean relative + dirs, rejects unsafe', () => {
+  assert.equal(isSafeTarPath('originals/MJ-001.jpg'), true);
+  assert.equal(isSafeTarPath('originals/'), true); // dir entry (trailing slash)
+  assert.equal(isSafeTarPath('./originals/MJ-001.jpg'), true); // '.' root is harmless
+  assert.equal(isSafeTarPath('./'), true); // tar's root dir marker
+  assert.equal(isSafeTarPath('/etc/passwd'), false); // absolute
+  assert.equal(isSafeTarPath('../escape.jpg'), false); // parent traversal
+  assert.equal(isSafeTarPath('a/../../b'), false);
+  assert.equal(isSafeTarPath(''), false);
+  assert.equal(isSafeTarPath('back\\slash'), false);
+});
+
+test('validateTarVerboseListing: accepts a clean file+dir listing', () => {
+  const clean = [
+    'drwxr-xr-x 0/0            0 2026-08-01 00:00 originals/',
+    '-rw-r--r-- 0/0         1234 2026-08-01 00:00 originals/MJ-001.jpg'
+  ].join('\n');
+  assert.equal(validateTarVerboseListing(clean), true);
+});
+
+test('validateTarVerboseListing: rejects symlink, hardlink, absolute, traversal', () => {
+  const symlinkLine = 'lrwxrwxrwx 0/0            0 2026-08-01 00:00 evil -> /etc/passwd';
+  assert.throws(() => validateTarVerboseListing(symlinkLine), /symlink/);
+  const hardLine = 'hrw-r--r-- 0/0            0 2026-08-01 00:00 hl link to sub/orig.txt';
+  assert.throws(() => validateTarVerboseListing(hardLine), /hardlink/);
+  const absLine = '-rw-r--r-- 0/0            1 2026-08-01 00:00 /etc/shadow';
+  assert.throws(() => validateTarVerboseListing(absLine), /unsafe path/);
+  const travLine = '-rw-r--r-- 0/0            1 2026-08-01 00:00 ../escape.jpg';
+  assert.throws(() => validateTarVerboseListing(travLine), /unsafe path/);
+  assert.throws(() => validateTarVerboseListing('garbage not a tar line'), /unparseable/);
+  assert.throws(() => validateTarVerboseListing('\n\n'), /no entries/);
+});
+
+// Real-tar integration: craft a genuinely malicious archive and confirm the
+// validator rejects its verbose listing (requires GNU tar).
+function hasTar() {
+  try { execFileSync('tar', ['--version'], { stdio: 'ignore' }); return true; }
+  catch { return false; }
+}
+
+test('validateTarVerboseListing: rejects a real crafted malicious tar (symlink + hardlink + traversal)', { skip: !hasTar() ? 'requires GNU tar' : false }, () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'mj-art-tarsafety-'));
+  try {
+    execFileSync('sh', ['-c', [
+      `cd "${dir}"`,
+      'mkdir -p sub',
+      'printf data > sub/orig.txt',
+      'ln sub/orig.txt sub/hl.txt 2>/dev/null || true',
+      'ln -s /etc/passwd evil-link',
+      'printf payload > real.txt',
+      'tar -czf malicious.tar.gz sub/orig.txt sub/hl.txt evil-link real.txt',
+      'tar -czf trav.tar.gz --transform "s,^,../," real.txt 2>/dev/null'
+    ].join(' && ')], { stdio: 'pipe' });
+    const malicious = execFileSync('tar', ['-tvzf', path.join(dir, 'malicious.tar.gz')], { encoding: 'utf8' });
+    assert.throws(() => validateTarVerboseListing(malicious), /symlink|hardlink/);
+    const trav = execFileSync('tar', ['-tvzf', path.join(dir, 'trav.tar.gz')], { encoding: 'utf8' });
+    assert.throws(() => validateTarVerboseListing(trav), /unsafe path/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// ===========================================================================
+// Finding 1: no raw ${{ inputs.* }} inside run: scripts (static guard helper)
+// ===========================================================================
+
+test('findInputsInRunBlocks: flags input interpolation in run scripts only', () => {
+  // Block run with input interpolation -> flagged.
+  const bad = [
+    'steps:',
+    '  - name: x',
+    '    env:',
+    '      FOO: ${{ inputs.foo }}',
+    '    run: |',
+    '      curl "${{ inputs.url }}"',
+    '      echo done'
+  ].join('\n');
+  const badHits = findInputsInRunBlocks(bad);
+  assert.equal(badHits.length, 1, 'only the run-script line should be flagged');
+  assert.match(badHits[0].text, /\$\{\{\s*inputs\.url/);
+
+  // env:/if:/with: interpolation is allowed; clean run script -> no hits.
+  const good = [
+    'steps:',
+    '  - name: x',
+    '    if: ${{ inputs.execute_upload == true }}',
+    '    env:',
+    '      URL: ${{ inputs.assets_archive_url }}',
+    '    run: |',
+    '      set -euo pipefail',
+    '      curl "${URL}"'
+  ].join('\n');
+  assert.deepEqual(findInputsInRunBlocks(good), []);
+
+  // Inline run with interpolation -> flagged.
+  const inlineBad = '    run: echo "${{ inputs.evil }}"';
+  assert.equal(findInputsInRunBlocks(inlineBad).length, 1);
+  const inlineGood = '    run: echo "${URL}"';
+  assert.deepEqual(findInputsInRunBlocks(inlineGood), []);
+});
+
+test('catalog-import.yml workflow has NO raw ${{ inputs.* }} in any run script', () => {
+  const wf = readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'catalog-import.yml'), 'utf8');
+  const hits = findInputsInRunBlocks(wf);
+  assert.deepEqual(hits, [], 'run scripts must not interpolate inputs; offending: ' + JSON.stringify(hits));
+});
+
+// small helper: sha256 of a utf8 string (test-local)
+function requireSha(str) {
+  return createHash('sha256').update(str, 'utf8').digest('hex');
+}
+function requireShaBytes(buf) {
+  return createHash('sha256').update(buf).digest('hex');
+}

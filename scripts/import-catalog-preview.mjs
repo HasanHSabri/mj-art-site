@@ -46,7 +46,8 @@ import {
   assertPreviewBucket,
   buildCanonicalArtworksPayload,
   parseArgs,
-  validateManifest
+  validateManifest,
+  verifyArtworksReadback
 } from './lib/catalog-import-core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -219,13 +220,16 @@ async function run(binTokens, bucket, manifest, payload) {
     writeFileSync(jsonTmp, payload.json, 'utf8');
     await uploadObject(binTokens, bucket, ARTWORKS_JSON_KEY, jsonTmp, 'application/json');
 
-    // Confirm artworks.json is readable.
+    // Verify artworks.json readback by EXACT byte-for-byte integrity: hash +
+    // size + parsed count. A count-only check cannot detect silent corruption,
+    // truncation, or a partial rewrite of the object.
     const back = path.join(tmp, 'artworks.back.json');
     await runWrangler(binTokens, ['r2', 'object', 'get', `${bucket}/${ARTWORKS_JSON_KEY}`, '--file', back, '--remote']);
-    const readBack = JSON.parse(readFileSync(back, 'utf8'));
-    if (!Array.isArray(readBack) || readBack.length !== payload.count) {
-      throw new Error(`artworks.json readback length mismatch: ${readBack && readBack.length}`);
-    }
+    verifyArtworksReadback(readFileSync(back), {
+      sha256: payload.sha256,
+      size: payload.size,
+      count: payload.count
+    });
 
     console.log(`\n✓ PREVIEW import complete: ${EXPECTED_IMAGES} images verified + artworks.json published to "${bucket}".`);
   } finally {

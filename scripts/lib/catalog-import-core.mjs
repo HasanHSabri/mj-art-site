@@ -6,6 +6,8 @@
 // CLI scripts (generate-catalog-derivatives.mjs, import-catalog-preview.mjs)
 // compose these helpers with the impure parts (ImageMagick, wrangler, the FS).
 
+import { createHash } from 'node:crypto';
+
 export const EXPECTED_RECORDS = 86;
 export const EXPECTED_IMAGES = 172; // 86 records * 2 derivatives
 
@@ -23,6 +25,16 @@ export const FULL_MAX_DIMENSION = 2000;
 export const FULL_QUALITY = 90;
 export const THUMB_MAX_DIMENSION = 640;
 export const THUMB_QUALITY = 85;
+
+// Per-variant dimension cap: thumb is bounded to 640, full to 2000. Used both by
+// the generator (post-generation check) and by manifest validation so the cap is
+// enforced per variant, not uniformly at the full cap (which would let an
+// over-large thumb slip through).
+export function maxDimensionForVariant(variant) {
+  if (variant === 'full') return FULL_MAX_DIMENSION;
+  if (variant === 'thumb') return THUMB_MAX_DIMENSION;
+  throw new Error(`Invalid variant (expected full|thumb): ${String(variant)}`);
+}
 
 export const ARTWORKS_JSON_KEY = 'artworks.json';
 
@@ -246,11 +258,15 @@ export function validateManifest(manifest, records) {
     if (typeof sourceSha !== 'string' || !SHA256_RE.test(sourceSha)) {
       throw new Error(`manifest entry ${key} has invalid sourceSha`);
     }
-    if (!Number.isInteger(width) || width <= 0 || width > FULL_MAX_DIMENSION) {
-      throw new Error(`manifest entry ${key} has invalid width ${width}`);
+    // Dimension cap is enforced PER VARIANT: thumb <= THUMB_MAX_DIMENSION (640),
+    // full <= FULL_MAX_DIMENSION (2000). The previous uniform check let an
+    // over-large thumb pass because it only compared against the full cap.
+    const dimCap = maxDimensionForVariant(variant);
+    if (!Number.isInteger(width) || width <= 0 || width > dimCap) {
+      throw new Error(`manifest entry ${key} has invalid width ${width} (cap ${dimCap} for ${variant})`);
     }
-    if (!Number.isInteger(height) || height <= 0 || height > FULL_MAX_DIMENSION) {
-      throw new Error(`manifest entry ${key} has invalid height ${height}`);
+    if (!Number.isInteger(height) || height <= 0 || height > dimCap) {
+      throw new Error(`manifest entry ${key} has invalid height ${height} (cap ${dimCap} for ${variant})`);
     }
     if (!Number.isInteger(bytes) || bytes <= 0) {
       throw new Error(`manifest entry ${key} has invalid bytes ${bytes}`);
@@ -286,5 +302,165 @@ export function buildCanonicalArtworksPayload(records, schemaFns) {
       `canonical artworks.json is ${size} bytes, must be < ${MAX_ARTWORKS_JSON_BYTES} bytes`
     );
   }
-  return { json, size, count: canonical.length };
+  // Precompute the sha256 of the exact bytes that will be uploaded so the import
+  // client can verify the readback by hash (not only by parsed record count).
+  const sha256 = createHash('sha256').update(json, 'utf8').digest('hex');
+  return { json, size, count: canonical.length, sha256 };
+}
+
+// Verify an artworks.json readback by EXACT byte-for-byte integrity: the
+// downloaded buffer must hash to the expected sha256, match the expected byte
+// size, and parse to the expected record count. A count-only check cannot catch
+// silent corruption, truncation, or a partial/rewritten object; this closes that
+// gap. Pure and dependency-free (crypto only); safe to unit-test in isolation.
+export function verifyArtworksReadback(readBackBuf, expected) {
+  if (!expected || typeof expected !== 'object') {
+    throw new Error('expected readback spec is required');
+  }
+  const { sha256, size, count } = expected;
+  if (typeof sha256 !== 'string' || !SHA256_RE.test(sha256)) {
+    throw new Error('expected.sha256 must be 64-char lowercase hex');
+  }
+  if (!Number.isInteger(size) || size <= 0) {
+    throw new Error('expected.size must be a positive integer');
+  }
+  if (!Number.isInteger(count) || count <= 0) {
+    throw new Error('expected.count must be a positive integer');
+  }
+  const buf = Buffer.isBuffer(readBackBuf)
+    ? readBackBuf
+    : Buffer.from(String(readBackBuf), 'utf8');
+  if (buf.length !== size) {
+    throw new Error(
+      `artworks.json readback size mismatch: got ${buf.length} bytes, expected ${size}`
+    );
+  }
+  const hash = createHash('sha256').update(buf).digest('hex');
+  if (hash !== sha256) {
+    throw new Error(
+      `artworks.json readback sha256 mismatch: got ${hash}, expected ${sha256}`
+    );
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(buf.toString('utf8'));
+  } catch (e) {
+    throw new Error(`artworks.json readback is not valid JSON: ${(e && e.message) || e}`);
+  }
+  if (!Array.isArray(parsed) || parsed.length !== count) {
+    throw new Error(
+      `artworks.json readback record count mismatch: got ${parsed && parsed.length}, expected ${count}`
+    );
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Archive extraction safety (tar entry validation)
+// ---------------------------------------------------------------------------
+
+// A safe tar entry path: no leading slash (absolute), no backslashes, no
+// control chars, and no '..' segments. The '.' segment is allowed (tar commonly
+// emits a './' root entry) since it cannot escape the target dir; only '..'
+// (parent traversal) is dangerous. Allows a trailing slash (directory entries)
+// and nested forward-slash subdirs only.
+export function isSafeTarPath(p) {
+  if (typeof p !== 'string' || p.length === 0) return false;
+  if (p.startsWith('/')) return false;
+  if (p.includes('\\')) return false;
+  if (/[\x00-\x1f]/.test(p)) return false;
+  const segs = p.split('/');
+  for (const s of segs) {
+    if (s === '..') return false;
+  }
+  return true;
+}
+
+// GNU tar `tar -tvzf` verbose listing format:
+//   <10-char perms> <owner/group> <size> <YYYY-MM-DD HH:MM> <name>[ -> <target>]
+// The perms type char (index 0) is 'l' for symlinks and 'h' for hardlinks; a
+// symlink line also carries ' -> <target>' and a hardlink line ' link to <t>'.
+const GNU_TAR_VERBOSE_RE = /^(.{10})\s+\S.*?\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}(?::\d{2})?\s+(.+)$/;
+
+// Validate a GNU tar verbose listing: reject any entry that is a symlink or
+// hardlink (so extraction can never create a link that escapes the target dir),
+// and reject any entry whose path is absolute or contains parent traversal.
+// Fail-closed: an unparseable non-blank line is rejected rather than ignored.
+export function validateTarVerboseListing(text) {
+  if (typeof text !== 'string') throw new Error('verbose listing must be a string');
+  const lines = text.split(/\r?\n/);
+  let entryCount = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.trim() === '') continue;
+    const m = line.match(GNU_TAR_VERBOSE_RE);
+    if (!m) {
+      throw new Error(`tar verbose listing line ${i + 1} is unparseable: ${line}`);
+    }
+    const typeChar = m[1][0];
+    const name = m[2];
+    const arrowIdx = name.indexOf(' -> ');
+    const hardIdx = name.indexOf(' link to ');
+    // The captured name already carries the link suffix for links; print it as-is.
+    if (typeChar === 'l' || arrowIdx !== -1) {
+      throw new Error(`tar entry is a symlink, refused: ${name}`);
+    }
+    if (typeChar === 'h' || hardIdx !== -1) {
+      throw new Error(`tar entry is a hardlink, refused: ${name}`);
+    }
+    if (!isSafeTarPath(name)) {
+      throw new Error(`tar entry has unsafe path: ${name}`);
+    }
+    entryCount++;
+  }
+  if (entryCount === 0) throw new Error('tar verbose listing has no entries');
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Static guard helper: detect raw ${{ inputs.* }} inside workflow run: scripts
+// ---------------------------------------------------------------------------
+
+// Scan a workflow YAML text for any `${{ inputs.* }}` that appears INSIDE a
+// step `run:` script body (block `run: |` or inline `run: ...`). Values passed
+// through `env:`/`if:`/`with:` are NOT run-script interpolation and are allowed.
+// Returns an array of { line, text } offenders (empty when clean). This is the
+// testable core of the no-input-interpolation static guard.
+export function findInputsInRunBlocks(text) {
+  if (typeof text !== 'string') return [];
+  const lines = text.split(/\r?\n/);
+  const hits = [];
+  let inRunBlock = false;
+  let runKeyIndent = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i];
+    if (raw.trim() === '') continue;
+    const indent = raw.length - raw.replace(/^\s+/, '').length;
+    const runMatch = raw.match(/^(\s*)run:\s*(.*)$/);
+    if (runMatch) {
+      runKeyIndent = runMatch[1].length;
+      const rest = runMatch[2];
+      if (rest === '' ) {
+        inRunBlock = false;
+      } else if (rest.startsWith('|') || rest.startsWith('>')) {
+        inRunBlock = true;
+      } else {
+        if (/\$\{\{\s*inputs\./.test(raw)) {
+          hits.push({ line: i + 1, text: raw });
+        }
+        inRunBlock = false;
+      }
+      continue;
+    }
+    if (inRunBlock) {
+      if (indent > runKeyIndent) {
+        if (/\$\{\{\s*inputs\./.test(raw)) {
+          hits.push({ line: i + 1, text: raw });
+        }
+      } else {
+        inRunBlock = false;
+      }
+    }
+  }
+  return hits;
 }

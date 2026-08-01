@@ -48,6 +48,27 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 
+// Defensive bounds for SOURCE images, applied before any decode. These cap
+// decompression bombs and runaway allocations. 50 MiB / 8000px covers any
+// legitimate drive photo while stopping weaponised inputs. ImageMagick's own
+// -limit flags (see IM_LIMITS) back these up inside the tool itself.
+const SOURCE_MAX_BYTES = 50 * 1024 * 1024;
+const SOURCE_MAX_DIMENSION = 8000;
+
+// Resource limits applied to EVERY ImageMagick invocation. These -limit flags
+// are understood by both IM6 (convert/identify) and IM7 (magick); they bound
+// memory/disk and reject images whose pixel dimensions exceed SOURCE_MAX before
+// full decode. Residual risk: a policy.xml (runner-specific path, requires root)
+// would be more comprehensive; these CLI limits + the pre-stat/pre-identify caps
+// are the portable, version-agnostic defence documented here.
+const IM_LIMITS = [
+  '-limit', 'memory', '256MiB',
+  '-limit', 'map', '512MiB',
+  '-limit', 'disk', '1GiB',
+  '-limit', 'width', String(SOURCE_MAX_DIMENSION),
+  '-limit', 'height', String(SOURCE_MAX_DIMENSION)
+];
+
 function fail(msg) {
   console.error(`generate-catalog-derivatives: FAIL - ${msg}`);
   process.exit(1);
@@ -56,19 +77,21 @@ function fail(msg) {
 // ---- ImageMagick discovery -------------------------------------------------
 function discoverImageMagick() {
   // Prefer the v7 unified `magick` binary; fall back to v6 `convert`/`identify`.
+  // Resource limits (IM_LIMITS) are prepended to every invocation so oversized
+  // sources are rejected before decode on both IM6 and IM7.
   if (commandExists('magick')) {
     const v = versionOf(['magick', '--version']);
     return {
-      convert: (args) => run('magick', args),
-      identify: (file) => identify(['magick', 'identify', '-format', '%m %w %h', file]),
+      convert: (args) => run('magick', [...IM_LIMITS, ...args]),
+      identify: (file) => identify(['magick', 'identify', ...IM_LIMITS, '-format', '%m %w %h', file]),
       version: v
     };
   }
   if (commandExists('convert') && commandExists('identify')) {
     const v = versionOf(['identify', '--version']);
     return {
-      convert: (args) => run('convert', args),
-      identify: (file) => identify(['identify', '-format', '%m %w %h', file]),
+      convert: (args) => run('convert', [...IM_LIMITS, ...args]),
+      identify: (file) => identify(['identify', ...IM_LIMITS, '-format', '%m %w %h', file]),
       version: v
     };
   }
@@ -138,7 +161,7 @@ function makeDerivative(im, input, output, maxDim, quality) {
   }
   const longest = Math.max(info.width, info.height);
   if (longest > maxDim) {
-    throw new Error(`Derivative longest edge ${longest} exceeds ${maxDim}: ${output}`);
+    throw new Error(`Derivative longest edge ${longest} exceeds ${maxDim} for ${output}`);
   }
   return info;
 }
@@ -200,9 +223,25 @@ function main() {
     if (actualSha !== src.sourceSha) {
       fail(`source checksum mismatch for ${record.id}: expected ${src.sourceSha}, got ${actualSha}`);
     }
+    // Source size cap (pre-stat): reject a weaponised/oversized source before
+    // any image decode. Fails closed with a clear error.
     const srcSize = statSync(srcAbs).size;
     if (!Number.isInteger(srcSize) || srcSize <= 0) {
       fail(`source file has invalid size for ${record.id}: ${srcSize}`);
+    }
+    if (srcSize > SOURCE_MAX_BYTES) {
+      fail(`source file exceeds ${SOURCE_MAX_BYTES} bytes for ${record.id}: ${srcSize}`);
+    }
+    // Identify source dimensions BEFORE generation. The bounded identify (with
+    // -limit flags) rejects decompression bombs; this explicit check gives a
+    // clear fail-closed error and is belt-and-suspenders to the tool's limits.
+    const srcInfo = im.identify(srcAbs);
+    const srcLongest = Math.max(srcInfo.width, srcInfo.height);
+    if (srcLongest > SOURCE_MAX_DIMENSION) {
+      fail(`source image exceeds ${SOURCE_MAX_DIMENSION}px for ${record.id}: ${srcInfo.width}x${srcInfo.height}`);
+    }
+    if (!srcInfo.magic || /error|abort|invalid/i.test(srcInfo.magic)) {
+      fail(`source identify returned suspicious magic for ${record.id}: ${srcInfo.magic}`);
     }
 
     for (const variant of ['full', 'thumb']) {

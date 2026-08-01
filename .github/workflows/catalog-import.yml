@@ -92,13 +92,13 @@ jobs:
           echo "Production catalogue import remains blocked until the Stop 2 milestone."
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5 (moving tag SHA, resolved via git ls-remote)
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -121,22 +121,45 @@ jobs:
           fi
 
       - name: Download and checksum-verify the asset archive
+        env:
+          # Inputs are passed through env (never interpolated in the run script)
+          # so an attacker-controlled input value can never become shell syntax.
+          ARCHIVE_URL: ${{ inputs.assets_archive_url }}
+          ARCHIVE_SHA: ${{ inputs.assets_archive_sha256 }}
         run: |
           set -euo pipefail
-          : > /dev/null
           ARCHIVE="${RUNNER_TEMP}/catalog-assets.tar.gz"
-          # HTTPS only (re-asserted); curl fails closed on HTTP errors.
-          curl --fail --location --proto =https --output "$ARCHIVE" "${{ inputs.assets_archive_url }}"
-          printf '%s  %s\n' "${{ inputs.assets_archive_sha256 }}" "$ARCHIVE" | sha256sum -c -
+          # Re-assert input shape on the consumed values (defense in depth).
+          case "${ARCHIVE_URL}" in
+            https://*) : ;;
+            *) echo "fail closed: assets_archive_url must start with https://"; exit 1 ;;
+          esac
+          if printf '%s' "${ARCHIVE_URL}" | grep -Eq '[[:space:]]'; then
+            echo "fail closed: assets_archive_url must not contain whitespace"; exit 1
+          fi
+          if ! printf '%s' "${ARCHIVE_SHA}" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "fail closed: assets_archive_sha256 must be 64-char lowercase hex"; exit 1
+          fi
+          # HTTPS only; curl fails closed on HTTP errors. Values are strictly quoted.
+          curl --fail --location --proto =https --output "$ARCHIVE" "${ARCHIVE_URL}"
+          printf '%s  %s\n' "${ARCHIVE_SHA}" "$ARCHIVE" | sha256sum -c -
           echo "asset archive downloaded and checksum-verified"
 
-      - name: Extract archive and locate SHA256SUMS root
+      - name: Extract archive (hardened) and locate SHA256SUMS root
         id: assets
         run: |
           set -euo pipefail
+          ARCHIVE="${RUNNER_TEMP}/catalog-assets.tar.gz"
           EXTRACT="${RUNNER_TEMP}/catalog-assets"
           mkdir -p "$EXTRACT"
-          tar -xzf "${RUNNER_TEMP}/catalog-assets.tar.gz" -C "$EXTRACT"
+          # Pre-extraction safety: validate the verbose listing BEFORE extracting.
+          # Rejects any symlink/hardlink entry (so extraction can never create a
+          # link that escapes the target dir) and any absolute or parent-traversal
+          # path. This runs before a single byte is written to $EXTRACT.
+          tar -tvzf "$ARCHIVE" > "${RUNNER_TEMP}/catalog-listing.txt"
+          node scripts/validate-archive-listing.mjs --verbose-listing "${RUNNER_TEMP}/catalog-listing.txt"
+          # Extract with no owner/permission restoration (no privilege escalation).
+          tar -xzf "$ARCHIVE" -C "$EXTRACT" --no-same-owner
           # The archive root may wrap the tree in one directory. Find the dir
           # that contains SHA256SUMS + originals/ + misc-originals/.
           ROOT="$(find "$EXTRACT" -type f -name SHA256SUMS -print0 \
@@ -155,12 +178,16 @@ jobs:
           echo "ASSETS_DIR=$ROOT" >> "$GITHUB_ENV"
           echo "assets root: $ROOT"
 
-      - name: Verify every source image against SHA256SUMS
-        run: |
-          set -euo pipefail
-          # Reject any checksum mismatch before generating derivatives.
-          ( cd "$ASSETS_DIR" && sha256sum -c SHA256SUMS --quiet )
-          echo "all source checksums verified"
+      # NOTE: the previous "Verify every source image against SHA256SUMS" step
+      # (which ran `sha256sum -c SHA256SUMS`) is intentionally REMOVED. That step
+      # read paths straight from the downloaded SHA256SUMS, which could contain
+      # absolute or parent-traversal paths. It was also fully redundant: the
+      # generator (generate-catalog-derivatives.mjs) parses SHA256SUMS via the
+      # strict parseSha256Sums() helper (rejecting malformed lines and any unsafe
+      # path), resolves each catalogue source solely through provenance.sha256
+      # via buildSourceMap(), and RE-HASHES every source byte before generation.
+      # Relying on the generator's strict rehash removes the unsafe-path-reading
+      # surface with no loss of integrity coverage.
 
       - name: Validate catalogue
         run: pnpm check:catalog

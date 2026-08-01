@@ -15,6 +15,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
+import { findInputsInRunBlocks } from './lib/catalog-import-core.mjs';
 
 const ROOT = path.resolve(scriptDir(), '..');
 const MANDATORY_PARAGRAPH =
@@ -366,18 +367,42 @@ function main() {
         fail(importWfPath + ' must not reference ' + ref);
       }
     }
+
+    // No raw ${{ inputs.* }} may be interpolated inside any step run: script.
+    // Inputs must flow through env: (then quoted shell vars) so an
+    // attacker-controlled input value can never become shell syntax. Values in
+    // env:/if:/with: are not run-script interpolation and are permitted.
+    const inputInRun = findInputsInRunBlocks(importWf);
+    for (const hit of inputInRun) {
+      fail(importWfPath + ' must not interpolate ${{ inputs.* }} in a run script (line ' + hit.line + ')');
+    }
+
+    // Third-party actions must be pinned to full 40-char commit SHAs (not @vN).
+    const usesLines = importWf.split(/\r?\n/).filter((l) => /^\s*uses:\s*[^{]*\S/.test(l));
+    for (const line of usesLines) {
+      const m = line.match(/uses:\s*([^#\s]+)\s*(?:#.*)?$/);
+      if (!m) continue;
+      const ref = m[1];
+      const actionRef = ref.split('@')[1] || '';
+      if (!/^[0-9a-f]{40}$/.test(actionRef)) {
+        fail(importWfPath + ' must pin actions to 40-char SHAs, found: ' + ref.trim());
+      }
+    }
   }
 
   // Support scripts for the catalogue import.
   const genPath = 'scripts/generate-catalog-derivatives.mjs';
   const importScriptPath = 'scripts/import-catalog-preview.mjs';
   const corePath = 'scripts/lib/catalog-import-core.mjs';
+  const archiveValidatorPath = 'scripts/validate-archive-listing.mjs';
   const genScript = readText(genPath);
   const importScript = readText(importScriptPath);
   const coreLib = readText(corePath);
+  const archiveValidator = readText(archiveValidatorPath);
   if (genScript === null) fail(genPath + ' is missing');
   if (importScript === null) fail(importScriptPath + ' is missing');
   if (coreLib === null) fail(corePath + ' is missing');
+  if (archiveValidator === null) fail(archiveValidatorPath + ' is missing');
   if (importScript !== null) {
     if (!/assertPreviewBucket/.test(importScript)) {
       fail(importScriptPath + ' must call assertPreviewBucket before any upload');
@@ -385,10 +410,26 @@ function main() {
     if (/mj-art-images(?!-preview)/.test(importScript)) {
       fail(importScriptPath + ' must not embed the production bucket literal');
     }
+    // Metadata readback must verify exact hash/bytes, not only parsed count.
+    if (!/verifyArtworksReadback/.test(importScript)) {
+      fail(importScriptPath + ' must verify artworks.json readback by hash (verifyArtworksReadback)');
+    }
   }
   if (coreLib !== null) {
     if (!/assertPreviewBucket/.test(coreLib) || !/mj-art-images-preview/.test(coreLib)) {
       fail(corePath + ' must define the preview-only bucket guard');
+    }
+  }
+  if (genScript !== null) {
+    // ImageMagick invocations must apply resource limits and a source size cap.
+    if (!/-limit/.test(genScript)) {
+      fail(genPath + ' must apply ImageMagick -limit resource controls');
+    }
+    if (!/SOURCE_MAX_BYTES/.test(genScript)) {
+      fail(genPath + ' must enforce a source file size cap before decode');
+    }
+    if (!/SOURCE_MAX_DIMENSION/.test(genScript)) {
+      fail(genPath + ' must enforce a source dimension cap before decode');
     }
   }
 
