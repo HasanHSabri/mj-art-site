@@ -255,6 +255,39 @@ sha256sum mj-art-master-<version>.tar.gz > mj-art-master-<version>.sha256
 
 Then place both files under `VPS_MASTER_ROOT`.
 
+### Operational status: first master archive (2026-08-01-1)
+
+The unified VPS import root on this host is `.local-assets/imports/` — this is the
+value bound to `VPS_MASTER_ROOT`. It is dedicated solely to versioned MJ import
+archives and sidecars; the masters library (`.local-assets/catalog-assets/`) and
+backups (`.local-assets/backups/`) are unchanged and outside this root. The
+entire `.local-assets/` tree is gitignored, so archives never enter Git.
+
+Permissions are conservative: the imports directory is `0755` with the
+`developers` group granted read+list only (no write); published archives and
+sidecars are `0444` (read-only for all principals including the owner).
+
+The first published archive is **`mj-art-master-2026-08-01-1`**:
+
+- Built from `.local-assets/catalog-assets/` containing exactly `originals/`
+  (75 Drive JPEGs), `misc-originals/` (11 misc images), and `SHA256SUMS` (86
+  records). No `provenance/`, `README.md`, wrapper root directory, symlinks, or
+  hardlinks are present.
+- Passes `scripts/verify-master-archive.mjs` (archive SHA-256 matches the strict
+  sidecar) and the `validateTarVerboseListing` extraction-safety guard.
+- Extracted `SHA256SUMS` verifies **86/86 OK, 0 failed**.
+
+**Restricted fetch account (`mjart-fetch`)**: intended as a key-only system user
+with a forced `internal-sftp` + `restrict` authorized-keys entry rooted at exactly
+the imports directory, read-only by filesystem rights. **Status: pending** —
+account creation, key installation, sshd configuration, and local access testing
+require elevated privileges on the host and have not yet been completed.
+Accordingly, **no GitHub Actions variables or secrets have been set** and
+`VPS_ASSETS_CONFIRMED` remains unset. The next safe action is for an operator
+with elevated privileges to create the account and complete the one-time setup
+(above), after which the GitHub variables/secrets can be populated and the
+end-to-end fetch validated before setting `VPS_ASSETS_CONFIRMED`.
+
 ### Publishing cycle
 
 1. **Build** the versioned archive + sidecar (above) and place them on the VPS.
