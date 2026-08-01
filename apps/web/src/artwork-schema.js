@@ -70,7 +70,28 @@ export const ALLOWED_CATALOGUE_SIZES = new Set([
 export const MISC_SIZE_CATEGORY = 'miscellaneous';
 
 const ID_RE = /^[a-z]+-\d{3}$/;
-const R2_IMAGE_PATH_RE = /^\/artwork-uploaded\/artwork\/catalog\/[a-z]+-\d{3}\/(full|thumb)\.jpg$/;
+// Canonical image path shape: only mj|misc catalog folders ever hold a served
+// derivative. Aligned with SERVED_IMAGE_KEY_RE in worker.js so a noncanonical
+// prefix (e.g. abc-001) can never validate as a record image path.
+const R2_IMAGE_PATH_RE = /^\/artwork-uploaded\/artwork\/catalog\/(mj|misc)-\d{3}\/(full|thumb)\.jpg$/;
+
+// Canonical sizeCategory -> unordered physical dimension pair (cm), sorted
+// ascending. A catalogue record's {widthCm, heightCm} (in any order) must match
+// its sizeCategory pair. Miscellaneous works use the MISC_SIZE_CATEGORY sentinel
+// and are exempt (their dimensions may be null or incidental).
+export const SIZE_CATEGORY_DIMENSIONS = {
+  '20x20': [20, 20],
+  '20x25': [20, 25],
+  '25x25': [25, 25],
+  '30x23': [23, 30],
+  '30x30': [30, 30],
+  '35x28': [28, 35],
+  '40x30': [30, 40],
+  '47x57': [47, 57],
+  '50x25': [25, 50],
+  '55x30': [30, 55],
+  '58x73': [58, 73]
+};
 
 // Strict provenance contract. Only these internal-only keys may ever appear on
 // a persisted record. Every key present in catalog/catalog.json is covered.
@@ -239,6 +260,15 @@ export function validateArtworkRecord(r, ctx = '(unknown)') {
   const dimsError = validateDimensions(r.dimensions, ctx);
   if (dimsError) return dimsError;
 
+  // sizeCategory <-> dimensions consistency (catalogue only). The physical
+  // {widthCm, heightCm} pair, in any order, must equal the canonical pair for
+  // the declared sizeCategory. Miscellaneous works use the sentinel and are
+  // exempt (dimensions may be null or incidental).
+  if (r.category === 'catalogue') {
+    const catError = validateSizeCategoryDimensions(r.sizeCategory, r.dimensions, ctx);
+    if (catError) return catError;
+  }
+
   // provenance
   const provError = validateProvenance(r.provenance, ctx);
   if (provError) return provError;
@@ -376,6 +406,25 @@ function safeStr(value) {
   if (value === null || value === undefined) return String(value);
   if (typeof value === 'object') return JSON.stringify(value);
   return String(value);
+}
+
+// Catalogue sizeCategory <-> dimensions consistency. The physical pair, sorted
+// ascending, must equal the canonical pair for the declared sizeCategory. Both
+// dimensions are required for catalogue works, so a null dimension is a failure.
+function validateSizeCategoryDimensions(sizeCategory, dims, ctx) {
+  const expected = SIZE_CATEGORY_DIMENSIONS[sizeCategory];
+  if (!expected) {
+    return `[${ctx}] sizeCategory must be one of the canonical catalogue sizes, got: ${safeStr(sizeCategory)}`;
+  }
+  if (!dims || dims.widthCm == null || dims.heightCm == null) {
+    return `[${ctx}] catalogue dimensions must be present for sizeCategory ${sizeCategory}.`;
+  }
+  const got = [dims.widthCm, dims.heightCm].sort((a, b) => a - b);
+  const want = [...expected].sort((a, b) => a - b);
+  if (got[0] !== want[0] || got[1] !== want[1]) {
+    return `[${ctx}] dimensions {${dims.widthCm}x${dims.heightCm}} do not match sizeCategory ${sizeCategory} ({${expected[0]},${expected[1]}}).`;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------

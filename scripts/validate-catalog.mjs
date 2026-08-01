@@ -57,9 +57,25 @@ const EXPECTED_SIZE_COUNTS = {
 const EXPECTED_MISC_SIZE_COUNT = 11; // all "miscellaneous"
 
 const SHA256_RE = /^[a-f0-9]{64}$/;
-const R2_PATH_RE = /^\/artwork-uploaded\/artwork\/catalog\/[a-z]+-\d{3}\/(full|thumb)\.jpg$/;
+const R2_PATH_RE = /^\/artwork-uploaded\/artwork\/catalog\/(mj|misc)-\d{3}\/(full|thumb)\.jpg$/;
 const LEAK_RE = /\/tmp\/|\/workspace\/|\/home\/|\/Users\/|\\Users\\|C:\\\\/i;
 const SECRET_RE = /(secret|token|password|api[_-]?key|authorization|bearer|credential)/i;
+
+// Canonical sizeCategory -> unordered physical dimension pair (cm), sorted
+// ascending. Parity with src/artwork-schema.js#SIZE_CATEGORY_DIMENSIONS.
+const SIZE_CATEGORY_DIMENSIONS = {
+  "20x20": [20, 20],
+  "20x25": [20, 25],
+  "25x25": [25, 25],
+  "30x23": [23, 30],
+  "30x30": [30, 30],
+  "35x28": [28, 35],
+  "40x30": [30, 40],
+  "47x57": [47, 57],
+  "50x25": [25, 50],
+  "55x30": [30, 55],
+  "58x73": [58, 73]
+};
 
 // Approved mappings (MJ -> original misc label)
 const APPROVED = {
@@ -197,6 +213,22 @@ for (const r of catalog) {
         fail(`[${ctx}] width>height but orientation is ${dims.orientation}, expected Horizontal`);
       if (dims.widthCm < dims.heightCm && dims.orientation !== "Vertical")
         fail(`[${ctx}] width<height but orientation is ${dims.orientation}, expected Vertical`);
+    }
+  }
+
+  // sizeCategory <-> dimensions consistency (catalogue only). The physical pair,
+  // in any order, must equal the canonical pair for the declared sizeCategory.
+  if (r.category === "catalogue") {
+    const expected = SIZE_CATEGORY_DIMENSIONS[r.sizeCategory];
+    if (!expected) {
+      fail(`[${ctx}] catalogue sizeCategory not canonical: ${r.sizeCategory}`);
+    } else if (!dims || dims.widthCm == null || dims.heightCm == null) {
+      fail(`[${ctx}] catalogue dimensions must be present for sizeCategory ${r.sizeCategory}`);
+    } else {
+      const got = [dims.widthCm, dims.heightCm].sort((a, b) => a - b);
+      const want = [...expected].sort((a, b) => a - b);
+      if (got[0] !== want[0] || got[1] !== want[1])
+        fail(`[${ctx}] dimensions {${dims.widthCm}x${dims.heightCm}} do not match sizeCategory ${r.sizeCategory}`);
     }
   }
 

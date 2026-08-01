@@ -297,6 +297,52 @@ label {
   gap: 18px;
 }
 
+.gallery-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.gallery-results {
+  color: var(--muted);
+  font-size: 0.92rem;
+  margin: 10px 0 0;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+
+.filter-chip:hover {
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.filter-chip:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.filter-chip[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: transparent;
+  color: #fff8f4;
+}
+
+.painting-card[hidden] {
+  display: none;
+}
+
 .gallery-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   margin-top: 20px;

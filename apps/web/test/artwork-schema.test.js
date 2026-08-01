@@ -17,8 +17,20 @@ import {
   ALLOWED_SOURCES,
   MAX_PUT_BODY_BYTES,
   ALLOWED_CATALOGUE_SIZES,
-  MISC_SIZE_CATEGORY
+  MISC_SIZE_CATEGORY,
+  SIZE_CATEGORY_DIMENSIONS
 } from '../src/artwork-schema.js';
+
+// Build a dimensions object that is physically consistent with a canonical size
+// pair, in a given orientation order ('hw' = height>height swap). Used so the
+// sizeCategory<->dimensions consistency check passes.
+function dimsForSize(size, flip = false) {
+  const [a, b] = SIZE_CATEGORY_DIMENSIONS[size];
+  const widthCm = flip ? b : a;
+  const heightCm = flip ? a : b;
+  const orientation = widthCm === heightCm ? 'Square' : widthCm > heightCm ? 'Horizontal' : 'Vertical';
+  return { widthCm, heightCm, label: `${widthCm}x${heightCm} cm`, orientation };
+}
 
 // A minimal valid canonical record. Fields mirror catalog/catalog.json.
 function validRecord(overrides = {}) {
@@ -162,12 +174,21 @@ test('validateArtworkRecord rejects unknown price keys', () => {
 });
 
 test('validateArtworkRecord validates dimensions orientation consistency', () => {
+  // Use a non-square canonical size (40x30 -> pair {30,40}) so the dimensions
+  // stay parity-consistent with the sizeCategory while we exercise orientation.
+  // width>height but orientation mislabeled Vertical -> rejected by the
+  // dimensions orientation check (before sizeCategory parity is reached).
+  const horiz = dimsForSize('40x30', true); // { widthCm: 40, heightCm: 30, Horizontal }
   assert.match(
-    validateArtworkRecord(validRecord({ dimensions: { widthCm: 30, heightCm: 20, label: '30x20', orientation: 'Vertical' } })),
+    validateArtworkRecord(validRecord({
+      sizeCategory: '40x30',
+      dimensions: { ...horiz, orientation: 'Vertical' }
+    })),
     /expected Horizontal/
   );
+  // Consistent horizontal dimensions for a non-square size -> valid.
   assert.equal(
-    validateArtworkRecord(validRecord({ dimensions: { widthCm: 30, heightCm: 20, label: '30x20', orientation: 'Horizontal' } })),
+    validateArtworkRecord(validRecord({ sizeCategory: '40x30', dimensions: horiz })),
     null
   );
 });
@@ -425,7 +446,7 @@ test('validateArtworkRecord rejects catalogue sizeCategory with arbitrary string
 
 test('validateArtworkRecord accepts all 11 canonical catalogue sizes', () => {
   for (const size of ALLOWED_CATALOGUE_SIZES) {
-    const dims = { widthCm: 20, heightCm: 20, label: size + ' cm', orientation: 'Square' };
+    const dims = dimsForSize(size);
     assert.equal(validateArtworkRecord(validRecord({ sizeCategory: size, dimensions: dims })), null,
       `sizeCategory ${size} should be accepted`);
   }

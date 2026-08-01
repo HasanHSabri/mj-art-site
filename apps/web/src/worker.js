@@ -1,11 +1,11 @@
 import {
   MAX_PUT_BODY_BYTES,
   canonicalizeList,
-  dimensionsLabel,
   toPublicList,
   sortByOrder,
   validateArtworkList
 } from './artwork-schema.js';
+import { renderArtworkCards } from './gallery-ssr.js';
 
 const ARTWORKS_KEY = 'artworks.json';
 const SESSION_COOKIE = 'mj_art_admin';
@@ -119,14 +119,13 @@ async function servePublicIndex(request, env) {
   const html = await asset.text();
 
   const catalog = await readStoredCatalog(env);
-  let galleryHtml;
-  if (catalog.state === 'present') {
-    galleryHtml = renderArtworkCards(toPublicList(catalog.records));
-  } else {
-    // Missing or invalid metadata: render an empty gallery container. There is
-    // no legacy/static data path; the client hydrates from /api/artworks.
-    galleryHtml = '';
-  }
+  // SSR renders canonical public records exactly once. The client enhances
+  // these cards in place (filters, dialog) and never fetches /api/artworks or
+  // rebuilds the grid. Missing/invalid metadata yields an empty gallery
+  // container (accessible empty state), never legacy cards.
+  const galleryHtml = catalog.state === 'present'
+    ? renderArtworkCards(toPublicList(catalog.records))
+    : '';
 
   const status = catalog.state === 'invalid' ? 500 : 200;
   const rendered = html.replace(
@@ -141,35 +140,6 @@ async function servePublicIndex(request, env) {
       'content-type': 'text/html; charset=UTF-8'
     }
   });
-}
-
-// Renders the server-side gallery from already-projected public records (no
-// catalogNumber, sortOrder, or provenance). Ordered by sortOrder ascending.
-function renderArtworkCards(artworks) {
-  const cards = artworks.map((artwork) => {
-    const imageClass = artwork.containImage ? 'painting-image painting-image-contained' : 'painting-image';
-    const imageSrc = artwork.thumbnail || artwork.image;
-    const medium = artwork.medium || '';
-
-    return `          <article class="painting-card" role="button" aria-haspopup="dialog" aria-label="View details for ${escapeAttribute(artwork.title)}" data-title="${escapeAttribute(artwork.title)}" data-medium="${escapeAttribute(medium)}" data-size="${escapeAttribute(dimensionsLabel(artwork))}" data-availability="${escapeAttribute(artwork.availability)}" data-description="${escapeAttribute(artwork.description)}" data-image="${escapeAttribute(imageSrc)}">
-            <div class="${imageClass}"><img src="${escapeAttribute(imageSrc)}" alt="${escapeAttribute(artwork.title)}"></div>
-            <div class="painting-card-body">
-              <h3>${escapeHtml(artwork.title)}</h3>
-              <p>${escapeHtml(artwork.cardNote)}</p>
-              <span>${escapeHtml(artwork.availability)}</span>
-            </div>
-          </article>`;
-  });
-
-  cards.push(`          <article class="painting-card painting-card-placeholder" aria-label="More paintings will be added soon">
-            <div class="painting-image painting-image-placeholder"></div>
-            <div class="painting-card-body">
-              <h3>More works soon</h3>
-              <p>Additional paintings will be added as the collection grows.</p>
-            </div>
-          </article>`);
-
-  return cards.join('\n\n');
 }
 
 // Admin PUT: strict canonical-schema validation, full overwrite. Enforces an
@@ -408,14 +378,6 @@ function jsonResponse(body, status = 200) {
       'content-type': 'application/json'
     }
   });
-}
-
-function escapeHtml(value) {
-  return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
-}
-
-function escapeAttribute(value) {
-  return escapeHtml(value).replaceAll('"', '&quot;');
 }
 
 function base64UrlEncode(value) {
