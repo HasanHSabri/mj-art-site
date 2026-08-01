@@ -17,7 +17,7 @@
 //
 // Usage:
 //   node scripts/generate-catalog-derivatives.mjs \
-//     --assets-dir /path/to/MJ-ART-catalog-assets \
+//     --assets-dir .local-assets/catalog-assets \
 //     --output-dir /tmp/mj-art-derivatives \
 //     [--catalog catalog/catalog.json]
 //
@@ -173,7 +173,7 @@ function main() {
     : path.join(REPO_ROOT, 'catalog', 'catalog.json');
   const assetsDir = args['assets-dir']
     ? path.resolve(args['assets-dir'])
-    : (process.env.MJ_ART_CATALOG_ASSETS_DIR || '/workspace/projects/MJ-ART-catalog-assets');
+    : (process.env.MJ_ART_CATALOG_ASSETS_DIR || path.join(REPO_ROOT, '.local-assets', 'catalog-assets'));
   const outputDir = args['output-dir']
     ? path.resolve(args['output-dir'])
     : path.join(os.tmpdir(), 'mj-art-catalog-derivatives');

@@ -8,3 +8,5 @@ _bmad-output/
 # Generated catalogue derivatives are never committed (preview-import artifacts).
 .catalog-derivatives/
 catalog-derivatives/
+# Local durable storage: source catalogue assets + R2 backups (never committed).
+.local-assets/

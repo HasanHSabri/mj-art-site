@@ -45,7 +45,7 @@ import * as schema from '../src/artwork-schema.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
-const KNOWN_ASSETS_DIR = '/workspace/projects/MJ-ART-catalog-assets';
+const KNOWN_ASSETS_DIR = path.join(REPO_ROOT, '.local-assets', 'catalog-assets');
 
 const SHA_A = 'a'.repeat(64);
 const SHA_B = 'b'.repeat(64);

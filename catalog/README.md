@@ -116,7 +116,7 @@ Rejected mappings (3) remain distinct — see `approvals.json`.
 | Cross-set matching artifacts (`/tmp/opencode/mj-catalog-review/matching/`) | Mapping proposals |
 
 Durable byte-identical image copies (outside Git):
-`/workspace/projects/MJ-ART-catalog-assets/` with `SHA256SUMS`.
+`.local-assets/catalog-assets/` (gitignored, within the repo tree) with `SHA256SUMS`.
 
 ## Validation
 
