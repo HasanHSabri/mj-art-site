@@ -15,7 +15,7 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
-import { findInputsInRunBlocks } from './lib/catalog-import-core.mjs';
+import { findInputsInRunBlocks, findSecretsInRunBlocks } from './lib/catalog-import-core.mjs';
 
 const ROOT = path.resolve(scriptDir(), '..');
 const MANDATORY_PARAGRAPH =
@@ -315,14 +315,33 @@ function main() {
       }
     }
 
-    // Required confirmation + asset-protection inputs.
-    for (const inputName of ['confirm_preview_only', 'assets_archive_url', 'assets_archive_sha256', 'execute_upload']) {
+    // Required confirmation + version-select inputs. The old transport-URL
+    // inputs (assets_archive_url / assets_archive_sha256) are intentionally
+    // forbidden now: masters are fetched from the VPS by version token only.
+    for (const inputName of ['confirm_preview_only', 'master_archive_version', 'execute_upload']) {
       if (!new RegExp('^\\s+' + inputName + ':', 'm').test(importWf)) {
         fail(importWfPath + ' must declare input ' + inputName);
       }
     }
+    for (const forbiddenInput of ['assets_archive_url', 'assets_archive_sha256']) {
+      if (importWf.includes(forbiddenInput)) {
+        fail(importWfPath + ' must not declare the removed transport input ' + forbiddenInput);
+      }
+    }
     if (!/confirm_preview_only/.test(importWf)) {
       fail(importWfPath + ' must reference the confirm_preview_only confirmation input');
+    }
+
+    // Out-of-band VPS attestation: a maintainer repo variable must gate every
+    // run (mirrors the read-only token confirmation pattern).
+    if (!/vars\.VPS_ASSETS_CONFIRMED/.test(importWf)) {
+      fail(importWfPath + ' prerequisite gate must reference vars.VPS_ASSETS_CONFIRMED');
+    }
+
+    // No archive/write URL may appear anywhere: masters are VPS-fetched by
+    // version token, and the public upload is the R2 account+token (no URL).
+    if (/[a-z][a-z0-9+.-]*:\/\//i.test(importWf)) {
+      fail(importWfPath + ' must not contain any protocol URL (no archive or write URL)');
     }
 
     // PREVIEW bucket literal must be present; the production bucket must NEVER
@@ -368,6 +387,36 @@ function main() {
       }
     }
 
+    // VPS connection material: required repo variables + secrets, referenced
+    // exclusively through env: (never interpolated in a run script). The exact
+    // remote basename is constructed from the validated version only.
+    const vpsVarRefs = [
+      '${{ vars.VPS_HOST }}',
+      '${{ vars.VPS_PORT }}',
+      '${{ vars.VPS_USER }}',
+      '${{ vars.VPS_MASTER_ROOT }}',
+      '${{ vars.VPS_ASSETS_CONFIRMED }}'
+    ];
+    for (const ref of vpsVarRefs) {
+      if (!importWf.includes(ref)) {
+        fail(importWfPath + ' must reference ' + ref);
+      }
+    }
+    const vpsSecretRefs = [
+      '${{ secrets.VPS_SSH_PRIVATE_KEY }}',
+      '${{ secrets.VPS_KNOWN_HOSTS }}'
+    ];
+    for (const ref of vpsSecretRefs) {
+      if (!importWf.includes(ref)) {
+        fail(importWfPath + ' must reference ' + ref);
+      }
+    }
+    // The exact remote archive basename must be constructed from the version
+    // token (so it can never carry an injected path), not supplied as input.
+    if (!/mj-art-master-\$\{?MASTER_VERSION\}?/.test(importWf) && !/mj-art-master-\$\{MASTER_VERSION\}/.test(importWf)) {
+      fail(importWfPath + ' must build the remote basename from MASTER_VERSION (mj-art-master-${MASTER_VERSION})');
+    }
+
     // No raw ${{ inputs.* }} may be interpolated inside any step run: script.
     // Inputs must flow through env: (then quoted shell vars) so an
     // attacker-controlled input value can never become shell syntax. Values in
@@ -375,6 +424,14 @@ function main() {
     const inputInRun = findInputsInRunBlocks(importWf);
     for (const hit of inputInRun) {
       fail(importWfPath + ' must not interpolate ${{ inputs.* }} in a run script (line ' + hit.line + ')');
+    }
+
+    // No raw ${{ secrets.* }} may be interpolated inside any step run: script
+    // either. Secrets must flow through env: so a value can never leak into a
+    // command line or log line.
+    const secretInRun = findSecretsInRunBlocks(importWf);
+    for (const hit of secretInRun) {
+      fail(importWfPath + ' must not interpolate ${{ secrets.* }} in a run script (line ' + hit.line + ')');
     }
 
     // Third-party actions must be pinned to full 40-char commit SHAs (not @vN).
@@ -395,14 +452,17 @@ function main() {
   const importScriptPath = 'scripts/import-catalog-preview.mjs';
   const corePath = 'scripts/lib/catalog-import-core.mjs';
   const archiveValidatorPath = 'scripts/validate-archive-listing.mjs';
+  const masterVerifyPath = 'scripts/verify-master-archive.mjs';
   const genScript = readText(genPath);
   const importScript = readText(importScriptPath);
   const coreLib = readText(corePath);
   const archiveValidator = readText(archiveValidatorPath);
+  const masterVerify = readText(masterVerifyPath);
   if (genScript === null) fail(genPath + ' is missing');
   if (importScript === null) fail(importScriptPath + ' is missing');
   if (coreLib === null) fail(corePath + ' is missing');
   if (archiveValidator === null) fail(archiveValidatorPath + ' is missing');
+  if (masterVerify === null) fail(masterVerifyPath + ' is missing');
   if (importScript !== null) {
     if (!/assertPreviewBucket/.test(importScript)) {
       fail(importScriptPath + ' must call assertPreviewBucket before any upload');
@@ -418,6 +478,26 @@ function main() {
   if (coreLib !== null) {
     if (!/assertPreviewBucket/.test(coreLib) || !/mj-art-images-preview/.test(coreLib)) {
       fail(corePath + ' must define the preview-only bucket guard');
+    }
+    // VPS master-assets helpers must be defined here (unit-tested, reused by
+    // the verify script).
+    for (const sym of ['MASTER_VERSION_RE', 'masterArchiveBasename', 'parseMasterSidecar', 'isSafeVpsMasterRoot', 'findSecretsInRunBlocks']) {
+      if (!new RegExp('\\b' + sym + '\\b').test(coreLib)) {
+        fail(corePath + ' must define/export ' + sym);
+      }
+    }
+  }
+  if (masterVerify !== null) {
+    // The verifier must parse the sidecar strictly and re-hash the archive; it
+    // must NOT shell out to `sha256sum -c` (which would read an untrusted path).
+    if (!/parseMasterSidecar/.test(masterVerify)) {
+      fail(masterVerifyPath + ' must parse the sidecar via parseMasterSidecar');
+    }
+    if (/sha256sum\s+-c/.test(masterVerify)) {
+      fail(masterVerifyPath + ' must not invoke sha256sum -c on the sidecar');
+    }
+    if (!/createHash\('sha256'\)/.test(masterVerify) && !/createHash\("sha256"\)/.test(masterVerify)) {
+      fail(masterVerifyPath + ' must re-hash the archive with createHash');
     }
   }
   if (genScript !== null) {

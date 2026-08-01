@@ -48,6 +48,130 @@ export const HTTPS_URL_RE = /^https:\/\/[^\s'"]+$/i;
 export const BUCKET_NAME_RE = /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/;
 
 // ---------------------------------------------------------------------------
+// VPS private master-assets library
+// ---------------------------------------------------------------------------
+//
+// Private originals live as a VERSIONED library on a hardened VPS (no Neon).
+// The operator builds a deterministic archive `mj-art-master-<version>.tar.gz`
+// plus a matching sidecar `mj-art-master-<version>.sha256` under the configured
+// VPS_MASTER_ROOT. The catalogue-import workflow fetches both over key-only,
+// strict-host-checking SSH/SCP, parses the sidecar safely, re-hashes the
+// archive bytes, and only then extracts. Public derivatives + artworks.json are
+// R2 (preview) only.
+
+// Strict master archive version: the dispatch input that selects which versioned
+// archive to fetch. Conservative, injection-safe token shape (no slashes,
+// spaces, control chars, or shell metacharacters).
+export const MASTER_VERSION_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
+// Hostname / IP shape for the configured VPS host (no scheme, no port, no path).
+export const VPS_HOST_RE = /^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$/;
+// TCP port, 1-65535.
+export const VPS_PORT_RE = /^([1-9]\d{0,3}|[1-5]\d{4}|6[0-4]\d{3}|65[0-4]\d{2}|655[0-2]\d|6553[0-5])$/;
+// POSIX account name shape (conservative; mirrors adduser NAME_REGEX).
+export const VPS_USER_RE = /^[A-Za-z0-9._-]{1,32}$/;
+
+export function validateMasterVersion(version) {
+  if (typeof version !== 'string' || !MASTER_VERSION_RE.test(version)) {
+    throw new Error(
+      `Invalid master archive version: must match [A-Za-z0-9._-]{1,64}, got: ${String(version)}`
+    );
+  }
+}
+
+// The exact remote archive basename for a version (`mj-art-master-<v>.tar.gz`).
+// Constructed ONLY from the validated version, so it can never contain a path
+// separator, whitespace, or metacharacter.
+export function masterArchiveBasename(version) {
+  validateMasterVersion(version);
+  return `mj-art-master-${version}.tar.gz`;
+}
+
+// The exact remote sidecar basename for a version (`mj-art-master-<v>.sha256`).
+export function masterSidecarBasename(version) {
+  validateMasterVersion(version);
+  return `mj-art-master-${version}.sha256`;
+}
+
+// Validate the configured VPS_MASTER_ROOT. It is a remote POSIX absolute path
+// interpolated into the SCP target spec `user@host:<root>/<basename>`, so it is
+// held to a positive allowlist (letters, digits, '/', '_', '-', '.') plus: must
+// be absolute, no control chars, no parent traversal. This keeps the configured
+// variable safe to interpolate even though it is admin-set (defense in depth).
+export function isSafeVpsMasterRoot(p) {
+  if (typeof p !== 'string' || p.length === 0) return false;
+  if (p.length > 4096) return false;
+  if (!p.startsWith('/')) return false;
+  if (/[\x00-\x1f]/.test(p)) return false;
+  if (!/^[A-Za-z0-9/_.-]+$/.test(p)) return false;
+  for (const s of p.split('/')) {
+    if (s === '..') return false;
+  }
+  return true;
+}
+
+export function validateVpsMasterRoot(p) {
+  if (!isSafeVpsMasterRoot(p)) {
+    throw new Error(`Invalid VPS_MASTER_ROOT: must be an absolute POSIX path of [A-Za-z0-9/_.-] with no parent traversal, got shape rejected`);
+  }
+}
+
+export function validateVpsHost(host) {
+  if (typeof host !== 'string' || !VPS_HOST_RE.test(host)) {
+    throw new Error('Invalid VPS_HOST: must be a hostname or IP');
+  }
+}
+export function validateVpsPort(port) {
+  const s = typeof port === 'number' ? String(port) : port;
+  if (typeof s !== 'string' || !VPS_PORT_RE.test(s)) {
+    throw new Error('Invalid VPS_PORT: must be an integer 1-65535');
+  }
+}
+export function validateVpsUser(user) {
+  if (typeof user !== 'string' || !VPS_USER_RE.test(user)) {
+    throw new Error('Invalid VPS_USER: must match [A-Za-z0-9._-]{1,32}');
+  }
+}
+
+// Strictly parse a fetched master sidecar (`.sha256`). It must contain EXACTLY
+// one record of the GNU coreutils form `<64-hex>  <basename>` (two spaces),
+// where <basename> is EXACTLY the expected archive basename (no arbitrary path,
+// no absolute/parent path, no extra fields). Returns the validated sha256.
+// Rejects: empty, multiple records, single-space form, bare hash, a basename
+// other than expected, surrounding whitespace, and control characters.
+//
+// This deliberately does NOT feed the sidecar to `sha256sum -c` (which would
+// read a path straight from the file). The caller re-hashes the archive itself
+// and compares against the returned digest.
+export function parseMasterSidecar(text, expectedArchiveBasename) {
+  if (typeof text !== 'string') throw new Error('sidecar text must be a string');
+  if (typeof expectedArchiveBasename !== 'string' || expectedArchiveBasename.length === 0) {
+    throw new Error('expectedArchiveBasename must be a non-empty string');
+  }
+  if (/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(text)) {
+    throw new Error('sidecar contains control characters');
+  }
+  const lines = text.split(/\r?\n/);
+  const content = lines.filter((l) => l.trim() !== '');
+  if (content.length === 0) throw new Error('sidecar is empty');
+  if (content.length > 1) throw new Error('sidecar must contain exactly one record');
+  const line = content[0];
+  const m = line.match(/^([a-f0-9]{64}) {2}(\S[^\r\n]*)$/);
+  if (!m) {
+    throw new Error(
+      'sidecar line is malformed (expected exactly "<sha256>  <basename>" two-space form)'
+    );
+  }
+  const [, sha, name] = m;
+  if (name !== expectedArchiveBasename) {
+    throw new Error(
+      `sidecar basename "${name}" does not match expected archive basename "${expectedArchiveBasename}"`
+    );
+  }
+  return sha;
+}
+
+// ---------------------------------------------------------------------------
 // Argument parsing
 // ---------------------------------------------------------------------------
 
@@ -421,12 +545,12 @@ export function validateTarVerboseListing(text) {
 // Static guard helper: detect raw ${{ inputs.* }} inside workflow run: scripts
 // ---------------------------------------------------------------------------
 
-// Scan a workflow YAML text for any `${{ inputs.* }}` that appears INSIDE a
-// step `run:` script body (block `run: |` or inline `run: ...`). Values passed
+// Scan a workflow YAML text for a `${{ <expr> }}` that appears INSIDE a step
+// `run:` script body (block `run: |` or inline `run: ...`). Values passed
 // through `env:`/`if:`/`with:` are NOT run-script interpolation and are allowed.
 // Returns an array of { line, text } offenders (empty when clean). This is the
-// testable core of the no-input-interpolation static guard.
-export function findInputsInRunBlocks(text) {
+// testable core of the no-interpolation-in-run static guards.
+function findExprInRunBlocks(text, exprRe) {
   if (typeof text !== 'string') return [];
   const lines = text.split(/\r?\n/);
   const hits = [];
@@ -445,7 +569,7 @@ export function findInputsInRunBlocks(text) {
       } else if (rest.startsWith('|') || rest.startsWith('>')) {
         inRunBlock = true;
       } else {
-        if (/\$\{\{\s*inputs\./.test(raw)) {
+        if (exprRe.test(raw)) {
           hits.push({ line: i + 1, text: raw });
         }
         inRunBlock = false;
@@ -454,7 +578,7 @@ export function findInputsInRunBlocks(text) {
     }
     if (inRunBlock) {
       if (indent > runKeyIndent) {
-        if (/\$\{\{\s*inputs\./.test(raw)) {
+        if (exprRe.test(raw)) {
           hits.push({ line: i + 1, text: raw });
         }
       } else {
@@ -463,4 +587,17 @@ export function findInputsInRunBlocks(text) {
     }
   }
   return hits;
+}
+
+// Detect raw `${{ inputs.* }}` interpolated inside a run script (shell
+// injection surface: an attacker-controlled input value could become syntax).
+export function findInputsInRunBlocks(text) {
+  return findExprInRunBlocks(text, /\$\{\{\s*inputs\./);
+}
+
+// Detect raw `${{ secrets.* }}` interpolated inside a run script. Secrets must
+// flow through `env:` (then quoted shell vars) so a value can never leak into a
+// command line, log line, or be re-echoed. Mirrors the inputs guard.
+export function findSecretsInRunBlocks(text) {
+  return findExprInRunBlocks(text, /\$\{\{\s*secrets\./);
 }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findInputsInRunBlocks } from '../../../scripts/lib/catalog-import-core.mjs';
+import { findInputsInRunBlocks, findSecretsInRunBlocks } from '../../../scripts/lib/catalog-import-core.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -51,9 +51,13 @@ test('catalog-import.yml uses a set -euo pipefail fail-closed gate', () => {
   assert.match(WF, /set -euo pipefail/);
 });
 
-test('catalog-import.yml requires the preview confirmation + asset inputs', () => {
-  for (const name of ['confirm_preview_only', 'assets_archive_url', 'assets_archive_sha256', 'execute_upload']) {
+test('catalog-import.yml requires the preview confirmation + master version inputs', () => {
+  for (const name of ['confirm_preview_only', 'master_archive_version', 'execute_upload']) {
     assert.match(WF, new RegExp('^\\s+' + name + ':', 'm'), `missing input ${name}`);
+  }
+  // The removed transport inputs must be entirely gone.
+  for (const removed of ['assets_archive_url', 'assets_archive_sha256']) {
+    assert.ok(!WF.includes(removed), `removed input ${removed} must not appear`);
   }
 });
 
@@ -158,4 +162,97 @@ test('catalog-import.yml no longer runs raw sha256sum -c on SHA256SUMS', () => {
 test('archive-safety validator script exists and calls validateTarVerboseListing', () => {
   const s = readRel('scripts/validate-archive-listing.mjs');
   assert.match(s, /validateTarVerboseListing/);
+});
+
+// ===========================================================================
+// VPS private masters: fetch safety static checks
+// ===========================================================================
+//
+// Masters are a versioned library on a hardened VPS (no Neon). The workflow
+// fetches by version token over strict-host-checking SSH/SCP. These static
+// checks enforce: no protocol URL leftovers, the exact confirmation gate, the
+// strict version regex, the required VPS vars/secrets via env only, the
+// version-derived remote basename, and no secret interpolation in run scripts.
+
+test('catalog-import.yml contains NO protocol URL (no archive or write URL anywhere)', () => {
+  assert.doesNotMatch(WF, /[a-z][a-z0-9+.-]*:\/\//i, 'no protocol URL may appear');
+});
+
+test('catalog-import.yml references the exact out-of-band VPS confirmation gate', () => {
+  assert.match(WF, /\$\{\{\s*vars\.VPS_ASSETS_CONFIRMED\s*\}\}/);
+  // The gate must assert the literal 'true' comparison in a run script.
+  assert.match(WF, /VPS_ASSETS_CONFIRMED.*!=.*true|VPS_ASSETS_CONFIRMED.*true/, );
+});
+
+test('catalog-import.yml enforces the strict master version regex', () => {
+  // The run script must validate master_archive_version against the strict shape.
+  assert.match(WF, /\[A-Za-z0-9\._-\]\{1,64\}/);
+});
+
+test('catalog-import.yml references every required VPS variable via env only', () => {
+  for (const ref of [
+    '${{ vars.VPS_HOST }}',
+    '${{ vars.VPS_PORT }}',
+    '${{ vars.VPS_USER }}',
+    '${{ vars.VPS_MASTER_ROOT }}'
+  ]) {
+    assert.ok(WF.includes(ref), `must reference ${ref}`);
+  }
+});
+
+test('catalog-import.yml references every required VPS secret via env only', () => {
+  for (const ref of ['${{ secrets.VPS_SSH_PRIVATE_KEY }}', '${{ secrets.VPS_KNOWN_HOSTS }}']) {
+    assert.ok(WF.includes(ref), `must reference ${ref}`);
+  }
+});
+
+test('catalog-import.yml builds the remote basename from the version token', () => {
+  // The remote archive/sidecar basename is constructed in-shell from the
+  // validated version, never supplied as an input (no injected path).
+  assert.match(WF, /mj-art-master-\$\{MASTER_VERSION\}\.tar\.gz/);
+  assert.match(WF, /mj-art-master-\$\{MASTER_VERSION\}\.sha256/);
+});
+
+test('catalog-import.yml uses hardened strict-host-checking key-only SSH/SCP', () => {
+  assert.match(WF, /StrictHostKeyChecking=yes/);
+  assert.match(WF, /UserKnownHostsFile=/);
+  assert.match(WF, /BatchMode=yes/);
+  assert.match(WF, /PreferredAuthentications=publickey/);
+  assert.match(WF, /IdentitiesOnly=yes/);
+  // SSH options must be a bash array (no string word-splitting).
+  assert.match(WF, /SCP_OPTS=\(/);
+  assert.match(WF, /"\$\{SCP_OPTS\[@\]\}"/);
+});
+
+test('catalog-import.yml never interpolates ${{ secrets.* }} inside a run script', () => {
+  const hits = findSecretsInRunBlocks(WF);
+  assert.deepEqual(hits, [], 'run scripts must not interpolate secrets: ' + JSON.stringify(hits));
+});
+
+test('catalog-import.yml invokes the safe master sidecar verifier, not sha256sum -c', () => {
+  assert.match(WF, /verify-master-archive\.mjs/);
+  // No raw coreutils checksum-check subcommand in any run script.
+  const lines = WF.split(/\r?\n/);
+  let inRun = false, runIndent = -1;
+  for (const raw of lines) {
+    const rm = raw.match(/^(\s*)run:\s*(.*)$/);
+    if (rm) {
+      runIndent = rm[1].length;
+      inRun = rm[2].startsWith('|') || rm[2].startsWith('>');
+      continue;
+    }
+    if (inRun && raw.trim() !== '') {
+      const ind = raw.length - raw.replace(/^\s+/, '').length;
+      if (ind <= runIndent) { inRun = false; continue; }
+      assert.doesNotMatch(raw, /sha256sum\s+-c/, 'run script must not run sha256sum -c');
+    }
+  }
+});
+
+test('verify-master-archive.mjs exists, parses sidecar strictly, and re-hashes', () => {
+  const s = readRel('scripts/verify-master-archive.mjs');
+  assert.match(s, /parseMasterSidecar/);
+  assert.match(s, /createHash/);
+  // Must not delegate to the coreutils checksum-check subcommand.
+  assert.doesNotMatch(s, /sha256sum\s+-c/);
 });

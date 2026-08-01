@@ -11,23 +11,34 @@ import {
   EXPECTED_IMAGES,
   EXPECTED_RECORDS,
   MAX_ARTWORKS_JSON_BYTES,
+  MASTER_VERSION_RE,
   PREVIEW_BUCKET,
   assertPreviewBucket,
   buildCanonicalArtworksPayload,
   buildRequiredKeys,
   buildSourceMap,
   findInputsInRunBlocks,
+  findSecretsInRunBlocks,
   isProductionBucketName,
   isSafeRelPath,
   isSafeTarPath,
+  isSafeVpsMasterRoot,
+  masterArchiveBasename,
+  masterSidecarBasename,
   maxDimensionForVariant,
   objectKeyFor,
   parseArgs,
+  parseMasterSidecar,
   parseSha256Sums,
   runtimeUrl,
   utf8Bytes,
   validateManifest,
+  validateMasterVersion,
   validateTarVerboseListing,
+  validateVpsHost,
+  validateVpsMasterRoot,
+  validateVpsPort,
+  validateVpsUser,
   verifyArtworksReadback
 } from '../../../scripts/lib/catalog-import-core.mjs';
 import * as schema from '../src/artwork-schema.js';
@@ -453,3 +464,139 @@ function requireSha(str) {
 function requireShaBytes(buf) {
   return createHash('sha256').update(buf).digest('hex');
 }
+
+// ===========================================================================
+// VPS private masters: version validator, basename builder, master-root guard
+// ===========================================================================
+
+test('MASTER_VERSION_RE: accepts safe tokens, rejects injection shapes', () => {
+  assert.match('2026-08-01', MASTER_VERSION_RE);
+  assert.match('v1.2-3', MASTER_VERSION_RE);
+  assert.match('a', MASTER_VERSION_RE);
+  assert.match('A'.repeat(64), MASTER_VERSION_RE);
+  // Rejects: slash (path), space, control, shell metacharacters, empty, too long.
+  assert.doesNotMatch('a/b', MASTER_VERSION_RE);
+  assert.doesNotMatch('a b', MASTER_VERSION_RE);
+  assert.doesNotMatch('a;b', MASTER_VERSION_RE);
+  assert.doesNotMatch('$(x)', MASTER_VERSION_RE);
+  assert.doesNotMatch('a\nb', MASTER_VERSION_RE);
+  assert.doesNotMatch('', MASTER_VERSION_RE);
+  assert.doesNotMatch('A'.repeat(65), MASTER_VERSION_RE);
+});
+
+test('validateMasterVersion: throws on invalid, silent on valid', () => {
+  assert.doesNotThrow(() => validateMasterVersion('2026-08-01'));
+  assert.throws(() => validateMasterVersion('a/b'), /Invalid master archive version/);
+  assert.throws(() => validateMasterVersion(''), /Invalid master archive version/);
+  assert.throws(() => validateMasterVersion(undefined), /Invalid master archive version/);
+});
+
+test('masterArchiveBasename / masterSidecarBasename: exact version-derived names', () => {
+  assert.equal(masterArchiveBasename('2026-08-01'), 'mj-art-master-2026-08-01.tar.gz');
+  assert.equal(masterSidecarBasename('2026-08-01'), 'mj-art-master-2026-08-01.sha256');
+  // No path separators or metacharacters can sneak in via the version.
+  assert.throws(() => masterArchiveBasename('../x'), /Invalid master archive version/);
+  assert.throws(() => masterSidecarBasename('a b'), /Invalid master archive version/);
+});
+
+// ---- isSafeVpsMasterRoot / validateVpsMasterRoot --------------------------------
+test('isSafeVpsMasterRoot: accepts absolute POSIX paths, rejects unsafe shapes', () => {
+  assert.equal(isSafeVpsMasterRoot('/srv/mj-art/masters'), true);
+  assert.equal(isSafeVpsMasterRoot('/home/mjart-1.0/masters'), true);
+  assert.equal(isSafeVpsMasterRoot('/'), true);
+  // Rejects: relative, control char, whitespace, traversal, backslash, metachar.
+  assert.equal(isSafeVpsMasterRoot('srv/masters'), false);
+  assert.equal(isSafeVpsMasterRoot('/srv/../etc'), false);
+  assert.equal(isSafeVpsMasterRoot('/srv x'), false);
+  assert.equal(isSafeVpsMasterRoot('/srv\nx'), false);
+  assert.equal(isSafeVpsMasterRoot('/srv;x'), false);
+  assert.equal(isSafeVpsMasterRoot('/srv$(x)'), false);
+  assert.equal(isSafeVpsMasterRoot('/a:b'), false);
+  assert.equal(isSafeVpsMasterRoot('/a\\b'), false);
+  assert.equal(isSafeVpsMasterRoot(''), false);
+  assert.equal(isSafeVpsMasterRoot(undefined), false);
+});
+
+test('validateVpsMasterRoot: throws on invalid', () => {
+  assert.doesNotThrow(() => validateVpsMasterRoot('/srv/masters'));
+  assert.throws(() => validateVpsMasterRoot('relative'), /Invalid VPS_MASTER_ROOT/);
+});
+
+test('validateVpsHost/Port/User: strict shape gates', () => {
+  assert.doesNotThrow(() => validateVpsHost('master.example.com'));
+  assert.doesNotThrow(() => validateVpsHost('10.0.0.1'));
+  assert.throws(() => validateVpsHost('host name'), /Invalid VPS_HOST/);
+  assert.throws(() => validateVpsHost('ssh://x'), /Invalid VPS_HOST/);
+  assert.doesNotThrow(() => validateVpsPort('22'));
+  assert.doesNotThrow(() => validateVpsPort(65535));
+  assert.throws(() => validateVpsPort('0'), /Invalid VPS_PORT/);
+  assert.throws(() => validateVpsPort('99999'), /Invalid VPS_PORT/);
+  assert.throws(() => validateVpsPort('abc'), /Invalid VPS_PORT/);
+  assert.doesNotThrow(() => validateVpsUser('mjart'));
+  assert.doesNotThrow(() => validateVpsUser('mj-art.deploy'));
+  assert.throws(() => validateVpsUser('bad name'), /Invalid VPS_USER/);
+  assert.throws(() => validateVpsUser('a;b'), /Invalid VPS_USER/);
+});
+
+// ---- parseMasterSidecar -------------------------------------------------------
+test('parseMasterSidecar: accepts the exact two-space basename form', () => {
+  const sha = 'a'.repeat(64);
+  const base = 'mj-art-master-2026-08-01.tar.gz';
+  assert.equal(parseMasterSidecar(`${sha}  ${base}\n`, base), sha);
+  // No trailing newline is fine.
+  assert.equal(parseMasterSidecar(`${sha}  ${base}`, base), sha);
+});
+
+test('parseMasterSidecar: rejects empty, multiple records, bare hash, single-space, control, wrong/unsafe basename', () => {
+  const sha = 'a'.repeat(64);
+  const base = 'mj-art-master-2026-08-01.tar.gz';
+  assert.throws(() => parseMasterSidecar('', base), /empty/);
+  assert.throws(() => parseMasterSidecar('\n\n', base), /empty/);
+  assert.throws(() => parseMasterSidecar(`${sha}  ${base}\n${sha}  ${base}\n`, base), /exactly one record/);
+  // Bare hash (no basename) is rejected: basename is required.
+  assert.throws(() => parseMasterSidecar(`${sha}\n`, base), /malformed/);
+  // Single-space form is rejected (must be two-space GNU coreutils form).
+  assert.throws(() => parseMasterSidecar(`${sha} ${base}\n`, base), /malformed/);
+  // Wrong basename (arbitrary path) is rejected.
+  assert.throws(() => parseMasterSidecar(`${sha}  /etc/passwd\n`, base), /does not match/);
+  assert.throws(() => parseMasterSidecar(`${sha}  other.tar.gz\n`, base), /does not match/);
+  // A basename that tries to traverse is rejected via the exact match.
+  assert.throws(() => parseMasterSidecar(`${sha}  ../${base}\n`, base), /does not match/);
+  // Control character in text.
+  assert.throws(() => parseMasterSidecar(`${sha}  ${base}\x00`, base), /control character/);
+  // Bad expected basename.
+  assert.throws(() => parseMasterSidecar(`${sha}  ${base}\n`, ''), /non-empty/);
+});
+
+// ---- findSecretsInRunBlocks ---------------------------------------------------
+test('findSecretsInRunBlocks: flags secret interpolation in run scripts only', () => {
+  const bad = [
+    'steps:',
+    '  - name: x',
+    '    env:',
+    '      KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}',
+    '    run: |',
+    '      echo "${{ secrets.VPS_KNOWN_HOSTS }}"'
+  ].join('\n');
+  const badHits = findSecretsInRunBlocks(bad);
+  assert.equal(badHits.length, 1, 'only the run-script line should be flagged');
+  assert.match(badHits[0].text, /\$\{\{\s*secrets\.VPS_KNOWN_HOSTS/);
+
+  // env: interpolation of a secret is allowed; clean run script -> no hits.
+  const good = [
+    'steps:',
+    '  - name: x',
+    '    env:',
+    '      KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}',
+    '    run: |',
+    '      set -euo pipefail',
+    '      printf "%s" "${KEY}" > file'
+  ].join('\n');
+  assert.deepEqual(findSecretsInRunBlocks(good), []);
+});
+
+test('catalog-import.yml workflow has NO raw ${{ secrets.* }} in any run script', () => {
+  const wf = readFileSync(path.join(REPO_ROOT, '.github', 'workflows', 'catalog-import.yml'), 'utf8');
+  const hits = findSecretsInRunBlocks(wf);
+  assert.deepEqual(hits, [], 'run scripts must not interpolate secrets; offending: ' + JSON.stringify(hits));
+});

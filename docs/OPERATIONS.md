@@ -56,6 +56,24 @@ The following GitHub Actions secret names exist (names only, never values):
 Read-only inventory/backup uses a **separate, dedicated** token
 (`CLOUDFLARE_R2_READ_TOKEN`) described below, not the write-capable deployment token.
 
+### VPS private master-assets (catalogue import)
+
+The catalogue import fetches private ORIGINAL masters from a hardened VPS over
+SSH (no Neon is used anywhere). These GitHub Actions variables and secrets hold
+the connection material (names only, never values):
+
+- **Variables** (set under Settings > Secrets and variables > Actions > Variables):
+  `VPS_HOST`, `VPS_PORT`, `VPS_USER`, `VPS_MASTER_ROOT`, and the one-time
+  attestation `VPS_ASSETS_CONFIRMED` (set **last**, only after the VPS account,
+  key, host key, and master root are confirmed).
+- **Secrets** (set under Settings > Secrets and variables > Actions > Secrets):
+  `VPS_SSH_PRIVATE_KEY` (the restricted VPS account's private key) and
+  `VPS_KNOWN_HOSTS` (the pinned host key line for `VPS_HOST`).
+
+The run fails closed until every one of these is present, and again unless
+`VPS_ASSETS_CONFIRMED == true`. None is ever echoed or interpolated in a run
+script; they flow through `env:` only.
+
 ## 5. R2 buckets and binding
 
 - Production bucket: `mj-art-images`.
@@ -166,92 +184,171 @@ Read-only inspection and backup use a **separate** workflow:
   simple content digest; rely on the computed SHA-256 of the downloaded bytes for
   integrity, and treat ETags as advisory only.
 
-## 11. Catalogue import (PREVIEW only)
+## 11. Catalogue import (PREVIEW only) — VPS private masters
 
-The canonical 86-record catalogue (`catalog/catalog.json`) is published to an R2
-bucket as a set of image derivatives plus a single `artworks.json`. This is a
-**separate, dedicated, preview-only** workflow:
-`.github/workflows/catalog-import.yml`, backed by `scripts/generate-catalog-derivatives.mjs`
-(generation), `scripts/import-catalog-preview.mjs` (preview import client), and
+The canonical 86-record catalogue (`catalog/catalog.json`) is published to the
+PREVIEW R2 bucket as a set of image derivatives plus a single `artworks.json`.
+Private ORIGINAL masters are a **versioned library on a hardened VPS** (mirroring
+the Drawer Organiser Library admin-curated draft -> preview -> publish model);
+public processed derivatives and the public `artworks.json` are **Cloudflare R2
+only. There is no Neon anywhere in this project.** This is a separate, dedicated,
+preview-only workflow: `.github/workflows/catalog-import.yml`, backed by
+`scripts/generate-catalog-derivatives.mjs` (generation),
+`scripts/import-catalog-preview.mjs` (preview import client),
+`scripts/verify-master-archive.mjs` (safe sidecar/archive verifier), and
 `scripts/lib/catalog-import-core.mjs` (shared pure helpers).
+
+### Public/private storage boundary
+
+- **Private originals** live only on the VPS, as a versioned archive library
+  under `VPS_MASTER_ROOT`. They are never in Git, never in R2, never on a runner
+  beyond a single import run's temp directory.
+- **Public derivatives** (`artwork/catalog/<id>/{full,thumb}.jpg`) and the
+  **public metadata** (`artworks.json`) live only in the PREVIEW R2 bucket.
+- No database (Neon or otherwise) stores catalogue state. The Worker hydrates the
+  gallery from the live R2 `artworks.json`.
+
+### One-time setup
+
+Perform these steps once. **Set `VPS_ASSETS_CONFIRMED` last.**
+
+1. **Create a restricted VPS account** dedicated to this workflow. It must be
+   key-only (no password login), and have read-only access to a master root
+   directory (e.g. `/srv/mj-art/masters`) that holds the versioned archives. Do
+   not reuse a general-purpose account.
+2. **Generate a dedicated SSH key pair** for that account; authorize the public
+   key in the account's `authorized_keys`.
+3. **Pin the host key.** From a trusted machine, capture the host key line for
+   `VPS_HOST` (e.g. `ssh-keyscan -t ed25519 <host>` and verify it out of band).
+   This exact line becomes the `VPS_KNOWN_HOSTS` secret.
+4. **Add the GitHub Actions variables** (Settings > Secrets and variables >
+   Actions > Variables): `VPS_HOST`, `VPS_PORT`, `VPS_USER`, and
+   `VPS_MASTER_ROOT` (the absolute path to the master root on the VPS).
+5. **Add the GitHub Actions secrets** (Settings > Secrets and variables >
+   Actions > Secrets): `VPS_SSH_PRIVATE_KEY` (the private key from step 2) and
+   `VPS_KNOWN_HOSTS` (the pinned host key line from step 3).
+6. **Set `VPS_ASSETS_CONFIRMED` to `true` last**, only after you have confirmed
+   the account, key, pinned host key, and master root. Every run fails closed
+   until this is `true`, and again until all variables/secrets above are present.
+
+No real host names, keys, passwords, or URLs appear in this document or the
+workflow; the operator fills in the values above out of band.
+
+### Required master archive layout
+
+Each published version is two files under `VPS_MASTER_ROOT`:
+
+- `mj-art-master-<version>.tar.gz` — the archive.
+- `mj-art-master-<version>.sha256` — the sidecar (GNU coreutils form:
+  `<64-hex>  mj-art-master-<version>.tar.gz`, two spaces, exact basename).
+
+`<version>` is a strict token matching `[A-Za-z0-9._-]{1,64}` (e.g. a date or a
+semver-ish tag). The archive root must contain `originals/` (75 Drive JPEGs),
+`misc-originals/` (11 misc images, mixed `.jpg`/`.jpeg`), and `SHA256SUMS`. The
+operator builds these locally as a staging source; the local staging path is not
+part of the server process. A suggested build:
+
+```
+tar -czf mj-art-master-<version>.tar.gz -C <staging-root> .
+sha256sum mj-art-master-<version>.tar.gz > mj-art-master-<version>.sha256
+```
+
+Then place both files under `VPS_MASTER_ROOT`.
+
+### Publishing cycle
+
+1. **Build** the versioned archive + sidecar (above) and place them on the VPS.
+2. **Dry-run the workflow**: dispatch `.github/workflows/catalog-import.yml` with
+   `confirm_preview_only` enabled, `master_archive_version` set to the version,
+   and `execute_upload` **off**. The run fetches from the VPS, verifies the
+   checksum, extracts (hardened), generates derivatives, validates the catalogue
+   and operations policy, and prints the import plan — **no uploads**.
+3. **Execute preview**: re-dispatch with the same version and `execute_upload`
+   **on**. All 172 images upload first, 172 reads are verified, then the
+   canonical `artworks.json` is PUT last.
 
 ### Scope and hard limits
 
-- **Preview only.** The import client (`assertPreviewBucket`) accepts **only** the
-  literal preview bucket `mj-art-images-preview`. The production bucket is never a
-  valid target. **Production catalogue import remains blocked until the Stop 2
-  milestone.**
-- **Workflow dispatch only**, with a mandatory `confirm_preview_only` confirmation
-  input and a `set -euo pipefail` fail-closed gate. Triggers `push`/`pull_request`/
-  `schedule` are forbidden.
-- **Credentials follow the existing deployment convention** only:
-  `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. The workflow never references
-  the read token, the admin password, or the session secret. No Cloudflare secret
-  lives in the repository.
-- **Assets are not in Git.** The operator supplies a protected `assets_archive_url`
-  (HTTPS only) and its `assets_archive_sha256`. The archive is downloaded with curl
-  and **rejected on checksum mismatch**. **The operator-supplied URL + SHA-256
-  provides transport integrity only: it confirms the bytes downloaded are the
-  bytes the operator pinned. It does NOT authenticate the source of the archive,
-  the operator who supplied it, or the provenance of the originals.** Treat the
-  archive as untrusted input: it is extracted only after a hardened listing check
-  rejects symlinks, hardlinks, absolute, and parent-traversal paths, and each
-  source is re-resolved and re-hashed through `SHA256SUMS` + `provenance.sha256`.
-  Expected archive layout: a root containing `originals/` (75 Drive JPEGs),
-  `misc-originals/` (11 misc images, mixed `.jpg`/`.jpeg`), and `SHA256SUMS`.
-  Generated derivatives and the source tree are written to `${RUNNER_TEMP}` and
-  are never committed.
+- **Preview only.** The import client (`assertPreviewBucket`) accepts **only**
+  the literal preview bucket `mj-art-images-preview`. The production bucket is
+  never a valid target. **Production catalogue import remains blocked until the
+  Stop 2 milestone.**
+- **Workflow dispatch only**, with a mandatory `confirm_preview_only`
+  confirmation input, the out-of-band `vars.VPS_ASSETS_CONFIRMED` attestation,
+  and a `set -euo pipefail` fail-closed gate. Triggers `push`/`pull_request`/
+  `schedule` are forbidden. **No archive URL or write URL appears anywhere** —
+  masters are fetched by version token only.
+- **Credentials**: preview upload uses `CLOUDFLARE_API_TOKEN` +
+  `CLOUDFLARE_ACCOUNT_ID`; VPS access uses the variables/secrets above. All of
+  them flow through `env:` only (never interpolated in a run script, never
+  echoed). The workflow never references the read token, the admin password, or
+  the session secret.
+- **Hardened fetch.** SSH/SCP is key-only, batch mode, strict host checking
+  against the pinned `VPS_KNOWN_HOSTS`, identity pinned. The remote basename is
+  constructed solely from the validated version, so it can never carry an
+  injected path. The sidecar is parsed strictly (exact basename match) and the
+  archive bytes are re-hashed by the verifier — no untrusted `sha256sum -c` path
+  read. Extraction runs only after the tar listing check rejects symlinks,
+  hardlinks, absolute, and parent-traversal paths; `--no-same-owner` is used.
 
 ### How derivatives are produced
 
 - Each source image is resolved **solely** through `SHA256SUMS` + the record's
   `provenance.sha256` (never by filename). The source bytes are re-hashed and
   compared before generation (checksum guard). Source integrity therefore relies
-  on the generator's strict rehash; a separate `sha256sum -c` pass is intentionally
-  not run (it would read untrusted paths from `SHA256SUMS` and is fully redundant
-  with the rehash).
+  on the generator's strict rehash; a separate checksum-check pass over
+  `SHA256SUMS` is intentionally not run (it would read untrusted paths and is
+  fully redundant with the rehash).
 - Each source is size-capped (50 MiB) and dimension-checked (≤8000px) **before**
   decode, and every ImageMagick `convert`/`identify` invocation applies bounded
   resource limits (`-limit memory/disk/width/height`). EXIF auto-orient behavior
   is preserved. Residual risk: a runner-installed `policy.xml` would be more
-  comprehensive than CLI limits, but is version/path-specific; the CLI limits plus
-  the source caps are the portable, IM6/IM7-agnostic defence used here.
-- Derivatives are EXIF-orientation-normalized JPEGs produced by system ImageMagick
-  (`-auto-orient -strip -resize <box>> -quality <q>`): `full.jpg` longest edge 2000
-  @0.9, `thumb.jpg` longest edge 640 @0.85, **never upscaled**. Output is re-verified
-  as JPEG with sane **per-variant** dimensions (full ≤2000, thumb ≤640). This
-  mirrors the in-browser reference in `apps/web/public/admin.js`.
+  comprehensive than CLI limits, but is version/path-specific; the CLI limits
+  plus the source caps are the portable, IM6/IM7-agnostic defence used here.
+- Derivatives are EXIF-orientation-normalized JPEGs produced by system
+  ImageMagick (`-auto-orient -strip -resize <box>> -quality <q>`): `full.jpg`
+  longest edge 2000 @0.9, `thumb.jpg` longest edge 640 @0.85, **never
+  upscaled**. Output is re-verified as JPEG with sane **per-variant** dimensions
+  (full ≤2000, thumb ≤640). This mirrors the in-browser reference in
+  `apps/web/public/admin.js`.
 - Exact counts are enforced: **86 records / 172 derivatives**, else fail closed.
-- Staging paths are deterministic: `artwork/catalog/<id>/{full,thumb}.jpg` (the R2
-  key). A machine-readable `manifest.json` (key, relative file, hashes, dimensions,
-  bytes, source sha) drives the import client.
+- Staging paths are deterministic: `artwork/catalog/<id>/{full,thumb}.jpg` (the
+  R2 key). A machine-readable `manifest.json` (key, relative file, hashes,
+  dimensions, bytes, source sha) drives the import client.
 
 ### Import order and gates
 
-1. Validate the catalogue (`pnpm check:catalog`) and operations policy
+1. Fail closed unless preview-only scope + VPS attestation confirmed.
+2. Fetch archive + sidecar from VPS; verify the archive against the sidecar.
+3. Extract (hardened listing check first); locate the `SHA256SUMS` root.
+4. Validate the catalogue (`pnpm check:catalog`) and operations policy
    (`pnpm check:operations`).
-2. Generate derivatives into runner temp; write `manifest.json`.
-3. **Dry-run** (`import-catalog-preview.mjs` without `--execute`): validate the
+5. Generate derivatives into runner temp; write `manifest.json`.
+6. **Dry-run** (`import-catalog-preview.mjs` without `--execute`): validate the
    catalogue against the runtime schema, canonicalize + sort, enforce the `<2MiB`
    `artworks.json` ceiling, validate the manifest, and print the plan — **no
    uploads, no network**.
-4. **Execute** (only when `execute_upload` is enabled): upload **all 172 images
-   first**, then **verify 172 reads** (wrangler `r2 object get` + sha256 compare),
-   and only then **PUT the complete canonical `artworks.json` last**. The
-   `artworks.json` readback is verified by **exact sha256 + byte size + parsed
-   count**, not by parsed count alone, so silent corruption or a partial rewrite
-   is detected.
+7. **Execute** (only when `execute_upload` is enabled): upload **all 172 images
+   first**, then **verify 172 reads** (wrangler `r2 object get` + sha256
+   compare), and only then **PUT the complete canonical `artworks.json` last**.
+   The `artworks.json` readback is verified by **exact sha256 + byte size +
+   parsed count**, not by parsed count alone, so silent corruption or a partial
+   rewrite is detected.
 
 ### Invocation inputs
 
 - `confirm_preview_only` (required boolean) — fail closed unless true.
-- `assets_archive_url` (required) — HTTPS URL to the checksum-protected archive.
-- `assets_archive_sha256` (required) — 64-char hex of the archive.
-- `execute_upload` (default false) — when disabled, the run validates + generates +
-  plans only; when enabled, it uploads to PREVIEW after all gates pass.
+- `master_archive_version` (required) — version token of the VPS master archive
+  to fetch (strict `[A-Za-z0-9._-]{1,64}`). No URL is supplied or accepted.
+- `execute_upload` (default false) — when disabled, the run validates +
+  generates + plans only; when enabled, it uploads to PREVIEW after all gates
+  pass.
 
-### Drift and rollback
+### Retention and rollback
 
+- **Versioned retention.** Each publish is a distinct versioned archive on the
+  VPS; old versions are retained on the VPS (operator-managed) and are the
+  rollback source.
 - The preview bucket is **overwrite-only on the canonical key set**: there is no
   delete path. Re-running with the same catalogue idempotently overwrites each
   `artwork/catalog/<id>/{full,thumb}.jpg` and `artworks.json`.
@@ -259,5 +356,6 @@ bucket as a set of image derivatives plus a single `artworks.json`. This is a
   reported by the **read-only** R2 inventory workflow (§7), not by this workflow.
 - **Rollback** is a separate deliberate operation: it is never inferred from an
   import run. To revert the preview `artworks.json`, re-run the import against a
-  prior catalogue commit (or restore from a read-only backup artifact per §8).
-  Production rollback is not available from this code path.
+  prior master version (and/or a prior catalogue commit), or restore from a
+  read-only backup artifact per §8. Production rollback is not available from
+  this code path; **production remains blocked until the Stop 2 milestone.**

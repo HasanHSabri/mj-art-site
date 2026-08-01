@@ -1,16 +1,20 @@
 # Preview-only catalogue image + artworks.json import for MJ-ART.
 #
-# This workflow generates deterministic EXIF-normalized JPEG derivatives from a
-# protected asset archive, validates the catalogue, and (only when explicitly
-# confirmed AND executed) uploads ALL images first, verifies 172 reads, then
-# publishes the canonical artworks.json LAST — to the PREVIEW bucket only.
+# Private ORIGINAL masters are a versioned library on a hardened VPS (no Neon).
+# The operator builds `mj-art-master-<version>.tar.gz` and a matching
+# `mj-art-master-<version>.sha256` sidecar under the configured VPS_MASTER_ROOT.
+# This workflow fetches BOTH over key-only, strict-host-checking SSH/SCP, parses
+# the sidecar safely, RE-HASHES the archive bytes, and only then extracts.
 #
-# The production bucket is never a valid target here. Production catalogue
-# import remains blocked until the Stop 2 milestone (see docs/OPERATIONS.md).
+# Public processed derivatives and the canonical artworks.json are published to
+# the PREVIEW R2 bucket only (Cloudflare). The production bucket is never a
+# valid target here. Production catalogue import remains blocked until the Stop 2
+# milestone (see docs/OPERATIONS.md).
 #
-# Assets are NOT in Git. The operator supplies a protected HTTPS archive URL and
-# its SHA-256; the archive is downloaded, checksum-verified, and extracted into
-# runner temp. No source images or generated derivatives are committed.
+# The operator supplies only a `master_archive_version` token (never a URL). No
+# archive URL or write URL appears anywhere in this workflow. All VPS connection
+# material flows through GitHub variables/secrets -> env (never interpolated in a
+# run script), and the run fails closed until those are configured.
 #
 # Read docs/OPERATIONS.md before changing anything here.
 
@@ -24,12 +28,8 @@ on:
         required: true
         type: boolean
         default: false
-      assets_archive_url:
-        description: 'HTTPS URL to a protected asset archive (.tar.gz) containing originals/, misc-originals/, SHA256SUMS at its root.'
-        required: true
-        type: string
-      assets_archive_sha256:
-        description: 'Required SHA-256 (64-char lowercase hex) of the asset archive. The download is rejected on mismatch.'
+      master_archive_version:
+        description: 'Version token of the VPS master archive to fetch (e.g. 2026-08-01). Names mj-art-master-<version>.tar.gz + .sha256 under VPS_MASTER_ROOT. Strict [A-Za-z0-9._-]{1,64}.'
         required: true
         type: string
       execute_upload:
@@ -57,12 +57,21 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - name: Fail closed unless preview-only scope is confirmed
+      - name: Fail closed unless preview-only scope + VPS attestation confirmed
         if: always()
         env:
+          # All dispatch inputs, repo variables, and secrets flow through env
+          # ONLY. None is ever interpolated inside a run script, so no value can
+          # become shell syntax or be echoed.
           CONFIRM_INPUT: ${{ inputs.confirm_preview_only }}
-          ARCHIVE_URL: ${{ inputs.assets_archive_url }}
-          ARCHIVE_SHA: ${{ inputs.assets_archive_sha256 }}
+          MASTER_VERSION: ${{ inputs.master_archive_version }}
+          VPS_ASSETS_CONFIRMED: ${{ vars.VPS_ASSETS_CONFIRMED }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_PORT: ${{ vars.VPS_PORT }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          VPS_MASTER_ROOT: ${{ vars.VPS_MASTER_ROOT }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
           PREVIEW_BUCKET: ${{ env.PREVIEW_BUCKET }}
         run: |
           set -euo pipefail
@@ -75,20 +84,50 @@ jobs:
             echo "fail closed: PREVIEW_BUCKET must be exactly mj-art-images-preview"
             exit 1
           fi
-          # Asset URL must be HTTPS. No http, file, ssh, or embedded credentials.
-          case "${ARCHIVE_URL}" in
-            https://*) : ;;
-            *) echo "fail closed: assets_archive_url must start with https://"; exit 1 ;;
-          esac
-          if printf '%s' "${ARCHIVE_URL}" | grep -Eq '[[:space:]]'; then
-            echo "fail closed: assets_archive_url must not contain whitespace"; exit 1
-          fi
-          # Archive checksum must be 64-char lowercase hex.
-          if ! printf '%s' "${ARCHIVE_SHA}" | grep -Eq '^[0-9a-f]{64}$'; then
-            echo "fail closed: assets_archive_sha256 must be 64-char lowercase hex"
+          # Out-of-band maintainer attestation: the VPS account, key, host key,
+          # and master root have been confirmed by a maintainer. Set LAST in the
+          # one-time setup (see docs/OPERATIONS.md).
+          if [ "${VPS_ASSETS_CONFIRMED}" != "true" ]; then
+            echo "fail closed: repository variable VPS_ASSETS_CONFIRMED must be 'true' (one-time VPS attestation)"
             exit 1
           fi
-          echo "preview-only scope confirmed (bucket value not echoed beyond the literal above)"
+          # Every required VPS variable and secret must be present and non-empty.
+          # Values are never echoed; only their presence/shape is asserted.
+          if [ -z "${VPS_HOST:-}" ]; then echo "fail closed: repository variable VPS_HOST is missing or empty"; exit 1; fi
+          if [ -z "${VPS_PORT:-}" ]; then echo "fail closed: repository variable VPS_PORT is missing or empty"; exit 1; fi
+          if [ -z "${VPS_USER:-}" ]; then echo "fail closed: repository variable VPS_USER is missing or empty"; exit 1; fi
+          if [ -z "${VPS_MASTER_ROOT:-}" ]; then echo "fail closed: repository variable VPS_MASTER_ROOT is missing or empty"; exit 1; fi
+          if [ -z "${VPS_SSH_PRIVATE_KEY:-}" ]; then echo "fail closed: repository secret VPS_SSH_PRIVATE_KEY is missing or empty"; exit 1; fi
+          if [ -z "${VPS_KNOWN_HOSTS:-}" ]; then echo "fail closed: repository secret VPS_KNOWN_HOSTS is missing or empty"; exit 1; fi
+          # master_archive_version: strict token, no slashes/spaces/metacharacters.
+          if ! printf '%s' "${MASTER_VERSION}" | grep -Eq '^[A-Za-z0-9._-]{1,64}$'; then
+            echo "fail closed: master_archive_version must match [A-Za-z0-9._-]{1,64}"
+            exit 1
+          fi
+          # VPS_HOST: hostname or IP (no scheme/port/path/whitespace).
+          if ! printf '%s' "${VPS_HOST}" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'; then
+            echo "fail closed: VPS_HOST must be a hostname or IP"
+            exit 1
+          fi
+          # VPS_PORT: integer 1-65535.
+          if ! printf '%s' "${VPS_PORT}" | grep -Eq '^([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$'; then
+            echo "fail closed: VPS_PORT must be an integer 1-65535"
+            exit 1
+          fi
+          # VPS_USER: POSIX account name.
+          if ! printf '%s' "${VPS_USER}" | grep -Eq '^[A-Za-z0-9._-]{1,32}$'; then
+            echo "fail closed: VPS_USER must match [A-Za-z0-9._-]{1,32}"
+            exit 1
+          fi
+          # VPS_MASTER_ROOT: absolute POSIX path, positive allowlist, no traversal.
+          if ! printf '%s' "${VPS_MASTER_ROOT}" | grep -Eq '^/[A-Za-z0-9/_.-]*$'; then
+            echo "fail closed: VPS_MASTER_ROOT must be an absolute POSIX path of [A-Za-z0-9/_.-]"
+            exit 1
+          fi
+          case "${VPS_MASTER_ROOT}" in
+            *..*) echo "fail closed: VPS_MASTER_ROOT must not contain parent traversal"; exit 1 ;;
+          esac
+          echo "preview-only scope + VPS attestation confirmed (connection values not echoed)"
           echo "Production catalogue import remains blocked until the Stop 2 milestone."
 
       - name: Checkout code
@@ -120,36 +159,101 @@ jobs:
             identify --version | head -n 1
           fi
 
-      - name: Download and checksum-verify the asset archive
+      - name: Fetch master archive + sidecar from VPS and verify checksum
         env:
-          # Inputs are passed through env (never interpolated in the run script)
-          # so an attacker-controlled input value can never become shell syntax.
-          ARCHIVE_URL: ${{ inputs.assets_archive_url }}
-          ARCHIVE_SHA: ${{ inputs.assets_archive_sha256 }}
+          # Connection material flows through env only (never interpolated in
+          # this run script); values are written to runner-temp key/host files
+          # with restrictive perms and never echoed.
+          MASTER_VERSION: ${{ inputs.master_archive_version }}
+          VPS_HOST: ${{ vars.VPS_HOST }}
+          VPS_PORT: ${{ vars.VPS_PORT }}
+          VPS_USER: ${{ vars.VPS_USER }}
+          VPS_MASTER_ROOT: ${{ vars.VPS_MASTER_ROOT }}
+          VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
-          ARCHIVE="${RUNNER_TEMP}/catalog-assets.tar.gz"
-          # Re-assert input shape on the consumed values (defense in depth).
-          case "${ARCHIVE_URL}" in
-            https://*) : ;;
-            *) echo "fail closed: assets_archive_url must start with https://"; exit 1 ;;
-          esac
-          if printf '%s' "${ARCHIVE_URL}" | grep -Eq '[[:space:]]'; then
-            echo "fail closed: assets_archive_url must not contain whitespace"; exit 1
+          # Re-assert input/var shapes on the consumed values (defense in depth).
+          if ! printf '%s' "${MASTER_VERSION}" | grep -Eq '^[A-Za-z0-9._-]{1,64}$'; then
+            echo "fail closed: master_archive_version must match [A-Za-z0-9._-]{1,64}"; exit 1
           fi
-          if ! printf '%s' "${ARCHIVE_SHA}" | grep -Eq '^[0-9a-f]{64}$'; then
-            echo "fail closed: assets_archive_sha256 must be 64-char lowercase hex"; exit 1
+          if ! printf '%s' "${VPS_HOST}" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'; then
+            echo "fail closed: VPS_HOST must be a hostname or IP"; exit 1
           fi
-          # HTTPS only; curl fails closed on HTTP errors. Values are strictly quoted.
-          curl --fail --location --proto =https --output "$ARCHIVE" "${ARCHIVE_URL}"
-          printf '%s  %s\n' "${ARCHIVE_SHA}" "$ARCHIVE" | sha256sum -c -
-          echo "asset archive downloaded and checksum-verified"
+          if ! printf '%s' "${VPS_PORT}" | grep -Eq '^([1-9][0-9]{0,3}|[1-5][0-9]{4}|6[0-4][0-9]{3}|65[0-4][0-9]{2}|655[0-2][0-9]|6553[0-5])$'; then
+            echo "fail closed: VPS_PORT must be an integer 1-65535"; exit 1
+          fi
+          if ! printf '%s' "${VPS_USER}" | grep -Eq '^[A-Za-z0-9._-]{1,32}$'; then
+            echo "fail closed: VPS_USER must match [A-Za-z0-9._-]{1,32}"; exit 1
+          fi
+          if ! printf '%s' "${VPS_MASTER_ROOT}" | grep -Eq '^/[A-Za-z0-9/_.-]*$'; then
+            echo "fail closed: VPS_MASTER_ROOT must be an absolute POSIX path of [A-Za-z0-9/_.-]"; exit 1
+          fi
+          case "${VPS_MASTER_ROOT}" in *..*) echo "fail closed: VPS_MASTER_ROOT must not contain parent traversal"; exit 1 ;; esac
+
+          ARCHIVE="${RUNNER_TEMP}/mj-art-master-${MASTER_VERSION}.tar.gz"
+          SIDECAR="${RUNNER_TEMP}/mj-art-master-${MASTER_VERSION}.sha256"
+          KEY_FILE="${RUNNER_TEMP}/vps_ed25519"
+          KNOWN_HOSTS_FILE="${RUNNER_TEMP}/vps_known_hosts"
+
+          # Stage the private key and the pinned host key with restrictive perms.
+          # The secret contents are written straight to disk (never to stdout/log).
+          umask 077
+          printf '%s\n' "${VPS_SSH_PRIVATE_KEY}" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          printf '%s\n' "${VPS_KNOWN_HOSTS}" > "$KNOWN_HOSTS_FILE"
+          chmod 600 "$KNOWN_HOSTS_FILE"
+
+          # Construct the EXACT remote basenames from the validated version only.
+          REMOTE_ARCHIVE="mj-art-master-${MASTER_VERSION}.tar.gz"
+          REMOTE_SIDECAR="mj-art-master-${MASTER_VERSION}.sha256"
+          SCP_TARGET="${VPS_USER}@${VPS_HOST}"
+          REMOTE_ARCHIVE_PATH="${SCP_TARGET}:${VPS_MASTER_ROOT}/${REMOTE_ARCHIVE}"
+          REMOTE_SIDECAR_PATH="${SCP_TARGET}:${VPS_MASTER_ROOT}/${REMOTE_SIDECAR}"
+
+          # Hardened SSH/SCP options as a bash ARRAY (no string word-splitting):
+          # key-only auth, batch mode (no interactive prompts -> fail closed),
+          # strict host checking against the pinned known_hosts, identity pinned.
+          SCP_OPTS=(
+            -O
+            -P "${VPS_PORT}"
+            -o BatchMode=yes
+            -o StrictHostKeyChecking=yes
+            -o PasswordAuthentication=no
+            -o KbdInteractiveAuthentication=no
+            -o PreferredAuthentications=publickey
+            -o PubkeyAuthentication=yes
+            -o UserKnownHostsFile="${KNOWN_HOSTS_FILE}"
+            -o GlobalKnownHostsFile=/dev/null
+            -o IdentitiesOnly=yes
+            -o LogLevel=ERROR
+            -i "${KEY_FILE}"
+          )
+
+          # Fetch sidecar first, then archive. scp fails closed on any error.
+          scp "${SCP_OPTS[@]}" "${REMOTE_SIDECAR_PATH}" "${SIDECAR}"
+          scp "${SCP_OPTS[@]}" "${REMOTE_ARCHIVE_PATH}" "${ARCHIVE}"
+
+          # Verify the archive against the sidecar WITHOUT delegating to the
+          # coreutils checksum-check subcommand (which would read an untrusted
+          # path from the sidecar). The helper parses the sidecar strictly
+          # (exact basename match) and re-hashes the archive bytes itself.
+          node scripts/verify-master-archive.mjs \
+            --version "${MASTER_VERSION}" \
+            --archive "${ARCHIVE}" \
+            --sidecar "${SIDECAR}"
+
+          # The staged key is wiped as soon as the fetch succeeds.
+          rm -f "$KEY_FILE"
+          echo "master archive fetched from VPS and checksum-verified"
 
       - name: Extract archive (hardened) and locate SHA256SUMS root
         id: assets
+        env:
+          MASTER_VERSION: ${{ inputs.master_archive_version }}
         run: |
           set -euo pipefail
-          ARCHIVE="${RUNNER_TEMP}/catalog-assets.tar.gz"
+          ARCHIVE="${RUNNER_TEMP}/mj-art-master-${MASTER_VERSION}.tar.gz"
           EXTRACT="${RUNNER_TEMP}/catalog-assets"
           mkdir -p "$EXTRACT"
           # Pre-extraction safety: validate the verbose listing BEFORE extracting.
@@ -178,16 +282,15 @@ jobs:
           echo "ASSETS_DIR=$ROOT" >> "$GITHUB_ENV"
           echo "assets root: $ROOT"
 
-      # NOTE: the previous "Verify every source image against SHA256SUMS" step
-      # (which ran `sha256sum -c SHA256SUMS`) is intentionally REMOVED. That step
-      # read paths straight from the downloaded SHA256SUMS, which could contain
-      # absolute or parent-traversal paths. It was also fully redundant: the
-      # generator (generate-catalog-derivatives.mjs) parses SHA256SUMS via the
-      # strict parseSha256Sums() helper (rejecting malformed lines and any unsafe
-      # path), resolves each catalogue source solely through provenance.sha256
-      # via buildSourceMap(), and RE-HASHES every source byte before generation.
-      # Relying on the generator's strict rehash removes the unsafe-path-reading
-      # surface with no loss of integrity coverage.
+      # NOTE: there is intentionally no `sha256sum -c SHA256SUMS` step. That step
+      # would read paths straight from the downloaded SHA256SUMS, which could
+      # contain absolute or parent-traversal paths. It is also fully redundant:
+      # the generator (generate-catalog-derivatives.mjs) parses SHA256SUMS via
+      # the strict parseSha256Sums() helper (rejecting malformed lines and any
+      # unsafe path), resolves each catalogue source solely through
+      # provenance.sha256 via buildSourceMap(), and RE-HASHES every source byte
+      # before generation. Relying on the generator's strict rehash removes the
+      # unsafe-path-reading surface with no loss of integrity coverage.
 
       - name: Validate catalogue
         run: pnpm check:catalog
@@ -234,4 +337,7 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          rm -rf "${RUNNER_TEMP}/derivatives" "${RUNNER_TEMP}/catalog-assets" "${RUNNER_TEMP}/catalog-assets.tar.gz" || true
+          rm -rf "${RUNNER_TEMP}/derivatives" "${RUNNER_TEMP}/catalog-assets" \
+                 "${RUNNER_TEMP}/mj-art-master-"* \
+                 "${RUNNER_TEMP}/vps_ed25519" "${RUNNER_TEMP}/vps_known_hosts" \
+                 "${RUNNER_TEMP}/catalog-listing.txt" || true
