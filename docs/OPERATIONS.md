@@ -72,7 +72,10 @@ the connection material (names only, never values):
 
 The run fails closed until every one of these is present, and again unless
 `VPS_ASSETS_CONFIRMED == true`. None is ever echoed or interpolated in a run
-script; they flow through `env:` only.
+script; they flow through `env:` only. **No secret or private-key value is ever
+pasted into chat, logs, or a commit.** The VPS private key and host key are
+placed only into GitHub from the protected, caller-owned files produced by the
+setup script below.
 
 ## 5. R2 buckets and binding
 
@@ -287,6 +290,19 @@ Accordingly, **no GitHub Actions variables or secrets have been set** and
 with elevated privileges to create the account and complete the one-time setup
 (above), after which the GitHub variables/secrets can be populated and the
 end-to-end fetch validated before setting `VPS_ASSETS_CONFIRMED`.
+
+**One-time VPS-side setup script.** The local account, forced-command
+authorized key, pinned host key, and read-only access tests are produced by
+`scripts/setup-mjart-vps-fetch-access.sh`, run with sudo from a non-root
+account on the VPS (`--host <public-host-or-ip>`, `--port` optional, default
+22). It is idempotent, makes **no** GitHub changes itself, and prints the exact
+`gh` commands to populate `VPS_SSH_PRIVATE_KEY` / `VPS_KNOWN_HOSTS` and the
+`VPS_HOST` / `VPS_PORT` / `VPS_USER` / `VPS_MASTER_ROOT` variables (with
+`VPS_ASSETS_CONFIRMED` deliberately left for the operator to set last). Note:
+the workflow fetch uses the SFTP protocol (the scp default; never the legacy
+`-O` SCP protocol) to match the forced `internal-sftp` account. The legacy
+`scp -O` protocol requires a remote shell, which the forced-command account
+denies, so it must never be re-added; the setup script only documents this.
 
 ### Publishing cycle
 

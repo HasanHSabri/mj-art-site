@@ -214,8 +214,13 @@ jobs:
           # Hardened SSH/SCP options as a bash ARRAY (no string word-splitting):
           # key-only auth, batch mode (no interactive prompts -> fail closed),
           # strict host checking against the pinned known_hosts, identity pinned.
+          #
+          # SECURITY: the mjart-fetch account is locked to a forced
+          # "internal-sftp" authorized_keys command and cannot run a shell, so
+          # scp MUST use its default SFTP protocol. Never add the legacy -O
+          # (old SCP protocol) switch: it spawns a remote shell, which the
+          # forced-command account denies, causing the fetch to fail closed.
           SCP_OPTS=(
-            -O
             -P "${VPS_PORT}"
             -o BatchMode=yes
             -o StrictHostKeyChecking=yes

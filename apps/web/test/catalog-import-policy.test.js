@@ -224,6 +224,14 @@ test('catalog-import.yml uses hardened strict-host-checking key-only SSH/SCP', (
   assert.match(WF, /"\$\{SCP_OPTS\[@\]\}"/);
 });
 
+test('catalog-import.yml fetches via SFTP protocol, never the legacy scp -O switch', () => {
+  // SECURITY: the mjart-fetch account is forced to "internal-sftp" and cannot
+  // run a shell. The legacy -O (old SCP protocol) spawns a remote shell, which
+  // the forced-command account denies, so it must never appear as a standalone
+  // option in the SCP_OPTS array.
+  assert.doesNotMatch(WF, /\n[ \t]+-O[ \t]*\n/);
+});
+
 test('catalog-import.yml never interpolates ${{ secrets.* }} inside a run script', () => {
   const hits = findSecretsInRunBlocks(WF);
   assert.deepEqual(hits, [], 'run scripts must not interpolate secrets: ' + JSON.stringify(hits));
