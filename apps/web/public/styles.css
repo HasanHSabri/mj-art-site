@@ -481,7 +481,9 @@ textarea {
 }
 
 .dialog-close {
-  margin-left: auto;
+  justify-self: end;
+  align-self: start;
+  height: 44px;
   display: block;
   border: 0;
   background: transparent;
