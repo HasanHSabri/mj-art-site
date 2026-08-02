@@ -16,6 +16,7 @@
 // Run with --help for usage, --self-test for a fully offline deterministic check.
 
 import { createHash } from 'node:crypto';
+import os from 'node:os';
 import { promises as fs } from 'node:fs';
 import { createWriteStream, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -78,10 +79,20 @@ function encodeObjectKeyForPath(key) {
   return out;
 }
 
-// Deterministic local backup path for an object body. Uses the sha256 of the
-// raw key (UTF-8) so that path traversal and collisions are impossible.
-function backupFilenameFor(key) {
-  return sha256hex(key);
+// Deterministic, collision-proof local backup filename for an object body.
+// Hashes (bucket + NUL + rawKey) so the SAME raw key living in two different
+// buckets (production `mj-art-images` and preview `mj-art-images-preview` both
+// host `artworks.json`) maps to two DISTINCT body files instead of one silently
+// overwriting the other. The NUL separator makes the hashed input unambiguous:
+// no bucket/key pair can collide with another via plain concatenation (e.g.
+// ("a","bc") vs ("ab","c") would collide under concatenation but not here).
+// The manifest retains both the bucket and rawKey so restore resolves the exact
+// origin; the filename is a 64-hex sha256, so path traversal and
+// filesystem-special names are impossible. Two keys that happen to share the
+// same bytes still each get their own file (dedup is intentionally not done);
+// every manifest line resolves to its own correct body and SHA.
+function backupFilenameFor(bucket, key) {
+  return sha256hex(bucket + '\u0000' + String(key));
 }
 
 // Case/separator-tolerant field lookup. Normalizes record keys by lowercasing
@@ -409,7 +420,7 @@ async function downloadObject(bucket, rawKey, objectsDir, listRecord, ctx) {
     '/accounts/' + ctx.accountId + '/r2/buckets/' + encodeURIComponent(bucket) +
     '/objects/' + encodeObjectKeyForPath(rawKey);
   const result = await cfGet(p, { token: ctx.token, expectJson: false });
-  const finalPath = path.join(objectsDir, backupFilenameFor(rawKey));
+  const finalPath = path.join(objectsDir, backupFilenameFor(bucket, rawKey));
   const tmpPath = finalPath + '.partial-' + randomId();
 
   // On any failure below the .partial-* temp file is intentionally left in place
@@ -498,9 +509,13 @@ function collectListingFindings(records) {
 // Restore-relevant manifest entry for one object: normalized list metadata plus
 // (when downloaded) sanitized GET response headers and body hash. Auth/cookie
 // headers are stripped by captureHeaders before this point; no token is ever
-// written. Missing size/etag are made explicit rather than omitted.
-function buildManifestEntry(record, download) {
+// written. Missing size/etag are made explicit rather than omitted. The bucket
+// is recorded on every entry (in addition to the parent bucket array) so that
+// body files, which are now dispersed by bucket, resolve to their exact origin
+// even if entries are flattened out of the per-bucket structure.
+function buildManifestEntry(bucket, record, download) {
   return {
+    bucket,
     rawKey: record.rawKey,
     size: typeof record.size === 'number' ? record.size : download ? download.size : null,
     sizeSource: typeof record.size === 'number' ? 'listing' : download ? 'download' : 'missing',
@@ -627,15 +642,15 @@ async function run(config) {
     const objectResults = {};
     for (const rec of records) {
       if (rec.rawKey === ARTWORKS_KEY) {
-        objectResults[rec.rawKey] = buildManifestEntry(rec, artworksDownload);
+        objectResults[rec.rawKey] = buildManifestEntry(bucket, rec, artworksDownload);
         continue;
       }
       if (ctx.mode === 'backup') {
         const dl = await downloadObject(bucket, rec.rawKey, tmpDir, rec, ctx);
         downloaded.push({ bucket, rawKey: rec.rawKey, size: dl.size, sha256: dl.sha256, backupPath: dl.backupPath });
-        objectResults[rec.rawKey] = buildManifestEntry(rec, dl);
+        objectResults[rec.rawKey] = buildManifestEntry(bucket, rec, dl);
       } else {
-        objectResults[rec.rawKey] = buildManifestEntry(rec, null);
+        objectResults[rec.rawKey] = buildManifestEntry(bucket, rec, null);
       }
     }
 
@@ -666,7 +681,7 @@ async function run(config) {
     maxBackupBytes: ctx.maxBackupBytes,
     buckets: manifestBuckets,
     totals: { objectCount: grandTotalCount, totalBytes: grandTotalBytes, downloadedCount: downloaded.length },
-    note: 'ETag values are non-authoritative for multipart objects. Every object records normalized list metadata and the raw list record; downloaded bodies also record sanitized GET response headers. No credentials, cookies, or Authorization data are ever recorded.'
+    note: 'ETag values are non-authoritative for multipart objects. Every object records normalized list metadata, the raw list record, and its origin bucket; downloaded bodies also record sanitized GET response headers and a content SHA-256. Body files are dispersed by bucket: the on-disk body name is the SHA-256 of (bucket + NUL + rawKey), so the same raw key in production and preview (e.g. artworks.json) is stored as two separate, independently verifiable bodies rather than one overwriting the other. No credentials, cookies, or Authorization data are ever recorded.'
   });
   const manifestFile = path.join(ctx.outputDir, 'manifest.json');
   const manifestText = JSON.stringify(manifest, null, 2) + '\n';
@@ -694,6 +709,8 @@ async function run(config) {
   for (const b of manifestBuckets) {
     lines.push('- bucket `' + b.name + '`: ' + b.objectCount + ' objects, ' + b.totalBytes + ' bytes');
   }
+  lines.push('');
+  lines.push('Body files are dispersed by bucket: each body name is SHA-256(bucket + NUL + rawKey), so the same raw key in two buckets is stored as two separate bodies. Restore each entry from its recorded `bucket`, `rawKey`, `backupPath`, and content SHA-256 in manifest.json.');
   lines.push('');
   lines.push('No token or authorization data is included in this artifact.');
   await fs.writeFile(path.join(ctx.outputDir, 'SUMMARY.md'), lines.join('\n') + '\n', 'utf8');
@@ -793,14 +810,70 @@ async function selfTest() {
     assert('dot neutralized', enc === 'a/%2E/b', enc);
   }
 
-  // --- deterministic path mapping / checksum ---
+  // --- deterministic path mapping / checksum (now bucket-dispersed) ---
   assert('sha256 known vector', sha256hex('abc') === 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', sha256hex('abc'));
   {
     const k = 'artwork/2026-01-02-painting.jpeg';
-    const fn = backupFilenameFor(k);
-    assert('backup filename is sha256 of key', fn === sha256hex(k), fn);
+    const fn = backupFilenameFor('mj-art-images', k);
+    assert('backup filename is sha256 of bucket+NUL+key', fn === sha256hex('mj-art-images' + '\u0000' + k), fn);
     assert('backup filename is 64 hex', /^[0-9a-f]{64}$/.test(fn), fn);
-    assert('distinct keys map distinctly', backupFilenameFor('a') !== backupFilenameFor('b'));
+    assert('distinct keys map distinctly (same bucket)', backupFilenameFor('mj-art-images', 'a') !== backupFilenameFor('mj-art-images', 'b'));
+    // The dual-bucket collision the bug hinged on: identical raw key, two buckets.
+    assert('same key distinct across buckets', backupFilenameFor('mj-art-images', 'a') !== backupFilenameFor('mj-art-images-preview', 'a'), 'BUCKET COLLISION');
+    assert('artworks.json distinct prod vs preview', backupFilenameFor('mj-art-images', ARTWORKS_KEY) !== backupFilenameFor('mj-art-images-preview', ARTWORKS_KEY), 'BUCKET COLLISION on artworks.json');
+    // NUL separator prevents concatenation ambiguity.
+    assert('separator disambiguates ("a","bc") vs ("ab","c")', backupFilenameFor('a', 'bc') !== backupFilenameFor('ab', 'c'), 'CONCAT COLLISION');
+  }
+
+  // --- dual-bucket body-file dispersion (the actual bug): identical raw key in
+  //     two buckets with DIFFERENT bytes must produce two distinct body files
+  //     that each exist and each verify against their own SHA. This exercises the
+  //     real on-disk naming path used by downloadObject (no network). The tool's
+  //     hard contract forbids filesystem-deletion APIs, so the scratch dir is
+  //     left under os.tmpdir() (cleaned by the OS) rather than removed here. ---
+  {
+    const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'r2-backup-selftest-'));
+    const objectsDir = path.join(scratch, 'objects');
+    await fs.mkdir(objectsDir, { recursive: true });
+    const prodBody = Buffer.from('PRODUCTION-ARTWORKS-BYTES-1234567890');
+    const prevBody = Buffer.from('PREVIEW-ARTWORKS-BYTES-0987654321');
+    const prodName = backupFilenameFor('mj-art-images', ARTWORKS_KEY);
+    const prevName = backupFilenameFor('mj-art-images-preview', ARTWORKS_KEY);
+    assert('dual: distinct body filenames', prodName !== prevName, prodName + ' == ' + prevName);
+    await fs.writeFile(path.join(objectsDir, prodName), prodBody);
+    await fs.writeFile(path.join(objectsDir, prevName), prevBody);
+    const prodRead = await fs.readFile(path.join(objectsDir, prodName));
+    const prevRead = await fs.readFile(path.join(objectsDir, prevName));
+    assert('dual: production body preserved (not overwritten)', prodRead.equals(prodBody), prodRead.toString());
+    assert('dual: preview body preserved (not overwritten)', prevRead.equals(prevBody), prevRead.toString());
+    const prodSha = createHash('sha256').update(prodRead).digest('hex');
+    const prevSha = createHash('sha256').update(prevRead).digest('hex');
+    assert('dual: production sha matches body', prodSha === createHash('sha256').update(prodBody).digest('hex'), prodSha);
+    assert('dual: preview sha matches body', prevSha === createHash('sha256').update(prevBody).digest('hex'), prevSha);
+    assert('dual: two distinct body shas', prodSha !== prevSha, 'bodies identical despite different bytes');
+    // Mirror the tool's SHA256SUMS dedup-free listing: every (bucket,key) gets
+    // its own line; both must resolve.
+    const sums = [prodSha + '  objects/' + prodName, prevSha + '  objects/' + prevName].sort();
+    assert('dual: SHA256SUMS lists two distinct paths', new Set(sums.map((l) => l.slice(64))).size === 2, JSON.stringify(sums));
+  }
+
+  // --- body-name traversal/special-key safety: regardless of bucket or key
+  //     content, the body filename is always a pure 64-hex sha256, so traversal,
+  //     dot-segments, NULs, and unicode in the key can never reach the
+  //     filesystem via the body name (they remain confined to the list URL via
+  //     encodeObjectKeyForPath, covered above). ---
+  {
+    const hostile = ['../../etc/passwd', '..', '.', 'a/\u0000b', 'a\x00b', 'artwork/\u00fc\u00f1.jpg', 'CON', ' ', '', 'a/b/c'];
+    for (const h of hostile) {
+      const prodFn = backupFilenameFor('mj-art-images', h);
+      const prevFn = backupFilenameFor('mj-art-images-preview', h);
+      assert('body name hex-only for hostile key: ' + JSON.stringify(h), /^[0-9a-f]{64}$/.test(prodFn), prodFn);
+      assert('body name hex-only (preview) for hostile key: ' + JSON.stringify(h), /^[0-9a-f]{64}$/.test(prevFn), prevFn);
+      // No slash, dot, or NUL can appear in the body filename.
+      assert('body name has no path/meta chars: ' + JSON.stringify(h), !/[\/\.\u0000]/.test(prodFn), prodFn);
+      // Same hostile key still disperses across buckets.
+      assert('hostile key still bucket-dispersed: ' + JSON.stringify(h), prodFn !== prevFn, 'BUCKET COLLISION');
+    }
   }
 
   // --- reference analysis ---
@@ -943,7 +1016,7 @@ async function selfTest() {
     process.exitCode = 1;
     return;
   }
-  console.log('self-test OK: key encoding, path mapping, checksum, reference analysis, list parsing, field normalization, API URL building');
+  console.log('self-test OK: key encoding, bucket-dispersed path mapping, dual-bucket body integrity, traversal safety, checksum, reference analysis, list parsing, field normalization, API URL building');
 }
 
 async function main() {

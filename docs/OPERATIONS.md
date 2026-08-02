@@ -154,6 +154,20 @@ Read-only inspection and backup use a **separate** workflow:
 
 - A backup contains **exact object keys, metadata, ETags, and SHA-256 hashes** of
   downloaded bodies, plus per-bucket inventories and reference reports.
+- **Body files are dispersed by bucket.** Each downloaded body is stored under
+  `objects/<sha256(bucket + NUL + rawKey)>`. The NUL separator makes the name
+  unambiguous, and the same raw key present in both buckets (notably
+  `artworks.json`, which lives in production `mj-art-images` **and** preview
+  `mj-art-images-preview`) is stored as **two separate, independently verifiable
+  bodies** rather than one overwriting the other. Every manifest entry records
+  its origin `bucket`, `rawKey`, relative `backupPath`, and content SHA-256, so
+  restore resolves the exact (bucket, key) even if entries are flattened out of
+  the per-bucket structure.
+- **Restore follows the manifest's recorded `backupPath`.** Do not recompute
+  body paths from keys; the on-disk name is a function of bucket+key and an
+  artifact is self-contained (its manifest and its `objects/` bodies travel
+  together). `SHA256SUMS` lists one line per `(bucket, rawKey)` with no
+  deduplication.
 - **Credentials are excluded** from every artifact. The token and Authorization
   header are never written, logged, or echoed.
 - The backup artifact is a dated, SHA-256-checksummed tarball uploaded as a GitHub
@@ -163,6 +177,25 @@ Read-only inspection and backup use a **separate** workflow:
 - Restore order: **images first, `artworks.json` last**. Restoring metadata before
   its referenced images creates a window of broken references.
 - **Permission to inspect or back up never implies permission to change production.**
+
+### 8a. Historical backup status (dual-bucket body collision)
+
+The body-naming scheme above is a fix. Earlier `backupFilenameFor` hashed only the
+raw key, ignoring the bucket, so the production and preview copies of the same raw
+key collapsed onto one body file and the later download overwrote the earlier one.
+
+- **Backup `20260731` — UNAFFECTED.** At that time only the production bucket was
+  non-empty (the preview bucket had not yet been populated), so no two-bucket key
+  overlap occurred and all of its bodies are intact and correct.
+- **Backup `20260802` (workflow run `30730562456`) — ONE MISSING BODY.** By then
+  both buckets were populated, so production `artworks.json` and preview
+  `artworks.json` mapped to the same body file. Production was listed first, then
+  preview overwrote it. The artifact's 192 manifest entries are otherwise
+  complete, but **the production `artworks.json` body is not durable in that
+  artifact** (the stored bytes are the preview copy). Do not restore production
+  `artworks.json` from run `30730562456`; take it from the `20260731` artifact or
+  from a fresh post-fix backup. All non-colliding bodies in `20260802` are fine.
+- **All post-fix backups** disperse bodies by bucket and contain every body.
 
 ## 9. Safe operational sequence
 
