@@ -15,6 +15,10 @@
 #       command="internal-sftp -d <imports>",restrict
 #     so the account can ONLY SFTP into the imports dir, cannot get a shell,
 #     cannot forward, and cannot write (filesystem rights are read-only for it).
+#   - ALSO enforces ForceCommand internal-sftp (and no forwarding/PTY) at the
+#     SSH-DAEMON level via ONE narrow, validated, auto-reverting "Match User"
+#     snippet under sshd_config.d/ (defense-in-depth with the authorized key
+#     forced command; see the "DOES NOT" note for the fail-closed contract).
 #   - Generates a fresh ed25519 keypair; leaves the PRIVATE key in a protected,
 #     caller-owned file and the host known_hosts line in another, for the next
 #     (manual, GitHub-side) gh step. It NEVER prints key material.
@@ -24,8 +28,15 @@
 # What this script DOES NOT do:
 #   - It never calls gh, never sets GitHub secrets/variables, never mutates
 #     GitHub. It only PRINTS the safe next command for the caller to run.
-#   - It does not modify sshd_config or reload sshd (the forced command works
-#     with the running service; the local test proves it).
+#   - It does NOT edit /etc/ssh/sshd_config directly. It drops ONE narrow,
+#     root-owned 0644, marker-delimited "Match User mjart-fetch" snippet into
+#     the host's EXISTING sshd_config.d/*.conf include dir, and ONLY if that
+#     include is supported (fail-closed otherwise). The snippet sets NO global
+#     options. The full config is validated with `sshd -t`, the GLOBAL
+#     effective config is proven unchanged (no drift), and the per-user
+#     effective config is verified with `sshd -T -C` BEFORE sshd is reloaded.
+#     On any validation or reload failure the prior (absent) snippet is
+#     restored and the script fails loudly.
 #   - It does not discover the public IP (the operator passes --host).
 #   - It does not delete or modify anything under imports.
 #
@@ -454,6 +465,257 @@ printf '%s' "$PUB_LINE" | grep -Eq '^ssh-ed25519 [A-Za-z0-9+/=]+( .*)?$' \
 AK_ENTRY="command=\"internal-sftp -d ${IMPORTS_PATH}\",restrict ${PUB_LINE}"
 
 # --------------------------------------------------------------------------- #
+# sshd drop-in: narrow Match snippet forcing internal-sftp (defense-in-depth)
+# --------------------------------------------------------------------------- #
+#
+# The authorized_keys forced command (below) is the PRIMARY confinement, but it
+# can fail to start on some host/ssh-shell combinations (e.g. when the account
+# shell is nologin, the authorized_keys command= may never execute). To make
+# forced SFTP robust, this section ALSO enforces it at the sshd level with a
+# narrowly-scoped "Match User mjart-fetch" drop-in snippet. It:
+#   - Verifies /etc/ssh/sshd_config already Includes a sshd_config.d/*.conf
+#     drop-in dir (fail-closed; never edits the main config).
+#   - Writes ONE root-owned 0644 marker-delimited snippet containing ONLY the
+#     Match block (no global options, so it weakens no other setting).
+#   - Validates the FULL config with `sshd -t` before reloading.
+#   - Proves the GLOBAL effective config is byte-identical before/after (no
+#     drift/leakage) and the per-user effective config (sshd -T -C) matches.
+#   - Reloads sshd only after validation; on reload failure restores the prior
+#     (absent) snippet, reloads, verifies, and fails loudly.
+
+SSH_BIN=$(command -v sshd 2>/dev/null || true)
+[ -n "$SSH_BIN" ] || fail "sshd binary not found; cannot enforce ForceCommand daemon-side"
+
+detect_sshd_snippet_dir() {
+    # Echo the sshd_config.d dir if the main config Includes one; else fail closed.
+    local main=/etc/ssh/sshd_config targets t dir found=""
+    [ -f "$main" ] || fail "$main not found; cannot verify Include support for a drop-in snippet"
+    targets=$(grep -iE '^[[:space:]]*Include[[:space:]]+' "$main" \
+        | sed -E 's/^[[:space:]]*[Ii]nclude[[:space:]]+//; s/[[:space:]]+$//; s/^['"'"'\"]+//; s/['"'"'\"]+$//')
+    if [ -z "$targets" ]; then
+        cat >&2 <<EOF
+[setup] FAIL (fail closed): $main has no Include directive that reads a drop-in
+directory. This script refuses to edit the main sshd_config; it can only drop a
+narrowly-scoped Match snippet into an existing sshd_config.d/*.conf include dir.
+Have an operator add (manually, once), near the top of $main:
+    Include /etc/ssh/sshd_config.d/*.conf
+then reload sshd, then re-run this script.
+EOF
+        exit 1
+    fi
+    while IFS= read -r t; do
+        [ -n "$t" ] || continue
+        case "$t" in /*) ;; *) t="/etc/ssh/$t" ;; esac
+        case "$t" in
+            */sshd_config.d/*|*/sshd_config.d)
+                dir=$(printf '%s' "$t" | sed -E 's@(.*sshd_config\.d).*@\1@')
+                if [ -d "$dir" ]; then found="$dir"; break; fi
+                ;;
+        esac
+    done <<EOF
+$targets
+EOF
+    [ -n "$found" ] \
+        || fail "Include present in $main but no readable sshd_config.d directory target found (refusing to edit main config). Include pattern(s): $(printf '%s' "$targets" | tr '\n' ' ')"
+    printf '%s' "$found"
+}
+
+SNIPPET_DIR=$(detect_sshd_snippet_dir)
+SNIPPET_BASENAME="90-mjart-fetch.conf"
+SNIPPET_PATH="$SNIPPET_DIR/$SNIPPET_BASENAME"
+
+build_snippet_content() {
+    # Marker-delimited, ONLY a Match block. Heredoc is UNQUOTED so the account
+    # and imports path expand at runtime.
+    cat <<SNIPPET
+# $SNIPPET_BASENAME - MANAGED by scripts/setup-mjart-vps-fetch-access.sh
+# Narrowly-scoped forced-SFTP confinement for the read-only MJ-ART catalogue
+# import account "$FETCH_USER". DO NOT EDIT BY HAND: re-run the setup script to
+# change, or remove this file and reload sshd to revert. This file sets NO
+# global options; it contains ONLY a Match User block, so it weakens no other
+# sshd setting. Defense-in-depth with the account authorized_keys forced
+# command (sshd ForceCommand takes precedence; both pin the same internal-sftp).
+# BEGIN MJ-ART FETCH MANAGED SNIPPET
+Match User $FETCH_USER
+    ForceCommand internal-sftp -d $IMPORTS_PATH
+    DisableForwarding yes
+    AllowTcpForwarding no
+    X11Forwarding no
+    PermitTTY no
+# END MJ-ART FETCH MANAGED SNIPPET
+SNIPPET
+}
+
+# --- Effective-state helpers (read config only; print no secrets/keys) -------
+
+dump_effective_global() {
+    # Global (unconditional) effective config to $1.
+    "$SSH_BIN" -T >"$1" 2>"$WORK_TMP/ssht.err" \
+        || { cat "$WORK_TMP/ssht.err" >&2 || true; return 1; }
+}
+
+dump_effective_user() {
+    # Per-user effective config for FETCH_USER to $1.
+    "$SSH_BIN" -T -C "user=$FETCH_USER,addr=127.0.0.1,host=localhost" \
+        >"$1" 2>"$WORK_TMP/sshtc.err" \
+        || { cat "$WORK_TMP/sshtc.err" >&2 || true; return 1; }
+}
+
+expect_key() {
+    # Assert effective file $1 has a line "^$2 <val>"; $4 is a human label.
+    local file="$1" key="$2" val="$3" label="$4" line got
+    line=$(grep -iE "^${key}[[:space:]]+" "$file" | head -n1)
+    got=$(printf '%s' "$line" | sed -E 's/^[^[:space:]]+[[:space:]]+//; s/[[:space:]]+$//')
+    if [ "$got" != "$val" ]; then
+        note "effective '$key' for $FETCH_USER was '$got', expected '$val' ($label)"
+        return 1
+    fi
+    return 0
+}
+
+print_effective_diagnostics() {
+    note "relevant effective sshd settings for $FETCH_USER (non-secret; no key material):"
+    if dump_effective_user "$WORK_TMP/diag.txt"; then
+        grep -iE '^(forcecommand|permittty|allowtcpforwarding|x11forwarding|disableforwarding|permittunnel|allowagentforwarding|subsystem|permitrootlogin|passwordauthentication)\b' \
+            "$WORK_TMP/diag.txt" >&2 || true
+    fi
+    note "to inspect server-side sshd logs WITHOUT exposing any secret or key:"
+    note "    sudo journalctl -u ssh -u sshd --since '10 min ago'   # systemd"
+    note "    sudo tail -n 300 /var/log/auth.log                    # Debian/Ubuntu"
+}
+
+verify_user_effective() {
+    dump_effective_user "$WORK_TMP/sshd_user.eff" || return 1
+    expect_key "$WORK_TMP/sshd_user.eff" "forcecommand" "internal-sftp -d $IMPORTS_PATH" "forced SFTP root" || return 1
+    expect_key "$WORK_TMP/sshd_user.eff" "disableforwarding" "yes" "all forwarding disabled" || return 1
+    expect_key "$WORK_TMP/sshd_user.eff" "allowtcpforwarding" "no" "no TCP forwarding" || return 1
+    expect_key "$WORK_TMP/sshd_user.eff" "x11forwarding" "no" "no X11 forwarding" || return 1
+    expect_key "$WORK_TMP/sshd_user.eff" "permittty" "no" "no PTY" || return 1
+    return 0
+}
+
+rollback_snippet() {
+    # Restore the prior (absent) state: we only ever CREATE this snippet, so
+    # rollback is removal. Best-effort; caller fails loudly regardless.
+    if [ "${SNIPPET_NEEDS_WRITE:-0}" -eq 1 ] && [ -e "$SNIPPET_PATH" ]; then
+        rm -f "$SNIPPET_PATH"
+        note "rolled back: removed $SNIPPET_PATH (restored prior absent state)"
+    fi
+}
+
+reload_sshd_safe() {
+    # Returns 0 on success, 1 if no reload mechanism worked. Safe (SIGHUP/reload
+    # only; no restart, no config mutation).
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl reload ssh.service 2>/dev/null && { note "sshd reloaded (systemctl reload ssh.service)"; return 0; }
+        systemctl reload sshd.service 2>/dev/null && { note "sshd reloaded (systemctl reload sshd.service)"; return 0; }
+    fi
+    if command -v service >/dev/null 2>&1; then
+        service ssh reload 2>/dev/null && { note "sshd reloaded (service ssh reload)"; return 0; }
+        service sshd reload 2>/dev/null && { note "sshd reloaded (service sshd reload)"; return 0; }
+    fi
+    if command -v pgrep >/dev/null 2>&1; then
+        local master
+        master=$(pgrep -ox sshd 2>/dev/null || true)
+        if [ -n "$master" ] && kill -HUP "$master" 2>/dev/null; then
+            note "sshd reloaded (SIGHUP to sshd pid $master)"; return 0
+        fi
+    fi
+    return 1
+}
+
+# --- Idempotency: exact-match or fail closed (never overwrite unexpected) -----
+SNIPPET_EXPECTED=$(build_snippet_content)
+SNIPPET_PRIOR_EXISTS=0
+if [ -e "$SNIPPET_PATH" ]; then
+    SNIPPET_PRIOR_EXISTS=1
+    if [ "$(cat "$SNIPPET_PATH")" = "$SNIPPET_EXPECTED" ]; then
+        note "sshd snippet already managed and exact: $SNIPPET_PATH"
+        SNIPPET_NEEDS_WRITE=0
+    else
+        cat >&2 <<EOF
+[setup] FAIL (fail closed): $SNIPPET_PATH already exists but does NOT match the
+expected managed content. Refusing to overwrite an unexpected snippet. Inspect
+it; if YOU created it and it is safe to remove:
+    sudo cat $SNIPPET_PATH
+    sudo rm $SNIPPET_PATH && (sudo systemctl reload ssh || sudo service ssh reload)
+then re-run this script.
+EOF
+        exit 1
+    fi
+else
+    SNIPPET_NEEDS_WRITE=1
+fi
+
+# Capture the GLOBAL baseline BEFORE any write, to prove zero drift afterwards.
+dump_effective_global "$WORK_TMP/sshd_global.before" \
+    || fail "sshd -T baseline failed (cannot prove no global weakening)"
+
+# --- Write the snippet (only when absent; root-owned 0644, marker-delimited) --
+if [ "$SNIPPET_NEEDS_WRITE" -eq 1 ]; then
+    note "writing sshd snippet: $SNIPPET_PATH"
+    printf '%s\n' "$SNIPPET_EXPECTED" > "$WORK_TMP/snippet.new"
+    chown root:root "$WORK_TMP/snippet.new"
+    chmod 0644 "$WORK_TMP/snippet.new"
+    install -m 0644 -o root -g root "$WORK_TMP/snippet.new" "$SNIPPET_PATH"
+    # Enforce ownership/mode invariant; rollback + fail if not exact.
+    [ "$(stat -c '%U:%G' "$SNIPPET_PATH")" = "root:root" ] \
+        || { rollback_snippet; fail "$SNIPPET_PATH not root:root after install"; }
+    [ "$(stat -c '%a' "$SNIPPET_PATH")" = "644" ] \
+        || { rollback_snippet; fail "$SNIPPET_PATH mode not 0644 after install"; }
+fi
+
+# --- Validate the FULL config syntax before reload ---------------------------
+if ! "$SSH_BIN" -t >"$WORK_TMP/sshd_t.out" 2>"$WORK_TMP/sshd_t.err"; then
+    cat "$WORK_TMP/sshd_t.err" >&2 || true
+    rollback_snippet
+    fail "sshd -t FAILED after writing snippet; snippet removed, sshd config unchanged"
+fi
+
+# --- Prove the snippet did NOT change any GLOBAL effective setting ------------
+if ! dump_effective_global "$WORK_TMP/sshd_global.after"; then
+    rollback_snippet
+    fail "sshd -T post-write dump failed; rolled back"
+fi
+if ! diff -u "$WORK_TMP/sshd_global.before" "$WORK_TMP/sshd_global.after" >"$WORK_TMP/global.diff" 2>&1; then
+    cat "$WORK_TMP/global.diff" >&2 || true
+    rollback_snippet
+    fail "GLOBAL sshd effective config CHANGED after adding snippet (leakage/weakening); snippet removed"
+fi
+note "global sshd effective config unchanged (zero drift)."
+
+# --- Verify the per-user EFFECTIVE settings match exactly --------------------
+if ! verify_user_effective; then
+    print_effective_diagnostics
+    rollback_snippet
+    fail "effective sshd settings for $FETCH_USER do not match the expected confinement (possible shadowing by an earlier Match block)"
+fi
+note "sshd -T -C effective confinement verified for $FETCH_USER."
+
+# --- Reload sshd safely (only after validation); rollback + fail on failure ---
+if [ "$SNIPPET_NEEDS_WRITE" -eq 1 ]; then
+    note "reloading sshd (validated; safe)..."
+    if ! reload_sshd_safe; then
+        rollback_snippet
+        reload_sshd_safe || note "WARN: could not reload sshd after rollback either (apply reload manually)"
+        if "$SSH_BIN" -t >/dev/null 2>&1; then
+            note "sshd -t OK after rollback"
+        else
+            fail "sshd -t FAILED after rollback; investigate $SNIPPET_PATH / main config manually"
+        fi
+        fail "sshd reload failed; snippet removed and config reverted. Resolve the reload mechanism, then re-run."
+    fi
+    # Post-reload re-verification (config files still correct + effective).
+    "$SSH_BIN" -t >/dev/null 2>&1 || { rollback_snippet; fail "sshd -t FAILED after reload; snippet removed"; }
+    if ! verify_user_effective; then
+        print_effective_diagnostics
+        rollback_snippet
+        fail "post-reload effective settings drifted from expected; snippet removed"
+    fi
+    note "sshd reloaded and confinement re-verified."
+fi
+
+# --------------------------------------------------------------------------- #
 # Install authorized_keys (root-owned) for the account
 # --------------------------------------------------------------------------- #
 
@@ -605,6 +867,8 @@ cat <<EOF
  Private key file : $CALLER_KEYFILE   (owner: $CALLER_USER, mode 0600)
  Known hosts file : $CALLER_KH_FILE   (owner: $CALLER_USER, mode 0600)
  Pinned host      : $HOST:$PORT
+ sshd snippet     : $SNIPPET_PATH  (root:root 0644; managed Match block;
+                   fail-closed/validated/reverts on reload failure)
 
  IMPORTANT - two things to know before the first end-to-end fetch:
 
@@ -617,6 +881,9 @@ cat <<EOF
      internal-sftp account. The legacy scp -O protocol requires a remote shell,
      which the forced-command account denies; it must never be re-added. This
      script makes NO GitHub-side change; it only documents the required transport.
+     Forced SFTP is enforced BOTH at the sshd level (the managed Match snippet
+     above) AND at the authorized_keys level (command=...,restrict) for
+     defense-in-depth.
 
  NEXT (run these yourself - this script makes NO GitHub changes).
  Set the secrets/variables from the protected files. Do NOT set

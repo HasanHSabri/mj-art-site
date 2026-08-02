@@ -513,6 +513,54 @@ function main() {
     }
   }
 
+  // 7) VPS fetch-access setup script invariants (robust fail-closed forced-SFTP).
+  //    The script must enforce ForceCommand internal-sftp at the sshd level via a
+  //    narrow drop-in Match snippet that is validated before reload and rolled
+  //    back on failure. It must never write to the main /etc/ssh/sshd_config.
+  const setupScriptPath = 'scripts/setup-mjart-vps-fetch-access.sh';
+  const setupScript = readText(setupScriptPath);
+  if (setupScript === null) {
+    fail(setupScriptPath + ' is missing');
+  } else {
+    if (!/Match\s+User\s+\$\{?FETCH_USER\}?/.test(setupScript) && !/Match\s+User\s+mjart-fetch/.test(setupScript)) {
+      fail(setupScriptPath + ' must define a "Match User" block for the fetch account');
+    }
+    if (!/ForceCommand\s+internal-sftp\b/.test(setupScript)) {
+      fail(setupScriptPath + ' must ForceCommand internal-sftp in the sshd Match block');
+    }
+    if (!/DisableForwarding\s+yes/.test(setupScript)) {
+      fail(setupScriptPath + ' Match block must set DisableForwarding yes');
+    }
+    if (!/PermitTTY\s+no/.test(setupScript)) {
+      fail(setupScriptPath + ' Match block must set PermitTTY no');
+    }
+    // Must validate the full config with sshd -t before reload.
+    if (!/SSH_BIN"\s+-t\b/.test(setupScript)) {
+      fail(setupScriptPath + ' must validate sshd config with sshd -t before reload');
+    }
+    // Must verify effective per-user state with sshd -T -C.
+    if (!/SSH_BIN"\s+-T\s+-C/.test(setupScript)) {
+      fail(setupScriptPath + ' must verify effective settings with sshd -T -C');
+    }
+    // Must implement rollback (restore prior snippet incl. absent state).
+    if (!/rollback_snippet/.test(setupScript)) {
+      fail(setupScriptPath + ' must implement rollback_snippet of the snippet on failure');
+    }
+    // Must use the sshd_config.d drop-in dir.
+    if (!/sshd_config\.d/.test(setupScript)) {
+      fail(setupScriptPath + ' must use a sshd_config.d drop-in snippet');
+    }
+    // Must NOT redirect/write to the main /etc/ssh/sshd_config (reads are allowed;
+    // writes must go through sshd_config.d). Negative lookahead excludes ".d".
+    if (/(>>?)\s*\/etc\/ssh\/sshd_config(?!\.)/.test(setupScript)) {
+      fail(setupScriptPath + ' must not redirect/write to the main /etc/ssh/sshd_config');
+    }
+    // Must prove global effective config does not drift when the snippet is added.
+    if (!/sshd_global\.before/.test(setupScript) || !/sshd_global\.after/.test(setupScript)) {
+      fail(setupScriptPath + ' must compare global sshd -T before/after the snippet (no drift)');
+    }
+  }
+
   if (process.exitCode) {
     console.error('check-operations-rules: one or more assertions failed.');
     return;

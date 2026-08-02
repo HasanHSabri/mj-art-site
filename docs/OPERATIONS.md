@@ -304,6 +304,23 @@ the workflow fetch uses the SFTP protocol (the scp default; never the legacy
 `scp -O` protocol requires a remote shell, which the forced-command account
 denies, so it must never be re-added; the setup script only documents this.
 
+**Forced-SFTP is enforced at two layers (defense-in-depth).** In addition to
+the account's `authorized_keys` `command="internal-sftp ...",restrict` entry,
+the script manages ONE narrow sshd drop-in snippet — a root-owned `0644`,
+marker-delimited `Match User mjart-fetch` block (e.g.
+`/etc/ssh/sshd_config.d/90-mjart-fetch.conf`) that sets `ForceCommand
+internal-sftp -d <imports>` and disables all forwarding and PTY **for that user
+only**; it sets no global options and weakens no other sshd setting. The script
+**never edits** `/etc/ssh/sshd_config` directly; it requires the host's main
+config to already `Include sshd_config.d/*.conf` (it fails closed with guidance
+otherwise). The full config is validated with `sshd -t`, the **global**
+effective config is proven byte-identical before/after (no drift), and the
+per-user effective config is verified with `sshd -T -C user=mjart-fetch`
+before sshd is reloaded. On any validation or reload failure it restores the
+prior (absent) snippet and fails loudly. The `authorized_keys` forced command
+remains as a second layer; the sshd `ForceCommand` takes precedence and both
+pin the same `internal-sftp` root.
+
 ### Publishing cycle
 
 1. **Build** the versioned archive + sidecar (above) and place them on the VPS.
