@@ -1,0 +1,898 @@
+{
+  "schemaVersion": 1,
+  "manifestKind": "mj-art-production-catalogue-release",
+  "approvedPreview": {
+    "contentCommit": "e52fc7f00234fc7e1741087ea046cec0f2175cfb",
+    "contentCommitSubject": "Fix preview dialog accessibility",
+    "verifiedByBackupSnapshot": "r2-readonly-backup-20260802T033638Z",
+    "backupRecordedCommit": "97a11c2ae5d224bf5c6b96d0a65629fb0f0691d3",
+    "deployCodeTargetNote": "The production Worker deploy (apps/web) runs from the latest main commit at deploy time; this manifest pins the approved CATALOGUE CONTENT (preview R2 state). Commit 97a11c2 changed only backup tooling (not app or catalogue content), so the deploy code target is latest main while this content manifest is the approved preview state."
+  },
+  "source": {
+    "bucket": "mj-art-images-preview",
+    "role": "read-only source (approved preview state)"
+  },
+  "destination": {
+    "bucket": "mj-art-images",
+    "role": "write target (production)"
+  },
+  "catalog": {
+    "recordCount": 86,
+    "canonicalImageKeyCount": 172
+  },
+  "expectedObjectCount": 173,
+  "artworksJson": {
+    "key": "artworks.json",
+    "size": 113368,
+    "sha256": "8cfdf39f56bd0541b5f20b9e10c66e9bd3fccdda51c1e8936983781d2e12cc69",
+    "recordCount": 86
+  },
+  "imageObjectCount": 172,
+  "expectedObjects": [
+    {
+      "key": "artwork/catalog/misc-001/full.jpg",
+      "size": 1242645,
+      "sha256": "7887870794c6a7f3af2d715eba3c08d158a5119a4bb008e471a0bdc78211c9dc"
+    },
+    {
+      "key": "artwork/catalog/misc-001/thumb.jpg",
+      "size": 140262,
+      "sha256": "12cb94031f0e2c1d4de055c9b29c5abc59d2386e39e049bab2e5877fa137986b"
+    },
+    {
+      "key": "artwork/catalog/misc-002/full.jpg",
+      "size": 1344878,
+      "sha256": "d1e6f65825b480d09fd93abf88a11c997c02b0ce7b122d2c35771b1554623e1a"
+    },
+    {
+      "key": "artwork/catalog/misc-002/thumb.jpg",
+      "size": 151442,
+      "sha256": "f96065734165950d8c5a67bec1d0188a90d17d6a07608a720119dcac2d55751b"
+    },
+    {
+      "key": "artwork/catalog/misc-003/full.jpg",
+      "size": 1270870,
+      "sha256": "3677cc647ad9205da6cd9b57e3444f63e5d6ac4252be46aa71938fd39a4e3124"
+    },
+    {
+      "key": "artwork/catalog/misc-003/thumb.jpg",
+      "size": 142820,
+      "sha256": "f605cee90efcc6c64e0d3b751fbc5b9c0cf6dec570da9a8a64f43eb03cb62ebe"
+    },
+    {
+      "key": "artwork/catalog/misc-004/full.jpg",
+      "size": 237259,
+      "sha256": "91ab05f838cba504a8eb03e88ff9e817af17b312ee109d7587dffaf1c3143c1a"
+    },
+    {
+      "key": "artwork/catalog/misc-004/thumb.jpg",
+      "size": 76927,
+      "sha256": "c9546ff9e0e8111fa7b5b026df19b9267673c169c68cd8cbb30a4e5a7828e55c"
+    },
+    {
+      "key": "artwork/catalog/misc-005/full.jpg",
+      "size": 291421,
+      "sha256": "680bc28dc054ad0a757e5b4b28ff5633b6fe0943ad71713713f1ecf819ce59f8"
+    },
+    {
+      "key": "artwork/catalog/misc-005/thumb.jpg",
+      "size": 162948,
+      "sha256": "1e9e18521d55b75171dcc2d054a990d6d6bbaa7ab3be4fba64d51f5de9002412"
+    },
+    {
+      "key": "artwork/catalog/misc-006/full.jpg",
+      "size": 132188,
+      "sha256": "9f5a286382cd07c125bacac673e9a274d1c618d91561f720c369e4959faa3ddf"
+    },
+    {
+      "key": "artwork/catalog/misc-006/thumb.jpg",
+      "size": 100475,
+      "sha256": "1c8db23e2ed116bd497328d2939a088078e1fb9bc80465885310a12dfa419471"
+    },
+    {
+      "key": "artwork/catalog/misc-007/full.jpg",
+      "size": 55946,
+      "sha256": "3a44c4768e3ff0de52c893bfd7ce5645a9e7f8b14492419ee5c682be359533cd"
+    },
+    {
+      "key": "artwork/catalog/misc-007/thumb.jpg",
+      "size": 51347,
+      "sha256": "93348be6fbfc518e6f40cd8fc554542ff445e1737cdf09f09ca1a1b34415c9a7"
+    },
+    {
+      "key": "artwork/catalog/misc-008/full.jpg",
+      "size": 1313575,
+      "sha256": "ba8c86effd25426f56e14c248ada76aed05f4a92e80a47af0e834508ea8dd6c8"
+    },
+    {
+      "key": "artwork/catalog/misc-008/thumb.jpg",
+      "size": 160897,
+      "sha256": "eb80ab1d55a4117388f0db8c6fc47dfd0fbf26b430254389c992a268f2c91b9e"
+    },
+    {
+      "key": "artwork/catalog/misc-009/full.jpg",
+      "size": 1187749,
+      "sha256": "62638010487c8e6bde0c1308c3187974b9038e14b66dbec6724051f3c79d961b"
+    },
+    {
+      "key": "artwork/catalog/misc-009/thumb.jpg",
+      "size": 140762,
+      "sha256": "2c9e1125f0db18f3fe71a7ba9240cb00d1794d067a801ab6e9c8c67b0de4382c"
+    },
+    {
+      "key": "artwork/catalog/misc-010/full.jpg",
+      "size": 932096,
+      "sha256": "9dbce051a6467e9003e253c08b0f0c522e4b0ab19b9e91dfc191c7e3a1b27d26"
+    },
+    {
+      "key": "artwork/catalog/misc-010/thumb.jpg",
+      "size": 131579,
+      "sha256": "0375be44ff0dd46ece086627720aa2b145f3a148828da6a412699cf69ab5d1b8"
+    },
+    {
+      "key": "artwork/catalog/misc-011/full.jpg",
+      "size": 1130403,
+      "sha256": "b2085468634ef80df52bcf361a9957206b721efda9fc67919b3ab21ba70aeeb1"
+    },
+    {
+      "key": "artwork/catalog/misc-011/thumb.jpg",
+      "size": 115896,
+      "sha256": "1c26fbb31907edea17d89381cb24a71796133e46d06f426d0b9f0e2bf7f0b587"
+    },
+    {
+      "key": "artwork/catalog/mj-001/full.jpg",
+      "size": 513600,
+      "sha256": "4be025d4abc71a1647c11705b56d9f42ac44c9a9e22e75b9b5fc2f2841a2cf6b"
+    },
+    {
+      "key": "artwork/catalog/mj-001/thumb.jpg",
+      "size": 58227,
+      "sha256": "3d94dda83b763ef63202317fbc12bced89ca54bee859aa833ea4ef59e5dac285"
+    },
+    {
+      "key": "artwork/catalog/mj-002/full.jpg",
+      "size": 459028,
+      "sha256": "c7ac222749a02dae61f39eec11a717909db1511bd9b613b5af13927300aabb3b"
+    },
+    {
+      "key": "artwork/catalog/mj-002/thumb.jpg",
+      "size": 52579,
+      "sha256": "fe15047d5b5a4e2eafda3d4501aca82862d985002d8cab08b3b3b2da707d48b2"
+    },
+    {
+      "key": "artwork/catalog/mj-003/full.jpg",
+      "size": 515486,
+      "sha256": "323283d63c4e540a213c8cbf93e1c97608718b608eb45f7df2ae7983093b2600"
+    },
+    {
+      "key": "artwork/catalog/mj-003/thumb.jpg",
+      "size": 54281,
+      "sha256": "d9a3a09ecdcb523d6bbb509df523917baaa5ccc49f7f7bf0a1241c86e45eb9cb"
+    },
+    {
+      "key": "artwork/catalog/mj-004/full.jpg",
+      "size": 608609,
+      "sha256": "8524340cb08c648262f1d79dcaea65449fd93d45c3616b632251107d8b348855"
+    },
+    {
+      "key": "artwork/catalog/mj-004/thumb.jpg",
+      "size": 61581,
+      "sha256": "86752abab0c016b2a89c514900d932642e92475a83f709d70a58833d2a36e9e4"
+    },
+    {
+      "key": "artwork/catalog/mj-005/full.jpg",
+      "size": 469389,
+      "sha256": "86944ea890d5cb908ed2d2747b921908cf657be6d1599a7d39a6ab517dfd6e8a"
+    },
+    {
+      "key": "artwork/catalog/mj-005/thumb.jpg",
+      "size": 46616,
+      "sha256": "1bbaa8c8cfa4308ae73f2ccc79beead4249b1e7155b6b7d57b1b0222413e8cce"
+    },
+    {
+      "key": "artwork/catalog/mj-006/full.jpg",
+      "size": 609352,
+      "sha256": "63fb117d0e41b3229a144dd9d3275420013b63beea984c32d81349272f55ca52"
+    },
+    {
+      "key": "artwork/catalog/mj-006/thumb.jpg",
+      "size": 59835,
+      "sha256": "0586e5d66d2607c91e1f35d18c7a85308fae8badb561f633363b9371bd1c22b6"
+    },
+    {
+      "key": "artwork/catalog/mj-007/full.jpg",
+      "size": 504342,
+      "sha256": "112f0dcbe67b35e51e2839d4216080ccf3cbaf52ed37370f1bd49db1eb9e7d98"
+    },
+    {
+      "key": "artwork/catalog/mj-007/thumb.jpg",
+      "size": 58179,
+      "sha256": "ba571b30b5349e90d64cd8278a25b7424f32745a52d53d53fe9725be6903e587"
+    },
+    {
+      "key": "artwork/catalog/mj-008/full.jpg",
+      "size": 554079,
+      "sha256": "5b9cc1969f5b900df99c4fd8f61ae1cee3e60500a533e8de116e6109c3276b21"
+    },
+    {
+      "key": "artwork/catalog/mj-008/thumb.jpg",
+      "size": 58027,
+      "sha256": "fa758607c52d2c38e4e347b6c280f3b7b8e82c427aa1353e1c5f419878c20b11"
+    },
+    {
+      "key": "artwork/catalog/mj-009/full.jpg",
+      "size": 411958,
+      "sha256": "463d21a10fc8bf6d281b8690e84a5047c20174c592a04d4549c40c7960820f30"
+    },
+    {
+      "key": "artwork/catalog/mj-009/thumb.jpg",
+      "size": 46225,
+      "sha256": "5be419112c376813177811cfb4a0a25d4e4fc36ddab5202f35154698a4cb32a6"
+    },
+    {
+      "key": "artwork/catalog/mj-010/full.jpg",
+      "size": 461469,
+      "sha256": "fd844e0d22f2ac786dc907dee1b01319d10452c3776700780e8af315722d6032"
+    },
+    {
+      "key": "artwork/catalog/mj-010/thumb.jpg",
+      "size": 44581,
+      "sha256": "655a8906162c26f6b2c143adbdc352af620174ed1888c82cff20c4876c9f00d6"
+    },
+    {
+      "key": "artwork/catalog/mj-011/full.jpg",
+      "size": 612822,
+      "sha256": "fbdd3718b5e74394dcfd0cbba7282f1c946200db173868474540c079072bc213"
+    },
+    {
+      "key": "artwork/catalog/mj-011/thumb.jpg",
+      "size": 63320,
+      "sha256": "e92eeec70d492c257905158f3ccb07e201bfc872c30fd95a26d055e1615d9a41"
+    },
+    {
+      "key": "artwork/catalog/mj-012/full.jpg",
+      "size": 430335,
+      "sha256": "d8c83565a0f2bc0ea160c8a2ed1f2f2a5a5ac11579b9aefe1efab48b3a5135bc"
+    },
+    {
+      "key": "artwork/catalog/mj-012/thumb.jpg",
+      "size": 44893,
+      "sha256": "ccf1a62e885464883c075dfdf73ca4e1086f5d714a03db0e0e55cc13fee85986"
+    },
+    {
+      "key": "artwork/catalog/mj-013/full.jpg",
+      "size": 597246,
+      "sha256": "52134eacdf2ef0386d6d5a047504bd65d316185460b7d51eb0075b777b442901"
+    },
+    {
+      "key": "artwork/catalog/mj-013/thumb.jpg",
+      "size": 57897,
+      "sha256": "3bb693b52224f288976660fc50c178844b4d9c466f6ad498aae9832e7de6cd14"
+    },
+    {
+      "key": "artwork/catalog/mj-014/full.jpg",
+      "size": 492080,
+      "sha256": "1d6c8cc3ca8194d4b48e965e624ba15886eb6bfa0423af5ad5b735f879d53c3a"
+    },
+    {
+      "key": "artwork/catalog/mj-014/thumb.jpg",
+      "size": 51014,
+      "sha256": "60d835079a872c72387c54af1892069a07eea0f0ad040639534a027a0789e817"
+    },
+    {
+      "key": "artwork/catalog/mj-015/full.jpg",
+      "size": 617998,
+      "sha256": "51a0a163a7eb63a0c7f99280dd2d76016e09bb21f5a3732e1e0a384af09cec1d"
+    },
+    {
+      "key": "artwork/catalog/mj-015/thumb.jpg",
+      "size": 68215,
+      "sha256": "80958caac756d19921ddc34d8874ac1e7237b5dbfde1eefb72c0c41fed20588d"
+    },
+    {
+      "key": "artwork/catalog/mj-016/full.jpg",
+      "size": 493126,
+      "sha256": "82caf65e0bc6d08810bd812f288aa4df8344bc782e8ad2f481a7029cbef7c2d6"
+    },
+    {
+      "key": "artwork/catalog/mj-016/thumb.jpg",
+      "size": 50694,
+      "sha256": "d755eb4e8d4b362d18ce73777e3e88e4d4447b7e6a267fd93b9d7b48082367a1"
+    },
+    {
+      "key": "artwork/catalog/mj-017/full.jpg",
+      "size": 455561,
+      "sha256": "7317c2f01e5e475bfc6d9d126c159cd7f6c03dcb74366e7e47b4cc1896829dad"
+    },
+    {
+      "key": "artwork/catalog/mj-017/thumb.jpg",
+      "size": 47492,
+      "sha256": "d4e21e9fbac10fa48bdcf587335abb7ae24d5bb0473bdaf35d8f5e79ddb73040"
+    },
+    {
+      "key": "artwork/catalog/mj-018/full.jpg",
+      "size": 549496,
+      "sha256": "987ef5091cc4974ade2b01b7f33d40d2442406bbb2908e73878692cf0051ce23"
+    },
+    {
+      "key": "artwork/catalog/mj-018/thumb.jpg",
+      "size": 59636,
+      "sha256": "2f8220910df59a25a2ae0cd1a18ca513bfd54fbe015af2fa44b226b8875c210c"
+    },
+    {
+      "key": "artwork/catalog/mj-019/full.jpg",
+      "size": 546037,
+      "sha256": "655f72744664662060666fc6132bbc9df037f3807d934bb0cd5dd14dac8b6d7a"
+    },
+    {
+      "key": "artwork/catalog/mj-019/thumb.jpg",
+      "size": 56803,
+      "sha256": "e910b850009a8633359a4edd52ee96db92164523bd99763c62d0659ad8e6b2f7"
+    },
+    {
+      "key": "artwork/catalog/mj-020/full.jpg",
+      "size": 616881,
+      "sha256": "cb6eb34625a157a1366c65dd0f5bcf0694ca25574609e82cb0b29382ac8fe8ff"
+    },
+    {
+      "key": "artwork/catalog/mj-020/thumb.jpg",
+      "size": 70177,
+      "sha256": "7a70169827b26051a963bbd5d4c2b835b3678c69affc1e38d0ad9b7c454ee9c1"
+    },
+    {
+      "key": "artwork/catalog/mj-021/full.jpg",
+      "size": 466276,
+      "sha256": "143fda848390fe3991d3d6ff993d49b24796ac5c71b02af9e0b2171532bb0dbb"
+    },
+    {
+      "key": "artwork/catalog/mj-021/thumb.jpg",
+      "size": 46001,
+      "sha256": "aa4ba523a0a3d38dcc3c1f8ced64a94aab07ef7e45b87cfe753dd111a195e310"
+    },
+    {
+      "key": "artwork/catalog/mj-022/full.jpg",
+      "size": 551320,
+      "sha256": "1b4568a1e276bfa4bee42731d27f4cca1e8d9b4b9efe09a2f403354728484365"
+    },
+    {
+      "key": "artwork/catalog/mj-022/thumb.jpg",
+      "size": 62314,
+      "sha256": "ec0e42be449625ec2e68eb5b7ab060af1b246028cba735a99dbf717f9dabf2f1"
+    },
+    {
+      "key": "artwork/catalog/mj-023/full.jpg",
+      "size": 593640,
+      "sha256": "4acf13cbd3f1b786d53f4593b6094c30ea4174db5ea5a73a09764a6d2eede7c0"
+    },
+    {
+      "key": "artwork/catalog/mj-023/thumb.jpg",
+      "size": 64215,
+      "sha256": "b0a2f4e17c3cf75b9a7280da9092ebed9710bbc34fa7441c1b5f4a953e49db48"
+    },
+    {
+      "key": "artwork/catalog/mj-024/full.jpg",
+      "size": 560155,
+      "sha256": "5a9ade2e4d20859e9f2b5d0534e07dca10257602d5cd178e295d161b37e1b930"
+    },
+    {
+      "key": "artwork/catalog/mj-024/thumb.jpg",
+      "size": 54902,
+      "sha256": "2c4c43b052f08e52d1819b082afcbcd4ef5be444b9bb6c58062d6178bea65a10"
+    },
+    {
+      "key": "artwork/catalog/mj-025/full.jpg",
+      "size": 543735,
+      "sha256": "439f2e54163e5f21078ceedb17efd5d9fc41410a142561cb81b25848a0e69f01"
+    },
+    {
+      "key": "artwork/catalog/mj-025/thumb.jpg",
+      "size": 53458,
+      "sha256": "5688ea24e8652cfec45770028fbdcee737effde15a2919dc155d49feea8a3ea3"
+    },
+    {
+      "key": "artwork/catalog/mj-026/full.jpg",
+      "size": 502656,
+      "sha256": "996f05acd900eccb0cbf9c35322ebe9cf1870038924764e6161e5e1e2c256467"
+    },
+    {
+      "key": "artwork/catalog/mj-026/thumb.jpg",
+      "size": 45916,
+      "sha256": "267f57a8138cff45c6b99254152e556f5132ffdd89c34a23281063d3b044e91c"
+    },
+    {
+      "key": "artwork/catalog/mj-027/full.jpg",
+      "size": 512770,
+      "sha256": "3e1d1e7ca6f24982b317a2ae48b518b8c38f5c3015196408476d946b6526abc2"
+    },
+    {
+      "key": "artwork/catalog/mj-027/thumb.jpg",
+      "size": 50775,
+      "sha256": "b64b0fe3da5e6f17464859a0dc7c382c432ba92aefc9b5eae2f6a0915bfc3867"
+    },
+    {
+      "key": "artwork/catalog/mj-028/full.jpg",
+      "size": 490487,
+      "sha256": "f1b2d2c892067e02dba8a57076b81b8412b28a758823943cd7f5ea2fe027fc0d"
+    },
+    {
+      "key": "artwork/catalog/mj-028/thumb.jpg",
+      "size": 48256,
+      "sha256": "593740f14bae48ab74597da55910c7bf4e21fb92b64b2fa99bfce9ae806814f4"
+    },
+    {
+      "key": "artwork/catalog/mj-029/full.jpg",
+      "size": 608924,
+      "sha256": "d7006be4e376444a12f27e92f16c5a3ab7dd356217a022887352cce58e990a6e"
+    },
+    {
+      "key": "artwork/catalog/mj-029/thumb.jpg",
+      "size": 64623,
+      "sha256": "5019a4ae39b31315800b298ee7174429284503b4184f968194ba31eb2a7acc0c"
+    },
+    {
+      "key": "artwork/catalog/mj-030/full.jpg",
+      "size": 492049,
+      "sha256": "9ebe0ab8322202056acf086bfe34fa6ef19cba996553b5de087f1cb5aeb1a209"
+    },
+    {
+      "key": "artwork/catalog/mj-030/thumb.jpg",
+      "size": 54127,
+      "sha256": "c41a728f98f70dc132b5636b16094e73e4cea6e4a7eabf2a8c0030f9570b6483"
+    },
+    {
+      "key": "artwork/catalog/mj-031/full.jpg",
+      "size": 561999,
+      "sha256": "831fa9e2c6d314d815050c4713b9ed923a42ff97a822906f5c45f27c2c9c295f"
+    },
+    {
+      "key": "artwork/catalog/mj-031/thumb.jpg",
+      "size": 58915,
+      "sha256": "3031e539038de5cf1c4fa0009d3a9c0e45ceed20e88e8da5b126960c7a0096ad"
+    },
+    {
+      "key": "artwork/catalog/mj-032/full.jpg",
+      "size": 458497,
+      "sha256": "e7cbdbd9c03844d2be2b94d7c228555d1e7aabeb2f927ef6f5a00f923eaf1e25"
+    },
+    {
+      "key": "artwork/catalog/mj-032/thumb.jpg",
+      "size": 48237,
+      "sha256": "b90899c7d5b7b8e09db6332da065fe80c7cd11c1fce8e034abc219b439d47f58"
+    },
+    {
+      "key": "artwork/catalog/mj-033/full.jpg",
+      "size": 528843,
+      "sha256": "933ea12466c8d7de300816917726994d0d920be12ebf49e2715ca6e1b2026a3b"
+    },
+    {
+      "key": "artwork/catalog/mj-033/thumb.jpg",
+      "size": 53060,
+      "sha256": "f3552eb0362a74a29c5c38779c67c76cf81e4693780f573c0e2367eff985c0d2"
+    },
+    {
+      "key": "artwork/catalog/mj-034/full.jpg",
+      "size": 516183,
+      "sha256": "eca891b5847eed183a794fb5ccf5519ef2badb53e77106a09c4f38c6e2407609"
+    },
+    {
+      "key": "artwork/catalog/mj-034/thumb.jpg",
+      "size": 53466,
+      "sha256": "3180819e09efa3473c4bd716abddd2525247d84867654466bbed303ea7e35478"
+    },
+    {
+      "key": "artwork/catalog/mj-035/full.jpg",
+      "size": 485976,
+      "sha256": "27e5808e9e223276f2f9e96aef30960ba453b6784bc6f83f56de1ddc00f5c8a5"
+    },
+    {
+      "key": "artwork/catalog/mj-035/thumb.jpg",
+      "size": 55878,
+      "sha256": "87aee110b3d248e7990937dee3912da09762ad063cd4cf23eb90f83ec109fd0b"
+    },
+    {
+      "key": "artwork/catalog/mj-036/full.jpg",
+      "size": 568178,
+      "sha256": "476226023cb85f5094604dd2c993a76a77bc504f4ea118487a0081635443c197"
+    },
+    {
+      "key": "artwork/catalog/mj-036/thumb.jpg",
+      "size": 55304,
+      "sha256": "aa81da30af49cc088d2de76f7dc7c1ee09cf133721096d97b08cefe8ec09428f"
+    },
+    {
+      "key": "artwork/catalog/mj-037/full.jpg",
+      "size": 522561,
+      "sha256": "241147153503c5569fc20cfe6793e26682cfd55fb3f110ea02700f66f5d69386"
+    },
+    {
+      "key": "artwork/catalog/mj-037/thumb.jpg",
+      "size": 51903,
+      "sha256": "a29a9a39c570e4dba6d87070108b15bd2a6111b72c9a0dd4d33d1a18f3754a47"
+    },
+    {
+      "key": "artwork/catalog/mj-038/full.jpg",
+      "size": 508934,
+      "sha256": "e55c14f53c9b1cef85d13e6be1072655d021553fa1c82323bb07f28345e66438"
+    },
+    {
+      "key": "artwork/catalog/mj-038/thumb.jpg",
+      "size": 60183,
+      "sha256": "cba586eccdce6f0c3cc8660b37d769ebafc0aa0b530d8ebdb5dd2bdcfceabc7f"
+    },
+    {
+      "key": "artwork/catalog/mj-039/full.jpg",
+      "size": 516635,
+      "sha256": "33b77e14936693f3f7c32177538b3d93ebdd08f8bb85c8acaea78b1f53df9e05"
+    },
+    {
+      "key": "artwork/catalog/mj-039/thumb.jpg",
+      "size": 56105,
+      "sha256": "dcb96c16580c3d3c009bd97f9b26d03af3d6b2829eb2b2427fec186c72824236"
+    },
+    {
+      "key": "artwork/catalog/mj-040/full.jpg",
+      "size": 646615,
+      "sha256": "c9ef42f24c320a77a05fd63d3c43ae1930c81585137a179a5bc8ea0f57489a19"
+    },
+    {
+      "key": "artwork/catalog/mj-040/thumb.jpg",
+      "size": 64545,
+      "sha256": "b3c02bdec919044ee0d8193d1edece6ed0c2fd192f245385753bcf121e05dd62"
+    },
+    {
+      "key": "artwork/catalog/mj-041/full.jpg",
+      "size": 561231,
+      "sha256": "b489564afe03c78a0089a1fdc5c018582253d3354fab8ab0ce23e100430fa95f"
+    },
+    {
+      "key": "artwork/catalog/mj-041/thumb.jpg",
+      "size": 67884,
+      "sha256": "d5ebab321872530669f4a2d2f871ef01b966b60d6eacab3a0ee521ea6ead5b76"
+    },
+    {
+      "key": "artwork/catalog/mj-042/full.jpg",
+      "size": 431709,
+      "sha256": "b900af40dc79483c91bdd9cc40344d7be6e71cfa4613e9957a80b1a85efd72cd"
+    },
+    {
+      "key": "artwork/catalog/mj-042/thumb.jpg",
+      "size": 46097,
+      "sha256": "532504eb87c0cc9c3197b72dc0e8c27131b7927952ec932f297054a49b1b0516"
+    },
+    {
+      "key": "artwork/catalog/mj-043/full.jpg",
+      "size": 638107,
+      "sha256": "e685731f1141217fcb610e308a3b32412c925d7c3cba7c7d93d8b441463fa65e"
+    },
+    {
+      "key": "artwork/catalog/mj-043/thumb.jpg",
+      "size": 75283,
+      "sha256": "34a77048de39e5878171079427f0402217303ae8b68cb195ab1eef0d736785a3"
+    },
+    {
+      "key": "artwork/catalog/mj-044/full.jpg",
+      "size": 533065,
+      "sha256": "0756fe2347b1667a034daadf61547e6dacfd39ae8c560c531df9d0648040842d"
+    },
+    {
+      "key": "artwork/catalog/mj-044/thumb.jpg",
+      "size": 56342,
+      "sha256": "e4012008e582cf777f85a5395d979afff4bd3fc2c51fa5dab4c5931720f6c104"
+    },
+    {
+      "key": "artwork/catalog/mj-045/full.jpg",
+      "size": 477651,
+      "sha256": "00fb44aed647e82e6de929655ebed12eb2933b07e469e2674758c1572bfa2ec7"
+    },
+    {
+      "key": "artwork/catalog/mj-045/thumb.jpg",
+      "size": 50698,
+      "sha256": "3c30d6a796fcdae38fb52a5024672c0541c1cf3a4ba53a3eed8c3d3e8bb391ff"
+    },
+    {
+      "key": "artwork/catalog/mj-046/full.jpg",
+      "size": 610407,
+      "sha256": "0389181d34a44bf5a270690ea8031789abdd7f5ec1b63bbd6c0736878f57edb9"
+    },
+    {
+      "key": "artwork/catalog/mj-046/thumb.jpg",
+      "size": 71648,
+      "sha256": "3415a663154cf4515319287bf19138e0309f3e2f33fb3842278963b217bab5d9"
+    },
+    {
+      "key": "artwork/catalog/mj-047/full.jpg",
+      "size": 413476,
+      "sha256": "234a8b58739583e83c44c235222f447314b3507f3868e9b6279a27dc7a5c477a"
+    },
+    {
+      "key": "artwork/catalog/mj-047/thumb.jpg",
+      "size": 46253,
+      "sha256": "9269115cd533a41cacd124c1267fa7e73207c40c8253a589827e514354e9664f"
+    },
+    {
+      "key": "artwork/catalog/mj-048/full.jpg",
+      "size": 484143,
+      "sha256": "6620213e36301a88745fffe601f12972937cabdb2b9963be63d8e6e61facd58f"
+    },
+    {
+      "key": "artwork/catalog/mj-048/thumb.jpg",
+      "size": 50786,
+      "sha256": "b40ac3bc29a00d90a0842f7190bb5af9ccf71a1cd9eab3f8441ad2f2cb4efd67"
+    },
+    {
+      "key": "artwork/catalog/mj-049/full.jpg",
+      "size": 609877,
+      "sha256": "4b1ef3264e2152db18df69570958517dc5c7897823b66ac6a85d0cbd80002d30"
+    },
+    {
+      "key": "artwork/catalog/mj-049/thumb.jpg",
+      "size": 66863,
+      "sha256": "68c1248f24b44a9e14ba198eb1f21290665ddb84b959f368fbe6cd9e1f57b5b5"
+    },
+    {
+      "key": "artwork/catalog/mj-050/full.jpg",
+      "size": 453009,
+      "sha256": "07435524143660a58997dcf54fc8867cb5443192b9a958776b0db1dbf3c70be3"
+    },
+    {
+      "key": "artwork/catalog/mj-050/thumb.jpg",
+      "size": 50320,
+      "sha256": "bf8f9c63c6f0b40188e16b5f72021de875507527c8a76d14d131c483621ce2e8"
+    },
+    {
+      "key": "artwork/catalog/mj-051/full.jpg",
+      "size": 630625,
+      "sha256": "4e3fb882d8267bdf7eb79c04e650f707cc57d9e51d5043bb223ba4d2bff8379c"
+    },
+    {
+      "key": "artwork/catalog/mj-051/thumb.jpg",
+      "size": 68777,
+      "sha256": "d7d0f1d927ecc7d681a746cefa4140f0dd61d8ec701e5f6209df0fea0a099c51"
+    },
+    {
+      "key": "artwork/catalog/mj-052/full.jpg",
+      "size": 680604,
+      "sha256": "a84b684f5d60d180e0d8421aeb0279bc006dd28f4b451b5e9895f0743aa235e5"
+    },
+    {
+      "key": "artwork/catalog/mj-052/thumb.jpg",
+      "size": 77357,
+      "sha256": "c9fc847575153e4a042e5c9c7267d819e0e8b954cc3a57a2171f6db92ce4f099"
+    },
+    {
+      "key": "artwork/catalog/mj-053/full.jpg",
+      "size": 699777,
+      "sha256": "198fe4e13e99edaad47507b4868c608c0c17f3d0ce8508f25119469198e6788f"
+    },
+    {
+      "key": "artwork/catalog/mj-053/thumb.jpg",
+      "size": 77987,
+      "sha256": "5262173f313b179ae2f4eeefd23c5b5c6b96f7bafd8b4501252a49e77400bf14"
+    },
+    {
+      "key": "artwork/catalog/mj-054/full.jpg",
+      "size": 727852,
+      "sha256": "899dd5b5c06ca3d9cecde1bcfd3191f4968763f2d2fba2e884d107c994668cfd"
+    },
+    {
+      "key": "artwork/catalog/mj-054/thumb.jpg",
+      "size": 85244,
+      "sha256": "aaa97a76fc7812b15fb9e1123d9879a55a8dac1399cf66b3213688a58fc3d79a"
+    },
+    {
+      "key": "artwork/catalog/mj-055/full.jpg",
+      "size": 658473,
+      "sha256": "1619939907f7f3cdd69c2156956e450b0276d708730af0c979cb1c4404370ee3"
+    },
+    {
+      "key": "artwork/catalog/mj-055/thumb.jpg",
+      "size": 77159,
+      "sha256": "aa20393c68e162cfcfd1675c7e9d7d136d1d2c2a0b302650f1f8e3aad829c271"
+    },
+    {
+      "key": "artwork/catalog/mj-056/full.jpg",
+      "size": 746485,
+      "sha256": "0f0d6fc47551ba61fadfcbc112c5c0c4201a9a4d4a5f880add471342ea48b48a"
+    },
+    {
+      "key": "artwork/catalog/mj-056/thumb.jpg",
+      "size": 83491,
+      "sha256": "5944b9333ac3d1a8b079ee29afe6a0b066679b5bab9ad0fc16c81f2e1ddd6022"
+    },
+    {
+      "key": "artwork/catalog/mj-057/full.jpg",
+      "size": 718471,
+      "sha256": "f4e8e2a2ca88ab5193a92608722efb508bac29814edea83826f735049f89f02e"
+    },
+    {
+      "key": "artwork/catalog/mj-057/thumb.jpg",
+      "size": 86307,
+      "sha256": "c1bcba94e3d2e403aaaa5d49431eb0c8387261aaa07ea5971ba9f6a71ee9a2ca"
+    },
+    {
+      "key": "artwork/catalog/mj-058/full.jpg",
+      "size": 564279,
+      "sha256": "1c10c5b7d30f93dbdabd698050410a103e41982b7ea25b144f653d83eea2b2bc"
+    },
+    {
+      "key": "artwork/catalog/mj-058/thumb.jpg",
+      "size": 46251,
+      "sha256": "a5f9791409c9682e89a9801cd8b334c4fad3a048988504e1184270ba3a1f8890"
+    },
+    {
+      "key": "artwork/catalog/mj-059/full.jpg",
+      "size": 705039,
+      "sha256": "6654f5a14d917013ae347cb9ccaefa302302c714b825490500e6fffcba086e8a"
+    },
+    {
+      "key": "artwork/catalog/mj-059/thumb.jpg",
+      "size": 77368,
+      "sha256": "4da08156f1175ebe9cbd646fe926ddc91e0a25672ff3ea68a8fc7a4c5f0433da"
+    },
+    {
+      "key": "artwork/catalog/mj-060/full.jpg",
+      "size": 551088,
+      "sha256": "043388513dd79cd72e5ccb8702b06a9a951b3a67c54addc06454d7acebcb9386"
+    },
+    {
+      "key": "artwork/catalog/mj-060/thumb.jpg",
+      "size": 48231,
+      "sha256": "257d1fe021f0543fadd7d3a26fff2628fc197221c335df13f8c86bad84681153"
+    },
+    {
+      "key": "artwork/catalog/mj-061/full.jpg",
+      "size": 566465,
+      "sha256": "69d5c98e786e5e2ecc788f27784a89682a25440876b3065f9de8b4b4f355dd3a"
+    },
+    {
+      "key": "artwork/catalog/mj-061/thumb.jpg",
+      "size": 61234,
+      "sha256": "fd998c299e5e4829c8f35fe5d01651dac6d60e79f95c5c4858e2a37b57c38557"
+    },
+    {
+      "key": "artwork/catalog/mj-062/full.jpg",
+      "size": 701341,
+      "sha256": "00b7aec2e1db236f89b1ce8767fafd49e3880e308b6e74b14f5e900deaf74c44"
+    },
+    {
+      "key": "artwork/catalog/mj-062/thumb.jpg",
+      "size": 70281,
+      "sha256": "7201a1729418e4f2d4563625413b26d3d0de0bcb27d4191a3261d6c04dbbe46d"
+    },
+    {
+      "key": "artwork/catalog/mj-063/full.jpg",
+      "size": 734667,
+      "sha256": "f837e2788083aa3bdd1936e698cd0e2d94223978dcbc12b779376f2ada2fbe0d"
+    },
+    {
+      "key": "artwork/catalog/mj-063/thumb.jpg",
+      "size": 84020,
+      "sha256": "0e4c2e279a3d3c9f08c9d37e98ea692645857549002fd835d585b729d38c3cca"
+    },
+    {
+      "key": "artwork/catalog/mj-064/full.jpg",
+      "size": 674593,
+      "sha256": "657f14fd8aceed5cfb6a94482526f3075769b223606851d7553e28ccbd129a23"
+    },
+    {
+      "key": "artwork/catalog/mj-064/thumb.jpg",
+      "size": 79501,
+      "sha256": "7afcfefdccf5a301ade32d5a00bc8eb481f1cd0918367e3c6821cdb99781be3c"
+    },
+    {
+      "key": "artwork/catalog/mj-065/full.jpg",
+      "size": 809277,
+      "sha256": "468450200079e9b3735299a1948622427824d0a4da6c142ea5dc2a12cafaecfe"
+    },
+    {
+      "key": "artwork/catalog/mj-065/thumb.jpg",
+      "size": 91022,
+      "sha256": "4166967d44446333276a42bdfe8d0152265b00422203242215232cf7788270d7"
+    },
+    {
+      "key": "artwork/catalog/mj-066/full.jpg",
+      "size": 700998,
+      "sha256": "f31139dfeaba092bac4c4425d4dffff9374923af1b3039909589141f1752ceae"
+    },
+    {
+      "key": "artwork/catalog/mj-066/thumb.jpg",
+      "size": 84983,
+      "sha256": "37d6b4c822677cdb8383d9c265c7f88ff075fab9c6fe2e7ba4c23429485c21e1"
+    },
+    {
+      "key": "artwork/catalog/mj-067/full.jpg",
+      "size": 763096,
+      "sha256": "9718f268427e8a7bb5addf0b97e02aec6a5c92624a8a8b81fd7b6df23bc4e743"
+    },
+    {
+      "key": "artwork/catalog/mj-067/thumb.jpg",
+      "size": 80091,
+      "sha256": "66098606a3ab969723d3edefcc918e8a302c77d13c85b9c88c76709dadbbeffb"
+    },
+    {
+      "key": "artwork/catalog/mj-068/full.jpg",
+      "size": 781900,
+      "sha256": "8a0939f8d525097ed9adddca48e74d70aa909fde8d4d410dbcd0ec8c739ae059"
+    },
+    {
+      "key": "artwork/catalog/mj-068/thumb.jpg",
+      "size": 95045,
+      "sha256": "972943d4387bb5cf8a1ebf5815eded09204036483839e94ad45ee07794285fe8"
+    },
+    {
+      "key": "artwork/catalog/mj-069/full.jpg",
+      "size": 660175,
+      "sha256": "3ae9359ae893b7d0a65c26fdeb33a681b7617f2c7dd6c14e66956ce19a9e1f2e"
+    },
+    {
+      "key": "artwork/catalog/mj-069/thumb.jpg",
+      "size": 78582,
+      "sha256": "141e706dc240e76f5044eb792f00bfb3da16485a039bf6d568bc87ae6693971d"
+    },
+    {
+      "key": "artwork/catalog/mj-070/full.jpg",
+      "size": 605811,
+      "sha256": "95f60891ac5c49a4a41ac1b0b3c851432e317a597e5fe878742156103811eebe"
+    },
+    {
+      "key": "artwork/catalog/mj-070/thumb.jpg",
+      "size": 72152,
+      "sha256": "c57b776b7f16c192b725422116c3cd745e679763ed9951f6893c0efbebacc249"
+    },
+    {
+      "key": "artwork/catalog/mj-071/full.jpg",
+      "size": 316009,
+      "sha256": "5e190c2e3c7958d85e4e53b5f7da642afeefdce7d27a6382d754f7bb163ab899"
+    },
+    {
+      "key": "artwork/catalog/mj-071/thumb.jpg",
+      "size": 29111,
+      "sha256": "970f6a9ea8ef796ec5bfeb1396443c4ef12084368f6c2bf16d94fae5fe338fae"
+    },
+    {
+      "key": "artwork/catalog/mj-072/full.jpg",
+      "size": 623283,
+      "sha256": "dd372a04f185bbd1e6fd51359c63756316d577e472ba429f4d46a30fea0746da"
+    },
+    {
+      "key": "artwork/catalog/mj-072/thumb.jpg",
+      "size": 62347,
+      "sha256": "65ae4033d1dcdfe1a2555b6ee7093eeb9542bea8f3c86d167755a0a1fdca2a9a"
+    },
+    {
+      "key": "artwork/catalog/mj-073/full.jpg",
+      "size": 553077,
+      "sha256": "5dee768cd905213408b17bbfdf35c8acb405921e6ee89fd03eddbebf8e72fb4a"
+    },
+    {
+      "key": "artwork/catalog/mj-073/thumb.jpg",
+      "size": 59407,
+      "sha256": "64061818c5dc76394dda0cca6a8db904dc20f68b34e5808e692f54541c4b725e"
+    },
+    {
+      "key": "artwork/catalog/mj-074/full.jpg",
+      "size": 606500,
+      "sha256": "c90c01379af6a62904dc2cec173278a41e5847959ee103f264c1a57d8b4f1651"
+    },
+    {
+      "key": "artwork/catalog/mj-074/thumb.jpg",
+      "size": 70819,
+      "sha256": "fa1cbcc4b041657a7e751f20671e3d002c42e07b7731f71628958328e06663d9"
+    },
+    {
+      "key": "artwork/catalog/mj-075/full.jpg",
+      "size": 700757,
+      "sha256": "934ab4b2f313e0f3976b2e6c708b02def85177799105dc1e1c022354c81888ce"
+    },
+    {
+      "key": "artwork/catalog/mj-075/thumb.jpg",
+      "size": 67912,
+      "sha256": "3378277f300b6c0253fa2e711f4eafb53cbf52efad46b33db26f09a5c1c5a74a"
+    },
+    {
+      "key": "artworks.json",
+      "size": 113368,
+      "sha256": "8cfdf39f56bd0541b5f20b9e10c66e9bd3fccdda51c1e8936983781d2e12cc69"
+    }
+  ]
+}

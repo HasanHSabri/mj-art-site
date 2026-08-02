@@ -26,6 +26,7 @@ records. This is the **authoritative source of truth** for the MJ art catalogue.
 | `catalog.csv`              | Review-friendly flat summary                         |
 | `approvals.json`           | Authoritative approved/rejected mapping decisions    |
 | `orientation-report.json`  | Deterministic orientation analysis for 6 photos      |
+| `production-release-manifest.json` | Tracked release manifest pinning the approved preview state (Stop 2 promotion): 173 expected objects `{key,size,sha256}`, 86 records, artworks.json hash. No local paths/etags/secrets. |
 | `README.md`                | This document                                        |
 
 ## Schema (single schema for all 86 records)

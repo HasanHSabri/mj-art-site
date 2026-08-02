@@ -588,6 +588,255 @@ function main() {
     }
   }
 
+  // 8) Production catalogue promotion workflow + support scripts.
+  //    This workflow is the ONLY place that may write the canonical catalogue
+  //    to the PRODUCTION bucket. It must be workflow_dispatch only, hard-pin the
+  //    source (preview) and destination (production) literals, require the exact
+  //    confirmation boolean + phrase, create a fresh verified production backup
+  //    (read token) before any write token is exposed, gate the write on the
+  //    execute input, and contain no delete commands or admin secrets.
+  const promoteWfPath = '.github/workflows/catalog-promote-production.yml';
+  const promoteWf = readText(promoteWfPath);
+  if (promoteWf === null) {
+    fail(promoteWfPath + ' is missing');
+  } else {
+    const promoteTriggers = extractOnTriggers(promoteWf);
+    if (promoteTriggers === null) {
+      fail(promoteWfPath + ' has no top-level on: trigger block');
+    } else {
+      const forbidden = ['push', 'pull_request', 'schedule', 'repository_dispatch', 'workflow_run', 'workflow_call'];
+      const presentForbidden = promoteTriggers.filter((t) => forbidden.includes(t));
+      if (presentForbidden.length) {
+        fail(promoteWfPath + ' must be workflow_dispatch only; found: ' + promoteTriggers.join(', '));
+      }
+      if (!(promoteTriggers.length === 1 && promoteTriggers[0] === 'workflow_dispatch')) {
+        fail(promoteWfPath + ' must declare only workflow_dispatch; found: ' + promoteTriggers.join(', '));
+      }
+    }
+
+    if (!hasWorkflowLevelContentsRead(promoteWf)) {
+      fail(promoteWfPath + ' must declare workflow-level permissions with contents: read');
+    }
+    if (!/set -euo pipefail/.test(promoteWf)) {
+      fail(promoteWfPath + ' must declare a prerequisite shell gate using "set -euo pipefail"');
+    }
+    // No secrets.* in any step if: condition.
+    const promoteWfLines = promoteWf.split(/\r?\n/);
+    for (let i = 0; i < promoteWfLines.length; i++) {
+      if (/^\s*if:/.test(promoteWfLines[i]) && /secrets\./i.test(promoteWfLines[i])) {
+        fail(promoteWfPath + ' must not reference secrets.* in a step if: condition (line ' + (i + 1) + ')');
+      }
+    }
+
+    // Required dispatch inputs (confirmation boolean + phrase + manifest hash +
+    // production drift count + execute flag).
+    for (const inputName of [
+      'confirm_promote_to_production',
+      'confirmation_phrase',
+      'release_manifest_sha256',
+      'expected_production_object_count',
+      'execute_promotion'
+    ]) {
+      if (!new RegExp('^\\s+' + inputName + ':', 'm').test(promoteWf)) {
+        fail(promoteWfPath + ' must declare input ' + inputName);
+      }
+    }
+
+    // The exact strong confirmation phrase must appear and be gated on.
+    if (!/I-CONFIRM-PRODUCTION-CATALOGUE-PROMOTION/.test(promoteWf)) {
+      fail(promoteWfPath + ' must reference the exact promotion phrase I-CONFIRM-PRODUCTION-CATALOGUE-PROMOTION');
+    }
+    if (!/confirm_promote_to_production/.test(promoteWf)) {
+      fail(promoteWfPath + ' must reference the confirm_promote_to_production confirmation input');
+    }
+    if (!/inputs\.execute_promotion/.test(promoteWf)) {
+      fail(promoteWfPath + ' must gate the execute step on inputs.execute_promotion');
+    }
+
+    // Source/destination literals are fixed and non-invertible. Both must appear;
+    // preview is the read-only source, production the write destination.
+    if (!/mj-art-images-preview/.test(promoteWf)) {
+      fail(promoteWfPath + ' must reference the preview source bucket literal mj-art-images-preview');
+    }
+    if (!/mj-art-images(?!-preview)/.test(promoteWf)) {
+      fail(promoteWfPath + ' must reference the production destination bucket literal mj-art-images');
+    }
+    if (!/SOURCE_BUCKET:\s*mj-art-images-preview/.test(promoteWf)) {
+      fail(promoteWfPath + ' must define SOURCE_BUCKET: mj-art-images-preview');
+    }
+    if (!/DESTINATION_BUCKET:\s*mj-art-images(?!-preview)/.test(promoteWf)) {
+      fail(promoteWfPath + ' must define DESTINATION_BUCKET: mj-art-images (production)');
+    }
+
+    // Read token is used for the backup; the write token is exposed ONLY on the
+    // promotion-execute step (never the backup step). Admin secrets are forbidden.
+    if (!promoteWf.includes('${{ secrets.CLOUDFLARE_R2_READ_TOKEN }}')) {
+      fail(promoteWfPath + ' must reference the read token for the backup step');
+    }
+    if (!promoteWf.includes('${{ secrets.CLOUDFLARE_API_TOKEN }}')) {
+      fail(promoteWfPath + ' must reference the write token for the execute step');
+    }
+    for (const ref of ['ADMIN_PASSWORD', 'ADMIN_SESSION_SECRET']) {
+      if (promoteWf.includes(ref)) {
+        fail(promoteWfPath + ' must not reference admin secret ' + ref);
+      }
+    }
+
+    // No delete commands anywhere (legacy production objects are never deleted).
+    if (/r2\s+object\s+delete/i.test(promoteWf)) {
+      fail(promoteWfPath + ' must not contain any r2 object delete command');
+    }
+
+    // No raw inputs.* or secrets.* interpolated inside any step run: script.
+    const promoteInputInRun = findInputsInRunBlocks(promoteWf);
+    for (const hit of promoteInputInRun) {
+      fail(promoteWfPath + ' must not interpolate ${{ inputs.* }} in a run script (line ' + hit.line + ')');
+    }
+    const promoteSecretInRun = findSecretsInRunBlocks(promoteWf);
+    for (const hit of promoteSecretInRun) {
+      fail(promoteWfPath + ' must not interpolate ${{ secrets.* }} in a run script (line ' + hit.line + ')');
+    }
+
+    // Third-party actions pinned to full 40-char commit SHAs.
+    const promoteUsesLines = promoteWf.split(/\r?\n/).filter((l) => /^\s*uses:\s*[^{]*\S/.test(l));
+    for (const line of promoteUsesLines) {
+      const m = line.match(/uses:\s*([^#\s]+)\s*(?:#.*)?$/);
+      if (!m) continue;
+      const ref = m[1];
+      const actionRef = ref.split('@')[1] || '';
+      if (!/^[0-9a-f]{40}$/.test(actionRef)) {
+        fail(promoteWfPath + ' must pin actions to 40-char SHAs, found: ' + ref.trim());
+      }
+    }
+
+    // Concurrency + timeout must be declared (production promotions must not be
+    // cancelled mid-flight, and must have a bounded runtime).
+    if (!/concurrency:/.test(promoteWf)) {
+      fail(promoteWfPath + ' must declare a concurrency group');
+    }
+    if (!/cancel-in-progress:\s*false/.test(promoteWf)) {
+      fail(promoteWfPath + ' must not allow cancel-in-progress on a production promotion');
+    }
+    if (!/timeout-minutes:/.test(promoteWf)) {
+      fail(promoteWfPath + ' must declare a timeout-minutes');
+    }
+  }
+
+  // 8b) Promotion client script invariants: fixed source/dest literals,
+  //     dry-run default, exact confirmation phrase, no delete path.
+  const promoteScriptPath = 'scripts/promote-catalog-production.mjs';
+  const promoteScript = readText(promoteScriptPath);
+  if (promoteScript === null) {
+    fail(promoteScriptPath + ' is missing');
+  } else {
+    if (!/\bSOURCE_BUCKET\b/.test(promoteScript)) {
+      fail(promoteScriptPath + ' must reference the fixed SOURCE_BUCKET constant');
+    }
+    if (!/\bDESTINATION_BUCKET\b/.test(promoteScript)) {
+      fail(promoteScriptPath + ' must reference the fixed DESTINATION_BUCKET constant');
+    }
+    // The script must NOT redefine the buckets as swappable local string literals
+    // (the only literal definitions live in the core module, checked below). It
+    // must reference the imported constants instead.
+    if (/\b(?:const|let|var)\s+SOURCE_BUCKET\s*=\s*['"]/.test(promoteScript)) {
+      fail(promoteScriptPath + ' must not redefine SOURCE_BUCKET as a local literal (import the fixed constant)');
+    }
+    if (/\b(?:const|let|var)\s+DESTINATION_BUCKET\s*=\s*['"]/.test(promoteScript)) {
+      fail(promoteScriptPath + ' must not redefine DESTINATION_BUCKET as a local literal (import the fixed constant)');
+    }
+    if (!/DRY-RUN/.test(promoteScript)) {
+      fail(promoteScriptPath + ' must be dry-run by default (DRY-RUN marker)');
+    }
+    if (!/--execute/.test(promoteScript)) {
+      fail(promoteScriptPath + ' must require --execute for writes');
+    }
+    if (!/PROMOTION_CONFIRM_PHRASE/.test(promoteScript)) {
+      fail(promoteScriptPath + ' must define the exact promotion confirmation phrase');
+    }
+    // No R2 delete commands (legacy production objects are never deleted). Temp
+    // cleanup of the runner's own scratch dir with rmSync is permitted, mirroring
+    // the preview import client; the guard targets R2 object deletion only.
+    if (/r2\s+object\s+delete/i.test(promoteScript)) {
+      fail(promoteScriptPath + ' must not contain any r2 object delete command');
+    }
+    // The handshake helpers (backup-gated writes) must be invoked.
+    if (!/verifyProductionBackupHandshake/.test(promoteScript)) {
+      fail(promoteScriptPath + ' must call verifyProductionBackupHandshake before any production write');
+    }
+    if (!/verifyPreviewInventoryMatchesRelease/.test(promoteScript)) {
+      fail(promoteScriptPath + ' must call verifyPreviewInventoryMatchesRelease (reject missing/extra preview objects)');
+    }
+    // Images must upload before artworks.json (metadata-last ordering).
+    if (!/artworks.json LAST|Publishing approved artworks.json.*LAST|artworks\.json.*LAST/i.test(promoteScript)) {
+      fail(promoteScriptPath + ' must publish artworks.json LAST (after images)');
+    }
+  }
+
+  // 8c) Tracked release manifest + pure helpers must exist and be internally
+  //     consistent in shape (full validation is in the release-manifest tests).
+  const releaseManifestPath = 'catalog/production-release-manifest.json';
+  const releaseManifest = readText(releaseManifestPath);
+  if (releaseManifest === null) {
+    fail(releaseManifestPath + ' is missing');
+  } else {
+    if (!/"schemaVersion":\s*1/.test(releaseManifest)) {
+      fail(releaseManifestPath + ' must declare schemaVersion 1');
+    }
+    if (!/"manifestKind":\s*"mj-art-production-catalogue-release"/.test(releaseManifest)) {
+      fail(releaseManifestPath + ' must declare the production-catalogue-release manifestKind');
+    }
+    if (!/"expectedObjectCount":\s*173/.test(releaseManifest)) {
+      fail(releaseManifestPath + ' must pin exactly 173 expected objects');
+    }
+    // No local paths, etags, timestamps, or secrets may be committed.
+    for (const forbidden of [/backupPath/i, /etag/i, /lastModified/i, /\.local-assets/, /\/tmp\//, /token/i, /secret/i, /password/i]) {
+      if (forbidden.test(releaseManifest)) {
+        fail(releaseManifestPath + ' must not contain forbidden field/pattern ' + forbidden);
+      }
+    }
+  }
+  const releaseCorePath = 'scripts/lib/release-manifest-core.mjs';
+  const releaseGenPath = 'scripts/generate-production-release-manifest.mjs';
+  if (readText(releaseCorePath) === null) fail(releaseCorePath + ' is missing');
+  if (readText(releaseGenPath) === null) fail(releaseGenPath + ' is missing');
+  const releaseCore = readText(releaseCorePath);
+  if (releaseCore !== null) {
+    for (const sym of [
+      'SOURCE_BUCKET',
+      'DESTINATION_BUCKET',
+      'PROMOTION_CONFIRM_PHRASE',
+      'buildReleaseManifest',
+      'validateReleaseManifest',
+      'verifyProductionBackupHandshake',
+      'verifyPreviewInventoryMatchesRelease'
+    ]) {
+      if (!new RegExp('\\b' + sym + '\\b').test(releaseCore)) {
+        fail(releaseCorePath + ' must define/export ' + sym);
+      }
+    }
+    // The fixed bucket literals must be pinned in the core (the single source of
+    // truth). Preview is the read-only source; production is the write destination.
+    if (!/SOURCE_BUCKET\s*=\s*'mj-art-images-preview'/.test(releaseCore)) {
+      fail(releaseCorePath + " must pin SOURCE_BUCKET = 'mj-art-images-preview'");
+    }
+    if (!/DESTINATION_BUCKET\s*=\s*'mj-art-images(?!-preview)'/.test(releaseCore)) {
+      fail(releaseCorePath + " must pin DESTINATION_BUCKET = 'mj-art-images' (production)");
+    }
+  }
+
+  // 8d) Deploy workflow bucket safety: a preview deploy must never target or
+  //     create the production bucket. The bucket-create step must select the
+  //     bucket via a case on inputs.environment (variable form), never create
+  //     both buckets or a literal production bucket in a create command.
+  if (deployWf !== null) {
+    if (/r2\s+bucket\s+create\s+mj-art-images/.test(deployWf)) {
+      fail(deployWfPath + ' must not create a bucket by literal name in a wrangler command (use a case-selected variable)');
+    }
+    if (!/r2\s+bucket\s+create\s+"\$\{?BUCKET\}?"/.test(deployWf)) {
+      fail(deployWfPath + ' must create the selected bucket via a case-selected "$BUCKET" variable');
+    }
+  }
+
   if (process.exitCode) {
     console.error('check-operations-rules: one or more assertions failed.');
     return;

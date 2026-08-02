@@ -86,11 +86,29 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Ensure MJ Art storage exists
+      - name: Ensure selected-environment storage exists
         working-directory: apps/web
         run: |
-          pnpm exec wrangler r2 bucket create mj-art-images --location apac || true
-          pnpm exec wrangler r2 bucket create mj-art-images-preview --location apac || true
+          set -euo pipefail
+          # Create/validate ONLY the bucket for the SELECTED environment. A preview
+          # deploy must never target or create the production bucket (and vice
+          # versa). inputs.environment is a constrained choice (preview|production),
+          # so the case is exhaustive with a fail-closed default.
+          case "${{ inputs.environment }}" in
+            preview)
+              BUCKET="mj-art-images-preview"
+              ;;
+            production)
+              BUCKET="mj-art-images"
+              ;;
+            *)
+              echo "Unsupported environment: ${{ inputs.environment }}" >&2
+              exit 1
+              ;;
+          esac
+          # Idempotent: succeeds if the bucket exists, fails harmlessly if it
+          # already does. Only the selected bucket is touched.
+          pnpm exec wrangler r2 bucket create "$BUCKET" --location apac || true
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

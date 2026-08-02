@@ -926,11 +926,14 @@ cat <<EOF
   gh variable set VPS_USER        --body "$FETCH_USER"
   gh variable set VPS_MASTER_ROOT --body "$IMPORTS_PATH"
 
- Then: dry-run the catalogue-import workflow (confirm_preview_only on,
- execute_upload off). Only after a successful end-to-end fetch, set the
- one-time attestation LAST and separately:
+ Then: set VPS_ASSETS_CONFIRMED to 'true' LAST. It is a PRE-fetch attestation:
+ set it only after THIS setup script completed and its local SFTP access test
+ (the in-script round-trip above) succeeded. The GitHub Actions catalogue-import
+ gate fails closed unless VPS_ASSETS_CONFIRMED == true, so the GitHub Actions
+ dry-run is the FIRST end-to-end fetch and runs AFTER this attestation is set:
 
   gh variable set VPS_ASSETS_CONFIRMED --body "true"
+  # then dispatch the catalogue-import dry-run (confirm_preview_only on, execute_upload off)
 
  (deliberately not included above - it is the final manual gate.)
 

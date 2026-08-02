@@ -321,8 +321,15 @@ require elevated privileges on the host and have not yet been completed.
 Accordingly, **no GitHub Actions variables or secrets have been set** and
 `VPS_ASSETS_CONFIRMED` remains unset. The next safe action is for an operator
 with elevated privileges to create the account and complete the one-time setup
-(above), after which the GitHub variables/secrets can be populated and the
-end-to-end fetch validated before setting `VPS_ASSETS_CONFIRMED`.
+(above). `VPS_ASSETS_CONFIRMED` is a **pre-fetch** attestation: set it to `true`
+only after the setup script has completed and its **local account access test**
+(the in-script SFTP round-trip from the VPS using the staged key + pinned host
+key) succeeds — confirming the account, key, host key, and master root work. It
+must be set BEFORE the first GitHub Actions fetch, because the catalogue-import
+gate fails closed unless `VPS_ASSETS_CONFIRMED == true`; the GitHub Actions
+dry-run is therefore the first end-to-end fetch and cannot run before the
+attestation is set. Populate the variables/secrets first, set
+`VPS_ASSETS_CONFIRMED` last, then dispatch the dry-run.
 
 **One-time VPS-side setup script.** The local account, forced-command
 authorized key, pinned host key, and read-only access tests are produced by
@@ -465,3 +472,97 @@ in place.
   prior master version (and/or a prior catalogue commit), or restore from a
   read-only backup artifact per §8. Production rollback is not available from
   this code path; **production remains blocked until the Stop 2 milestone.**
+
+## 12. Production catalogue promotion (Stop 2)
+
+Stop 2 promotes the **approved preview** catalogue state to **production**. It
+runs only through `.github/workflows/catalog-promote-production.yml`
+(workflow_dispatch only) and `scripts/promote-catalog-production.mjs`. The
+preview catalogue was imported and approved at content commit `e52fc7f` (173
+objects: 172 canonical images + `artworks.json`, 86 records); the verified
+read-only backup `r2-readonly-backup-20260802T033638Z` pins that state exactly.
+Commit `97a11c2` changed only backup tooling (not app or catalogue content), so
+the production **Worker deploy** target is the latest `main`, while the
+**catalogue content** manifest is the approved preview state at `e52fc7f`.
+
+### Tracked release manifest
+
+`catalog/production-release-manifest.json` pins the approved preview state
+exactly: schema version, the approved content commit + verifying backup
+snapshot, the source (preview) and destination (production) bucket literals,
+catalogue record count (86), the `artworks.json` size/sha256, and 173 sorted
+expected objects as `{key,size,sha256}` only. It carries **no** local paths,
+etags, timestamps, or secrets. It is generated mechanically from the verified
+backup by `scripts/generate-production-release-manifest.mjs` and validated
+deterministically against `catalog/catalog.json` (the `artworks.json` hash must
+equal the canonical catalogue payload). Its on-disk sha256 is the pin the
+promotion workflow requires.
+
+### Promotion order and gates
+
+1. **Fail closed** unless the confirmation boolean is enabled AND the exact strong
+   phrase `I-CONFIRM-PRODUCTION-CATALOGUE-PROMOTION` is supplied, AND the pinned
+   release-manifest sha256 + expected production object count are supplied. No
+   credential is exposed at this gate.
+2. **Validate** the catalogue (`pnpm check:catalog`), the operations policy
+   (`pnpm check:operations`), and pin the release manifest by sha256.
+3. **Fresh production backup first.** Create a fresh read-only backup of BOTH
+   buckets in THIS run using `CLOUDFLARE_R2_READ_TOKEN` (the read token is
+   exposed only here). Upload it as a 90-day retention artifact.
+4. **Backup handshake (mandatory).** The promotion client refuses to execute
+   unless that fresh backup confirms the **current production inventory** with
+   the expected object count (drift guard) and **every production body downloaded
+   and checksummed** (a byte-verified rollback source). It also cross-checks the
+   fresh **preview** inventory against the release manifest exactly (no missing,
+   no extra). Backup failure or any drift -> no writes.
+5. **Dry-run plan** (no writes): validate the manifest + backup handshake +
+   preview inventory, print the plan.
+6. **Execute** (only when `execute_promotion` is enabled, after the gate +
+   backup succeed; `CLOUDFLARE_API_TOKEN` is exposed only on this step):
+   - Download all 173 approved objects from PREVIEW (read-only source) to runner
+     temp and verify each by size + sha256. A missing/short object -> no writes.
+   - Upload the **172 images first** to PRODUCTION, then read back each and
+     verify by sha256.
+   - Publish the approved `artworks.json` **last**, then read back by exact
+     sha256 + byte size + parsed count (86). On any failure before this PUT, the
+     prior production metadata stays live.
+   - **Never delete** any object. There is no delete code anywhere. The 18 legacy
+     production images + the prior `artworks.json` are retained. The 172 canonical
+     image keys have **zero overlap** with the legacy keys, so no legacy image is
+     overwritten; only `artworks.json` is replaced (the intended metadata cutover).
+
+### Drift, retention, and rollback
+
+- **Expected production drift.** Before promotion, production has 19 objects (18
+  legacy images + `artworks.json`). The drift guard pins `expected_production_object_count`
+  to this value; if production has drifted (objects added/removed), the handshake
+  fails closed. After promotion, production has 191 objects (18 legacy + 172
+  canonical images + `artworks.json`).
+- **Legacy retention.** Retain the 18 legacy production image objects for at
+  least 90 days after promotion. **No cleanup is performed now** (no delete path
+  exists). The new `artworks.json` references only the 172 canonical images, so
+  the legacy images become unreferenced but remain present for rollback.
+- **Rollback.** Because the 18 legacy images are retained and the prior
+  `artworks.json` references them, **restoring the prior `artworks.json` alone is
+  sufficient** to roll back the public site to its pre-promotion state — no image
+  restore is needed. Restore the prior `artworks.json` from the fresh production
+  backup artifact (§8) created in the promotion run. (Image rollback is not
+  required; if ever desired, the canonical images are additive and can be left
+  in place.)
+- **Post-promotion.** After a successful promotion, perform the **production
+  Worker deploy** manually (§1; the deploy code target is latest `main`), then
+  run a read-only production drift report and post-deploy tests.
+
+### Scope and hard limits
+
+- **Preview is source-only; production is the only write destination.** The
+  source/destination bucket literals are fixed constants; no argument, manifest
+  field, or control flow can swap, invert, or override them.
+- **Dry-run is the default.** Execute requires `--execute` AND the exact
+  confirmation phrase.
+- **Read token vs write token isolation.** `CLOUDFLARE_R2_READ_TOKEN` is exposed
+  only on the backup/inventory steps; `CLOUDFLARE_API_TOKEN` only on the execute
+  step, after the gate + backup succeed. Admin secrets are never referenced.
+- **No deletes, ever.** Legacy objects are retained; canonical image keys do not
+  overlap legacy keys.
+

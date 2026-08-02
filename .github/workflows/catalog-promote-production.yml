@@ -1,0 +1,256 @@
+# Guarded production catalogue promotion for MJ-ART.
+#
+# This is the ONLY workflow that may write the canonical catalogue to the
+# PRODUCTION bucket. It promotes the APPROVED PREVIEW state:
+#   mj-art-images-preview (read-only source) -> mj-art-images (write destination)
+#
+# Hard safety contract:
+#   * workflow_dispatch ONLY (never push/PR/schedule).
+#   * The exact confirmation boolean AND the exact strong phrase are both
+#     required; the run fails closed before any credential is exposed.
+#   * A FRESH production backup is created in THIS run (read token only) and
+#     fully verified BEFORE the write token is ever exposed. The promotion client
+#     refuses to execute unless that backup confirms the current production
+#     inventory with every body downloaded and checksummed (rollback handshake).
+#   * The read token (CLOUDFLARE_R2_READ_TOKEN) is exposed ONLY on the backup/
+#     inventory steps. The write token (CLOUDFLARE_API_TOKEN) is exposed ONLY on
+#     the promotion-execute step, and only after the gate + backup succeed.
+#   * Images upload first (readback-verified); artworks.json is published LAST.
+#     Legacy production objects are never deleted (no delete code anywhere).
+#
+# Read docs/OPERATIONS.md (Stop 2) before changing anything here.
+
+name: Catalog Promote Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_promote_to_production:
+        description: 'Required confirmation that this run promotes the catalogue to PRODUCTION. The run fails closed unless this is enabled.'
+        required: true
+        type: boolean
+        default: false
+      confirmation_phrase:
+        description: 'Must be exactly the strong phrase I-CONFIRM-PRODUCTION-CATALOGUE-PROMOTION.'
+        required: true
+        type: string
+      release_manifest_sha256:
+        description: 'Pinned sha256 of catalog/production-release-manifest.json (64 hex). The run fails closed unless the on-disk manifest hashes to exactly this.'
+        required: true
+        type: string
+      expected_production_object_count:
+        description: 'Current production object count (drift guard). The fresh backup must record exactly this many production objects. Default 19 (18 legacy images + artworks.json).'
+        required: true
+        type: string
+        default: '19'
+      execute_promotion:
+        description: 'When disabled (default) the run backs up, validates, and plans only (no production writes). When enabled, promotes after every gate passes.'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: catalog-promote-production
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24'
+  # Hard-coded source/destination literals. These are the ONLY bucket strings
+  # this workflow may reference; the promotion client asserts both and rejects
+  # any mismatch. Preview is read-only source; production is write destination.
+  SOURCE_BUCKET: mj-art-images-preview
+  DESTINATION_BUCKET: mj-art-images
+  PROMOTION_PHRASE: I-CONFIRM-PRODUCTION-CATALOGUE-PROMOTION
+  RELEASE_MANIFEST_PATH: catalog/production-release-manifest.json
+
+jobs:
+  catalog-promote-production:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Fail closed unless promotion scope + confirmation confirmed
+        if: always()
+        env:
+          CONFIRM_BOOLEAN: ${{ inputs.confirm_promote_to_production }}
+          CONFIRMATION_PHRASE: ${{ inputs.confirmation_phrase }}
+          RELEASE_MANIFEST_SHA256: ${{ inputs.release_manifest_sha256 }}
+          EXPECTED_PRODUCTION_COUNT: ${{ inputs.expected_production_object_count }}
+          SOURCE_BUCKET: ${{ env.SOURCE_BUCKET }}
+          DESTINATION_BUCKET: ${{ env.DESTINATION_BUCKET }}
+          PROMOTION_PHRASE: ${{ env.PROMOTION_PHRASE }}
+        run: |
+          set -euo pipefail
+          # Always-running prerequisite gate. No credential is referenced here.
+          if [ "${CONFIRM_BOOLEAN}" != "true" ]; then
+            echo "fail closed: dispatch input confirm_promote_to_production must be true"
+            exit 1
+          fi
+          # Exact strong phrase required (defense in depth with the boolean).
+          if [ "${CONFIRMATION_PHRASE}" != "${PROMOTION_PHRASE}" ]; then
+            echo "fail closed: confirmation_phrase must equal the exact promotion phrase"
+            exit 1
+          fi
+          # Pinned manifest hash must be 64 lowercase hex.
+          if ! printf '%s' "${RELEASE_MANIFEST_SHA256}" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "fail closed: release_manifest_sha256 must be 64 lowercase hex"
+            exit 1
+          fi
+          # Expected production count must be a non-negative integer (drift guard).
+          if ! printf '%s' "${EXPECTED_PRODUCTION_COUNT}" | grep -Eq '^[0-9]+$'; then
+            echo "fail closed: expected_production_object_count must be a non-negative integer"
+            exit 1
+          fi
+          # The source/destination literals are fixed and non-invertible.
+          if [ "${SOURCE_BUCKET}" != "mj-art-images-preview" ]; then
+            echo "fail closed: SOURCE_BUCKET must be exactly mj-art-images-preview"
+            exit 1
+          fi
+          if [ "${DESTINATION_BUCKET}" != "mj-art-images" ]; then
+            echo "fail closed: DESTINATION_BUCKET must be exactly mj-art-images"
+            exit 1
+          fi
+          echo "production promotion scope + confirmation confirmed (no credential exposed yet)"
+          echo "A fresh production backup will be created and verified before any write token is exposed."
+
+      - name: Checkout code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@a8198c4bff370c8506180b035930dea56dbd5288 # v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate catalogue
+        run: pnpm check:catalog
+
+      - name: Validate operations policy
+        run: pnpm check:operations
+
+      - name: Pin release manifest by sha256
+        env:
+          RELEASE_MANIFEST_SHA256: ${{ inputs.release_manifest_sha256 }}
+          RELEASE_MANIFEST_PATH: ${{ env.RELEASE_MANIFEST_PATH }}
+        run: |
+          set -euo pipefail
+          if [ ! -f "${RELEASE_MANIFEST_PATH}" ]; then
+            echo "fail closed: release manifest not found: ${RELEASE_MANIFEST_PATH}"
+            exit 1
+          fi
+          ACTUAL="$(sha256sum "${RELEASE_MANIFEST_PATH}" | awk '{print $1}')"
+          if [ "${ACTUAL}" != "${RELEASE_MANIFEST_SHA256}" ]; then
+            echo "fail closed: release manifest sha256 mismatch"
+            echo "  on-disk:  ${ACTUAL}"
+            echo "  expected: ${RELEASE_MANIFEST_SHA256}"
+            exit 1
+          fi
+          echo "release manifest pinned and verified (${ACTUAL})"
+
+      - name: Create fresh production + preview backup (read token only)
+        env:
+          # READ token only. This is the ONLY step that sees CLOUDFLARE_R2_READ_TOKEN.
+          CLOUDFLARE_R2_READ_TOKEN: ${{ secrets.CLOUDFLARE_R2_READ_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_BACKUP_MODE: backup
+          R2_READ_ONLY_CONFIRMED: I-CONFIRM-READ-ONLY-SCOPE
+          R2_BACKUP_OUTPUT_DIR: ${{ runner.temp }}/r2-output
+          R2_MAX_BACKUP_BYTES: '5368709120'
+          GIT_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_R2_READ_TOKEN:-}" ]; then
+            echo "fail closed: secret CLOUDFLARE_R2_READ_TOKEN is empty or missing"; exit 1
+          fi
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "fail closed: secret CLOUDFLARE_ACCOUNT_ID is empty or missing"; exit 1
+          fi
+          node scripts/r2-readonly-backup.mjs
+          if [ ! -f "${RUNNER_TEMP}/r2-output/manifest.json" ]; then
+            echo "fail closed: backup did not produce a manifest.json"; exit 1
+          fi
+          echo "fresh production + preview backup created and verified"
+
+      - name: Upload backup artifact (retention)
+        if: success()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: promotion-backup-${{ github.run_id }}
+          path: ${{ runner.temp }}/r2-output
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Validate promotion plan (dry-run, no writes)
+        env:
+          EXPECTED_PRODUCTION_COUNT: ${{ inputs.expected_production_object_count }}
+          RELEASE_MANIFEST_PATH: ${{ env.RELEASE_MANIFEST_PATH }}
+        run: |
+          set -euo pipefail
+          node scripts/promote-catalog-production.mjs \
+            --release-manifest "${RELEASE_MANIFEST_PATH}" \
+            --backup-manifest "${RUNNER_TEMP}/r2-output/manifest.json" \
+            --expected-production-count "${EXPECTED_PRODUCTION_COUNT}"
+
+      - name: Execute production promotion (images first, artworks.json last)
+        if: ${{ inputs.execute_promotion == true }}
+        env:
+          # WRITE token only on this step, and only after the gate + fresh backup
+          # + dry-run plan all succeeded. Preview is read-only source.
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          EXPECTED_PRODUCTION_COUNT: ${{ inputs.expected_production_object_count }}
+          RELEASE_MANIFEST_PATH: ${{ env.RELEASE_MANIFEST_PATH }}
+          RELEASE_MANIFEST_SHA256: ${{ inputs.release_manifest_sha256 }}
+          PROMOTION_CONFIRM: ${{ inputs.confirmation_phrase }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_API_TOKEN:-}" ]; then
+            echo "fail closed: secret CLOUDFLARE_API_TOKEN is empty or missing"; exit 1
+          fi
+          if [ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]; then
+            echo "fail closed: secret CLOUDFLARE_ACCOUNT_ID is empty or missing"; exit 1
+          fi
+          node scripts/promote-catalog-production.mjs \
+            --release-manifest "${RELEASE_MANIFEST_PATH}" \
+            --release-manifest-sha256 "${RELEASE_MANIFEST_SHA256}" \
+            --backup-manifest "${RUNNER_TEMP}/r2-output/manifest.json" \
+            --expected-production-count "${EXPECTED_PRODUCTION_COUNT}" \
+            --execute \
+            --confirm "${PROMOTION_CONFIRM}" \
+            --wrangler "pnpm exec wrangler"
+
+      - name: Post-promotion production drift report (read-only)
+        if: always() && inputs.execute_promotion == true
+        env:
+          CLOUDFLARE_R2_READ_TOKEN: ${{ secrets.CLOUDFLARE_R2_READ_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          R2_BACKUP_MODE: inventory
+          R2_READ_ONLY_CONFIRMED: I-CONFIRM-READ-ONLY-SCOPE
+          R2_BACKUP_OUTPUT_DIR: ${{ runner.temp }}/r2-drift
+          R2_MAX_BACKUP_BYTES: '5368709120'
+          GIT_COMMIT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CLOUDFLARE_R2_READ_TOKEN:-}" ]; then
+            echo "skip drift report: read token unavailable"; exit 0
+          fi
+          node scripts/r2-readonly-backup.mjs || {
+            echo "drift report inventory failed (non-fatal); inspect manually"
+            exit 0
+          }
+          echo "--- post-promotion production inventory written to drift report ---"
+
+      - name: Clean runner temp
+        if: always()
+        run: |
+          set -euo pipefail
+          rm -rf "${RUNNER_TEMP}/r2-output" "${RUNNER_TEMP}/r2-drift" || true
