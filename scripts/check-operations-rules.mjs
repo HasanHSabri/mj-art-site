@@ -559,6 +559,33 @@ function main() {
     if (!/sshd_global\.before/.test(setupScript) || !/sshd_global\.after/.test(setupScript)) {
       fail(setupScriptPath + ' must compare global sshd -T before/after the snippet (no drift)');
     }
+
+    // ~/.ssh and authorized_keys must be ACCOUNT-owned (mjart-fetch), not
+    // root-owned. sshd reads authorized_keys as the target user (it drops to
+    // that uid before opening the file), so a root-owned 0600 authorized_keys
+    // is unreadable by the account -> "Could not open authorized keys ...
+    // Permission denied" and pubkey auth fails closed. Stock OpenSSH under
+    // StrictModes (the default) requires these files to be account-owned (or
+    // root) and not group/other-writable; we require account ownership and
+    // forbid the root-owned regression to 0600.
+    if (!/install\s+-d\s+-m\s+0700\s+-o\s+"\$\{?FETCH_USER\}?"\s+-g\s+"\$\{?FETCH_USER\}?"\s+"\$\{?FETCH_HOME\}?\/\.ssh"/.test(setupScript)) {
+      fail(setupScriptPath + ' must create ~/.ssh as account-owned (install -d -m 0700 -o "$FETCH_USER" -g "$FETCH_USER" "$FETCH_HOME/.ssh"), not root-owned, so sshd can read keys as the user');
+    }
+    if (!/chown\s+"\$\{?FETCH_USER\}?:\$\{?FETCH_USER\}?"\s+"\$\{?FETCH_HOME\}?\/\.ssh\/authorized_keys\.new"/.test(setupScript)) {
+      fail(setupScriptPath + ' must chown authorized_keys to the fetch account ("$FETCH_USER:$FETCH_USER"), not root, so sshd can read it as the user');
+    }
+    // Forbid the regression: a root-owned .ssh or authorized_keys.
+    if (/install\s+-d\s+-m\s+0700\s+-o\s+root\s+-g\s+root\s+"\$\{?FETCH_HOME\}?\/\.ssh"/.test(setupScript)) {
+      fail(setupScriptPath + ' must NOT create ~/.ssh as root-owned 0700 (root ownership blocks sshd reading authorized_keys as the user -> Permission denied)');
+    }
+    if (/chown\s+root:root\s+"\$\{?FETCH_HOME\}?\/\.ssh\/authorized_keys/.test(setupScript)) {
+      fail(setupScriptPath + ' must NOT chown authorized_keys to root (root-owned 0600 is unreadable by the account under StrictModes -> Permission denied)');
+    }
+    // Must enforce the exact ownership/mode invariant at runtime (exact-config
+    // check that fails closed on drift back to root-owned 0600).
+    if (!/stat\s+-c\s+'%U:%G'\s+"\$\{?FETCH_HOME\}?\/\.ssh\/authorized_keys"/.test(setupScript)) {
+      fail(setupScriptPath + ' must assert authorized_keys ownership at runtime (stat -c \'%U:%G\' "$FETCH_HOME/.ssh/authorized_keys") to prevent regression to root-owned');
+    }
   }
 
   if (process.exitCode) {

@@ -319,7 +319,14 @@ per-user effective config is verified with `sshd -T -C user=mjart-fetch`
 before sshd is reloaded. On any validation or reload failure it restores the
 prior (absent) snippet and fails loudly. The `authorized_keys` forced command
 remains as a second layer; the sshd `ForceCommand` takes precedence and both
-pin the same `internal-sftp` root.
+pin the same `internal-sftp` root. The account's `~/.ssh` (`0700`) and
+`authorized_keys` (`0600`) are owned by `mjart-fetch:mjart-fetch` — **not**
+root — because sshd reads `authorized_keys` as the target user (it drops to
+that account's uid before opening the file); a root-owned `0600` file is
+unreadable by the account, which fails closed with `Could not open authorized
+keys ... Permission denied`. The setup script asserts this exact
+ownership/mode on every (idempotent) run and repairs a prior root-owned state
+in place.
 
 ### Publishing cycle
 

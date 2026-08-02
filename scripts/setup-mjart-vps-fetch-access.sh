@@ -716,22 +716,46 @@ if [ "$SNIPPET_NEEDS_WRITE" -eq 1 ]; then
 fi
 
 # --------------------------------------------------------------------------- #
-# Install authorized_keys (root-owned) for the account
+# Install authorized_keys for the account (account-owned, StrictModes-safe)
 # --------------------------------------------------------------------------- #
+#
+# sshd reads authorized_keys AS THE TARGET USER: it drops to that account's
+# uid/gid (temporarily_use_uid) before opening the file. A root-owned 0600
+# authorized_keys is therefore UNREADABLE by mjart-fetch, producing:
+#   "Could not open user 'mjart-fetch' authorized keys ... Permission denied"
+# and pubkey auth fails closed. Stock OpenSSH under StrictModes (the default)
+# instead requires ~/.ssh and authorized_keys to be owned by the account (or
+# root) AND not group/other-writable. We own them to the ACCOUNT itself,
+# mjart-fetch:mjart-fetch, so the account can read its own key file while the
+# 0700/0600 modes keep them private to the account (never group/world-readable).
+# This block is convergent: on rerun it re-chowns/re-modes an existing (e.g.
+# still root-owned from a prior buggy run) state back to the exact expected
+# ownership, repairing the install in place.
 
-install -d -m 0700 -o root -g root "$FETCH_HOME/.ssh"
+install -d -m 0700 -o "$FETCH_USER" -g "$FETCH_USER" "$FETCH_HOME/.ssh"
 # Write atomically through a temp file in the same dir, then install.
 printf '%s\n' "$AK_ENTRY" > "$FETCH_HOME/.ssh/authorized_keys.new"
-chown root:root "$FETCH_HOME/.ssh/authorized_keys.new"
+chown "$FETCH_USER:$FETCH_USER" "$FETCH_HOME/.ssh/authorized_keys.new"
 chmod 0600 "$FETCH_HOME/.ssh/authorized_keys.new"
 mv -f "$FETCH_HOME/.ssh/authorized_keys.new" "$FETCH_HOME/.ssh/authorized_keys"
+
+# Enforce the EXACT ownership/mode invariant (account-owned; not root-owned,
+# not group/other-readable). Fail closed on any drift.
+[ "$(stat -c '%U:%G' "$FETCH_HOME/.ssh")" = "$FETCH_USER:$FETCH_USER" ] \
+    || fail "$FETCH_HOME/.ssh must be owned by $FETCH_USER:$FETCH_USER (got $(stat -c '%U:%G' "$FETCH_HOME/.ssh")); a root-owned .ssh blocks sshd reading keys as the user"
+[ "$(stat -c '%a' "$FETCH_HOME/.ssh")" = "700" ] \
+    || fail "$FETCH_HOME/.ssh mode must be 0700 (got $(stat -c '%a' "$FETCH_HOME/.ssh"))"
+[ "$(stat -c '%U:%G' "$FETCH_HOME/.ssh/authorized_keys")" = "$FETCH_USER:$FETCH_USER" ] \
+    || fail "authorized_keys must be owned by $FETCH_USER:$FETCH_USER (got $(stat -c '%U:%G' "$FETCH_HOME/.ssh/authorized_keys")); a root-owned 0600 file is unreadable by the account"
+[ "$(stat -c '%a' "$FETCH_HOME/.ssh/authorized_keys")" = "600" ] \
+    || fail "authorized_keys mode must be 0600 (got $(stat -c '%a' "$FETCH_HOME/.ssh/authorized_keys"))"
 
 # Verify there is exactly ONE key line (no stray keys).
 _ak_lines=$(grep -cvE '^[[:space:]]*(#.*)?$' "$FETCH_HOME/.ssh/authorized_keys" || true)
 [ "$_ak_lines" -eq 1 ] \
     || fail "authorized_keys must contain exactly one key line, found $_ak_lines"
 
-note "installed forced-command authorized_keys for '$FETCH_USER' (root-owned, one key)."
+note "installed forced-command authorized_keys for '$FETCH_USER' (account-owned $FETCH_USER:$FETCH_USER; .ssh 0700 / authorized_keys 0600; one key)."
 
 # --------------------------------------------------------------------------- #
 # Place the private key + known_hosts in protected, caller-owned files
@@ -867,6 +891,9 @@ cat <<EOF
  Private key file : $CALLER_KEYFILE   (owner: $CALLER_USER, mode 0600)
  Known hosts file : $CALLER_KH_FILE   (owner: $CALLER_USER, mode 0600)
  Pinned host      : $HOST:$PORT
+ authorized_keys  : $FETCH_HOME/.ssh/authorized_keys
+                   (owner: $FETCH_USER:$FETCH_USER, mode 0600; account-owned so
+                   sshd can read it as the user under StrictModes; one key)
  sshd snippet     : $SNIPPET_PATH  (root:root 0644; managed Match block;
                    fail-closed/validated/reverts on reload failure)
 
