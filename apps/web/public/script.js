@@ -198,3 +198,36 @@ inquiryForm.addEventListener('submit', (event) => {
     message
   });
 });
+
+// Fixed "Back to Top" control. Independent of gallery data/render: it only
+// reads scroll position and the painting dialog state. It is removed from the
+// tab order ([hidden]) at the top of the page and while the painting dialog is
+// open, and honors prefers-reduced-motion for the scroll action.
+const backToTopButton = document.getElementById('back-to-top');
+const BACK_TO_TOP_THRESHOLD = 400;
+
+if (backToTopButton) {
+  const reducedMotion = () =>
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const syncBackToTop = () => {
+    backToTopButton.hidden =
+      dialog.open || window.scrollY < BACK_TO_TOP_THRESHOLD;
+  };
+
+  window.addEventListener('scroll', syncBackToTop, { passive: true });
+  window.addEventListener('resize', syncBackToTop, { passive: true });
+  dialog.addEventListener('toggle', syncBackToTop);
+
+  backToTopButton.addEventListener('click', () => {
+    const top = document.getElementById('top');
+    const behavior = reducedMotion() ? 'auto' : 'smooth';
+    if (top) {
+      top.scrollIntoView({ behavior, block: 'start' });
+    } else {
+      window.scrollTo({ top: 0, behavior });
+    }
+  });
+
+  syncBackToTop();
+}

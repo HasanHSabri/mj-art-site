@@ -234,6 +234,30 @@ label {
   background: rgba(255, 255, 255, 0.4);
 }
 
+/* Fixed "Back to Top" control. Centered horizontally with auto margins
+   (left/right: 0 + margin-inline: auto), never with a transform, so the
+   generic .button:hover nudge (translateY) cannot break center alignment.
+   bottom clears the iOS safe area; [hidden] wins over .button's display. */
+.back-to-top {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  margin-inline: auto;
+  width: fit-content;
+  max-width: calc(100% - 32px);
+  z-index: 40;
+}
+
+.back-to-top[hidden] {
+  display: none;
+}
+
+.back-to-top:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .hero-card ul,
 .contact-card ul {
   margin: 12px 0 0;
@@ -563,5 +587,17 @@ textarea {
 
   h1 {
     max-width: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .back-to-top,
+  .back-to-top:hover {
+    transition: none;
+    transform: none;
   }
 }
