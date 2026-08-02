@@ -28,6 +28,8 @@ import {
   PROMOTION_CONFIRM_PHRASE,
   SOURCE_BUCKET,
   buildReleaseManifest,
+  extractBackupBucket,
+  inventoryFingerprint,
   serializeReleaseManifest
 } from '../../../scripts/lib/release-manifest-core.mjs';
 import {
@@ -206,7 +208,7 @@ function listKeys(bucketDir) {
 // Tests
 // ---------------------------------------------------------------------------
 
-let ROOT, SCN, FAKE_WRANGLER, BACKUP_PATH;
+let ROOT, SCN, FAKE_WRANGLER, BACKUP_PATH, PROD_FINGERPRINT;
 
 test('simulation setup', () => {
   ROOT = mkdtempSync(path.join(os.tmpdir(), 'mj-promote-sim-'));
@@ -216,8 +218,12 @@ test('simulation setup', () => {
   const bm = SCN.backupManifest(prodObjects, prodObjects.length);
   BACKUP_PATH = path.join(ROOT, 'backup-manifest.json');
   writeFileSync(BACKUP_PATH, JSON.stringify(bm), 'utf8');
+  // Canonical content-exact fingerprint of the deterministic 19-object legacy
+  // production inventory. Promotion runs must reproduce it exactly.
+  PROD_FINGERPRINT = inventoryFingerprint(extractBackupBucket(bm, DESTINATION_BUCKET)).sha256;
   assert.equal(SCN.records.length, EXPECTED_IMAGES + 1);
   assert.equal(prodObjects.length, 19);
+  assert.match(PROD_FINGERPRINT, /^[0-9a-f]{64}$/);
 });
 
 test('dry-run validates and plans without writing to production', () => {
@@ -226,6 +232,7 @@ test('dry-run validates and plans without writing to production', () => {
     '--release-manifest', SCN.releasePath,
     '--backup-manifest', BACKUP_PATH,
     '--expected-production-count', '19',
+    '--expected-production-fingerprint', PROD_FINGERPRINT,
     '--wrangler', FAKE_WRANGLER
   ], { FAKE_PREVIEW_DIR: SCN.previewDir, FAKE_PRODUCTION_DIR: SCN.prodDir });
   assert.equal(r.code, 0, 'dry-run should succeed: ' + r.stderr);
@@ -242,6 +249,7 @@ test('execute promotes: 172 images + artworks.json, legacy retained (no deletes)
     '--release-manifest', SCN.releasePath,
     '--backup-manifest', BACKUP_PATH,
     '--expected-production-count', '19',
+    '--expected-production-fingerprint', PROD_FINGERPRINT,
     '--execute',
     '--confirm', PROMOTION_CONFIRM_PHRASE,
     '--wrangler', FAKE_WRANGLER
@@ -270,6 +278,7 @@ test('backup-handshake gate: wrong production count -> fail closed before writes
     '--release-manifest', SCN.releasePath,
     '--backup-manifest', BACKUP_PATH,
     '--expected-production-count', '18', // drift
+    '--expected-production-fingerprint', PROD_FINGERPRINT,
     '--execute',
     '--confirm', PROMOTION_CONFIRM_PHRASE,
     '--wrangler', FAKE_WRANGLER
@@ -282,12 +291,84 @@ test('backup-handshake gate: wrong production count -> fail closed before writes
   assert.ok(!keys.some((k) => k.startsWith('artwork/catalog/')));
 });
 
+test('content-exact guard: same-count byte drift (changed sha256) -> fail closed before writes', () => {
+  SCN.seedProduction();
+  // Simulate a fresh backup that caught a byte-level production change: the
+  // count is still 19, but one object's sha256 differs. The handshake must fail
+  // on the fingerprint, NOT pass on the count.
+  const bm = JSON.parse(readFileSync(BACKUP_PATH, 'utf8'));
+  const prodBucket = bm.buckets.find((b) => b.name === DESTINATION_BUCKET);
+  prodBucket.objects[0].sha256 = '0'.repeat(63) + '1';
+  const driftedPath = path.join(ROOT, 'backup-drifted-byte.json');
+  writeFileSync(driftedPath, JSON.stringify(bm), 'utf8');
+  const r = runPromote([
+    '--release-manifest', SCN.releasePath,
+    '--backup-manifest', driftedPath,
+    '--expected-production-count', '19',
+    '--expected-production-fingerprint', PROD_FINGERPRINT,
+    '--execute',
+    '--confirm', PROMOTION_CONFIRM_PHRASE,
+    '--wrangler', FAKE_WRANGLER
+  ], { FAKE_PREVIEW_DIR: SCN.previewDir, FAKE_PRODUCTION_DIR: SCN.prodDir });
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /fingerprint mismatch|content drift/i);
+  // production untouched
+  const keys = listKeys(SCN.prodDir);
+  assert.equal(keys.length, 19);
+  assert.ok(!keys.some((k) => k.startsWith('artwork/catalog/')));
+});
+
+test('content-exact guard: same-count key drift (renamed key) -> fail closed before writes', () => {
+  SCN.seedProduction();
+  // Simulate a fresh backup that caught a renamed production object: the count
+  // is still 19 and sizes/shas are unchanged, but one key differs.
+  const bm = JSON.parse(readFileSync(BACKUP_PATH, 'utf8'));
+  const prodBucket = bm.buckets.find((b) => b.name === DESTINATION_BUCKET);
+  prodBucket.objects[0].rawKey = 'artwork/legacy-RENAMED-0.jpg';
+  const driftedPath = path.join(ROOT, 'backup-drifted-key.json');
+  writeFileSync(driftedPath, JSON.stringify(bm), 'utf8');
+  const r = runPromote([
+    '--release-manifest', SCN.releasePath,
+    '--backup-manifest', driftedPath,
+    '--expected-production-count', '19',
+    '--expected-production-fingerprint', PROD_FINGERPRINT,
+    '--execute',
+    '--confirm', PROMOTION_CONFIRM_PHRASE,
+    '--wrangler', FAKE_WRANGLER
+  ], { FAKE_PREVIEW_DIR: SCN.previewDir, FAKE_PRODUCTION_DIR: SCN.prodDir });
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /fingerprint mismatch|content drift/i);
+  // production untouched
+  const keys = listKeys(SCN.prodDir);
+  assert.equal(keys.length, 19);
+  assert.ok(!keys.some((k) => k.startsWith('artwork/catalog/')));
+});
+
+test('content-exact guard: malformed expected fingerprint -> fail closed', () => {
+  SCN.seedProduction();
+  const r = runPromote([
+    '--release-manifest', SCN.releasePath,
+    '--backup-manifest', BACKUP_PATH,
+    '--expected-production-count', '19',
+    '--expected-production-fingerprint', 'not-hex',
+    '--execute',
+    '--confirm', PROMOTION_CONFIRM_PHRASE,
+    '--wrangler', FAKE_WRANGLER
+  ], { FAKE_PREVIEW_DIR: SCN.previewDir, FAKE_PRODUCTION_DIR: SCN.prodDir });
+  assert.notEqual(r.code, 0);
+  assert.match(r.stderr, /64 lowercase hex/i);
+  // production untouched
+  const keys = listKeys(SCN.prodDir);
+  assert.equal(keys.length, 19);
+});
+
 test('missing backup manifest -> fail closed', () => {
   SCN.seedProduction();
   const r = runPromote([
     '--release-manifest', SCN.releasePath,
     '--backup-manifest', path.join(ROOT, 'does-not-exist.json'),
     '--expected-production-count', '19',
+    '--expected-production-fingerprint', PROD_FINGERPRINT,
     '--execute',
     '--confirm', PROMOTION_CONFIRM_PHRASE,
     '--wrangler', FAKE_WRANGLER
@@ -308,6 +389,7 @@ test('hash mismatch in a preview object -> fail before any production write', ()
       '--release-manifest', SCN.releasePath,
       '--backup-manifest', BACKUP_PATH,
       '--expected-production-count', '19',
+      '--expected-production-fingerprint', PROD_FINGERPRINT,
       '--execute',
       '--confirm', PROMOTION_CONFIRM_PHRASE,
       '--wrangler', FAKE_WRANGLER
@@ -374,6 +456,7 @@ test('rollback-safe: failure mid-image-upload leaves legacy artworks.json live',
     '--release-manifest', SCN.releasePath,
     '--backup-manifest', BACKUP_PATH,
     '--expected-production-count', '19',
+    '--expected-production-fingerprint', PROD_FINGERPRINT,
     '--execute',
     '--confirm', PROMOTION_CONFIRM_PHRASE,
     '--wrangler', failingWrangler
@@ -403,6 +486,7 @@ test('wrong confirmation phrase -> execute fails before writes', () => {
     '--release-manifest', SCN.releasePath,
     '--backup-manifest', BACKUP_PATH,
     '--expected-production-count', '19',
+    '--expected-production-fingerprint', PROD_FINGERPRINT,
     '--execute',
     '--confirm', 'WRONG-PHRASE',
     '--wrangler', FAKE_WRANGLER

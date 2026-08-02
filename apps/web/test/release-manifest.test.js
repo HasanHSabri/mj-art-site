@@ -10,6 +10,7 @@ import {
   DESTINATION_BUCKET,
   EXPECTED_IMAGES,
   EXPECTED_RECORDS,
+  INVENTORY_FINGERPRINT_ALGORITHM,
   PROMOTION_CONFIRM_PHRASE,
   RELEASE_MANIFEST_KIND,
   RELEASE_MANIFEST_SCHEMA_VERSION,
@@ -237,6 +238,69 @@ test('verifyProductionBackupHandshake fails when a production object is missing 
   delete bm.buckets[0].objects[0].sha256;
   bm.buckets[0].objects[0].downloaded = true;
   assert.throws(() => verifyProductionBackupHandshake(bm, 19));
+});
+
+test('verifyProductionBackupHandshake passes when count + content fingerprint match', () => {
+  const recs = validRecords();
+  const bm = fakeBackupManifest(19, recs);
+  const fp = inventoryFingerprint(extractBackupBucket(bm, DESTINATION_BUCKET)).sha256;
+  const inv = verifyProductionBackupHandshake(bm, 19, fp);
+  assert.equal(inv.objectCount, 19);
+});
+
+test('verifyProductionBackupHandshake fails on fingerprint mismatch (same-count byte drift)', () => {
+  const recs = validRecords();
+  const bm = fakeBackupManifest(19, recs);
+  const fp = inventoryFingerprint(extractBackupBucket(bm, DESTINATION_BUCKET)).sha256;
+  // Byte drift: same count, same keys/sizes, but one sha256 changes.
+  bm.buckets[0].objects[0].sha256 = 'b'.repeat(63) + '1';
+  assert.throws(
+    () => verifyProductionBackupHandshake(bm, 19, fp),
+    /fingerprint mismatch|content drift/i
+  );
+});
+
+test('verifyProductionBackupHandshake fails on fingerprint mismatch (same-count key drift)', () => {
+  const recs = validRecords();
+  const bm = fakeBackupManifest(19, recs);
+  const fp = inventoryFingerprint(extractBackupBucket(bm, DESTINATION_BUCKET)).sha256;
+  // Key drift: same count and sizes/shas, but one key is renamed.
+  bm.buckets[0].objects[0].rawKey = 'legacy/renamed-0.jpg';
+  assert.throws(
+    () => verifyProductionBackupHandshake(bm, 19, fp),
+    /fingerprint mismatch|content drift/i
+  );
+});
+
+test('verifyProductionBackupHandshake fails on a malformed expected fingerprint', () => {
+  const recs = validRecords();
+  const bm = fakeBackupManifest(19, recs);
+  assert.throws(() => verifyProductionBackupHandshake(bm, 19, 'not-hex'));
+  assert.throws(() => verifyProductionBackupHandshake(bm, 19, 'a'.repeat(63)));
+});
+
+test('verifyProductionBackupHandshake ignores the fingerprint when none is supplied (count-only)', () => {
+  const recs = validRecords();
+  const bm = fakeBackupManifest(19, recs);
+  // No third argument: legacy count-only behaviour still works.
+  const inv = verifyProductionBackupHandshake(bm, 19);
+  assert.equal(inv.objectCount, 19);
+});
+
+test('inventoryFingerprint is content-exact: same count, different content -> different digest', () => {
+  const bm = fakeBackupManifest(19, validRecords());
+  const inv = extractBackupBucket(bm, DESTINATION_BUCKET);
+  const a = inventoryFingerprint(inv);
+  // Mutate one sha256 (byte change) without changing the count.
+  const drifted = JSON.parse(JSON.stringify(inv));
+  drifted.objects[0].sha256 = 'c'.repeat(64);
+  const b = inventoryFingerprint(drifted);
+  assert.equal(a.objectCount, b.objectCount);
+  assert.notEqual(a.sha256, b.sha256);
+});
+
+test('inventoryFingerprint algorithm label is pinned', () => {
+  assert.equal(INVENTORY_FINGERPRINT_ALGORITHM, 'mj-art-inventory-fingerprint-v1');
 });
 
 test('verifyPreviewInventoryMatchesRelease passes on exact match', () => {

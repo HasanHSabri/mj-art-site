@@ -502,8 +502,11 @@ promotion workflow requires.
 
 1. **Fail closed** unless the confirmation boolean is enabled AND the exact strong
    phrase `I-CONFIRM-PRODUCTION-CATALOGUE-PROMOTION` is supplied, AND the pinned
-   release-manifest sha256 + expected production object count are supplied. No
-   credential is exposed at this gate.
+   release-manifest sha256 + expected production object count + expected production
+   inventory fingerprint are supplied, AND the maintainer repo variable
+   `CLOUDFLARE_R2_READ_TOKEN_CONFIRMED` equals `true`. No credential is exposed at
+   this gate; the repo variable (never a secret) is read via `env`, never inside an
+   `if:`/raw expression.
 2. **Validate** the catalogue (`pnpm check:catalog`), the operations policy
    (`pnpm check:operations`), and pin the release manifest by sha256.
 3. **Fresh production backup first.** Create a fresh read-only backup of BOTH
@@ -511,10 +514,12 @@ promotion workflow requires.
    exposed only here). Upload it as a 90-day retention artifact.
 4. **Backup handshake (mandatory).** The promotion client refuses to execute
    unless that fresh backup confirms the **current production inventory** with
-   the expected object count (drift guard) and **every production body downloaded
-   and checksummed** (a byte-verified rollback source). It also cross-checks the
-   fresh **preview** inventory against the release manifest exactly (no missing,
-   no extra). Backup failure or any drift -> no writes.
+   the expected object count (drift guard) **and** the expected content inventory
+   fingerprint (content-exact drift guard), and **every production body downloaded
+   and checksummed** (a byte-verified rollback source). The fingerprint makes the
+   handshake content-exact: a same-count byte/key change cannot pass. It also
+   cross-checks the fresh **preview** inventory against the release manifest exactly
+   (no missing, no extra). Backup failure or any drift -> no writes.
 5. **Dry-run plan** (no writes): validate the manifest + backup handshake +
    preview inventory, print the plan.
 6. **Execute** (only when `execute_promotion` is enabled, after the gate +
@@ -538,6 +543,42 @@ promotion workflow requires.
   to this value; if production has drifted (objects added/removed), the handshake
   fails closed. After promotion, production has 191 objects (18 legacy + 172
   canonical images + `artworks.json`).
+- **Content-exact production fingerprint (`expected_production_inventory_fingerprint`).**
+  The count guard alone cannot detect a same-count change (a byte change or a key
+  rename). The dispatch input `expected_production_inventory_fingerprint` therefore
+  pins the **exact** current production inventory by content. The fresh in-run
+  backup must reproduce it before any write. Current value (count 19, verified
+  against the approved pre-promotion production state):
+
+  ```
+  61e08a337f9920c177df74cf8dd928bcb06ee61cc737156ba3d61e7b1141141e
+  ```
+
+  - **Algorithm** (`mj-art-inventory-fingerprint-v1`, implemented by
+    `inventoryFingerprint` in `scripts/lib/release-manifest-core.mjs`): deterministic
+    and order-independent. Each object is normalized to `{key, size, sha256}`;
+    records are sorted ascending by `key`; each record is rendered as
+    `<key>\t<size>\t<sha256>` (`-` if a body was not checksummed); lines are joined
+    with `\n`; the fingerprint is the sha256 of that UTF-8 text. Any change to a
+    key, size, or sha256 — including a same-count byte/key swap — changes the digest.
+    Bump the label only on an incompatible algorithm change.
+  - **Operator derivation.** Derive the input from a **verified** read-only
+    production backup (every body downloaded and checksummed), never from a
+    listing-only inventory. With the backup `manifest.json` on hand, run a small
+    Node snippet against the production bucket entry, e.g.:
+
+    ```js
+    import { readFileSync } from 'node:fs';
+    import { extractBackupBucket, inventoryFingerprint, DESTINATION_BUCKET }
+      from './scripts/lib/release-manifest-core.mjs';
+    const backup = JSON.parse(readFileSync('<verified-backup-manifest.json>', 'utf8'));
+    console.log(inventoryFingerprint(extractBackupBucket(backup, DESTINATION_BUCKET)).sha256);
+    ```
+
+    Copy the 64-hex digest into `expected_production_inventory_fingerprint`. Never
+    commit the local backup path into repo data; only the fingerprint hash is
+    committed (it reveals no object contents). Re-derive it whenever production
+    changes before a promotion.
 - **Legacy retention.** Retain the 18 legacy production image objects for at
   least 90 days after promotion. **No cleanup is performed now** (no delete path
   exists). The new `artworks.json` references only the 172 canonical images, so
@@ -563,6 +604,11 @@ promotion workflow requires.
 - **Read token vs write token isolation.** `CLOUDFLARE_R2_READ_TOKEN` is exposed
   only on the backup/inventory steps; `CLOUDFLARE_API_TOKEN` only on the execute
   step, after the gate + backup succeed. Admin secrets are never referenced.
+- **Read-scope attestation.** The repo variable `CLOUDFLARE_R2_READ_TOKEN_CONFIRMED`
+  must equal `true` (set it only after a maintainer verifies, out of band, that the
+  read token has the narrow Workers R2 Storage Read scope). The promotion gate
+  reads it via `env` and fails closed unless it is `true`; it is never a secret and
+  never appears in an `if:`/raw expression.
 - **No deletes, ever.** Legacy objects are retained; canonical image keys do not
   overlap legacy keys.
 

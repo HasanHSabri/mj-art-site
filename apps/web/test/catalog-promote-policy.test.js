@@ -59,10 +59,32 @@ test('catalog-promote-production.yml declares all required inputs', () => {
     'confirmation_phrase',
     'release_manifest_sha256',
     'expected_production_object_count',
+    'expected_production_inventory_fingerprint',
     'execute_promotion'
   ]) {
     assert.match(WF, new RegExp('^\\s+' + name + ':', 'm'), `missing input ${name}`);
   }
+});
+
+test('catalog-promote-production.yml requires the CLOUDFLARE_R2_READ_TOKEN_CONFIRMED repo variable via env', () => {
+  // Must be a repo VARIABLE (vars.*), never a secret, and validated == true in
+  // the gate shell. It must never appear inside a step if: condition.
+  assert.match(WF, /vars\.CLOUDFLARE_R2_READ_TOKEN_CONFIRMED/);
+  assert.match(WF, /TOKEN_CONFIRMED_VAR/);
+  assert.match(WF, /CLOUDFLARE_R2_READ_TOKEN_CONFIRMED must be 'true'/);
+  for (const line of WF.split(/\r?\n/)) {
+    if (/^\s*if:/.test(line)) {
+      assert.doesNotMatch(line, /CLOUDFLARE_R2_READ_TOKEN_CONFIRMED/i, `repo var in if: not allowed: ${line.trim()}`);
+    }
+  }
+});
+
+test('catalog-promote-production.yml validates the production fingerprint shape in the gate', () => {
+  assert.match(WF, /expected_production_inventory_fingerprint must be 64 lowercase hex/);
+});
+
+test('catalog-promote-production.yml passes the fingerprint to the promotion client', () => {
+  assert.match(WF, /--expected-production-fingerprint "\$\{EXPECTED_PRODUCTION_FINGERPRINT\}"/);
 });
 
 test('catalog-promote-production.yml pins the exact strong confirmation phrase', () => {

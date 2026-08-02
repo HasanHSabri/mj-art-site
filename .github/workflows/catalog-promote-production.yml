@@ -8,10 +8,16 @@
 #   * workflow_dispatch ONLY (never push/PR/schedule).
 #   * The exact confirmation boolean AND the exact strong phrase are both
 #     required; the run fails closed before any credential is exposed.
+#   * The maintainer repo variable CLOUDFLARE_R2_READ_TOKEN_CONFIRMED must equal
+#     'true' (out-of-band attestation that the read token has the narrow R2 Read
+#     scope). It is read via env, never inside an if:/raw expression.
 #   * A FRESH production backup is created in THIS run (read token only) and
 #     fully verified BEFORE the write token is ever exposed. The promotion client
 #     refuses to execute unless that backup confirms the current production
 #     inventory with every body downloaded and checksummed (rollback handshake).
+#     The handshake is CONTENT-EXACT: the operator-pinned production inventory
+#     fingerprint (sha256 over sorted key/size/sha256 lines) must match, so a
+#     same-count byte/key drift cannot pass.
 #   * The read token (CLOUDFLARE_R2_READ_TOKEN) is exposed ONLY on the backup/
 #     inventory steps. The write token (CLOUDFLARE_API_TOKEN) is exposed ONLY on
 #     the promotion-execute step, and only after the gate + backup succeed.
@@ -43,6 +49,10 @@ on:
         required: true
         type: string
         default: '19'
+      expected_production_inventory_fingerprint:
+        description: 'Content-exact production drift guard (64 lowercase hex). The sha256 over the sorted key/size/sha256 lines of the current production inventory. The fresh in-run backup must reproduce it exactly before any write. Derive from a verified production backup; never include local paths.'
+        required: true
+        type: string
       execute_promotion:
         description: 'When disabled (default) the run backs up, validates, and plans only (no production writes). When enabled, promotes after every gate passes.'
         required: true
@@ -79,6 +89,11 @@ jobs:
           CONFIRMATION_PHRASE: ${{ inputs.confirmation_phrase }}
           RELEASE_MANIFEST_SHA256: ${{ inputs.release_manifest_sha256 }}
           EXPECTED_PRODUCTION_COUNT: ${{ inputs.expected_production_object_count }}
+          EXPECTED_PRODUCTION_FINGERPRINT: ${{ inputs.expected_production_inventory_fingerprint }}
+          # Maintainer out-of-band attestation (repo VARIABLE, never a secret) that
+          # the read token has the narrow R2 Read scope. Passed through env so it is
+          # never interpolated inside an if:/raw expression.
+          TOKEN_CONFIRMED_VAR: ${{ vars.CLOUDFLARE_R2_READ_TOKEN_CONFIRMED }}
           SOURCE_BUCKET: ${{ env.SOURCE_BUCKET }}
           DESTINATION_BUCKET: ${{ env.DESTINATION_BUCKET }}
           PROMOTION_PHRASE: ${{ env.PROMOTION_PHRASE }}
@@ -102,6 +117,20 @@ jobs:
           # Expected production count must be a non-negative integer (drift guard).
           if ! printf '%s' "${EXPECTED_PRODUCTION_COUNT}" | grep -Eq '^[0-9]+$'; then
             echo "fail closed: expected_production_object_count must be a non-negative integer"
+            exit 1
+          fi
+          # Content-exact production drift guard must be 64 lowercase hex. The fresh
+          # in-run backup must reproduce this exact inventory fingerprint.
+          if ! printf '%s' "${EXPECTED_PRODUCTION_FINGERPRINT}" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "fail closed: expected_production_inventory_fingerprint must be 64 lowercase hex"
+            exit 1
+          fi
+          # Maintainer out-of-band read-scope attestation must be 'true'. Set the repo
+          # variable CLOUDFLARE_R2_READ_TOKEN_CONFIRMED=true ONLY after verifying the
+          # read token has the Workers R2 Storage Read scope and nothing broader.
+          if [ "${TOKEN_CONFIRMED_VAR}" != "true" ]; then
+            echo "fail closed: repository variable CLOUDFLARE_R2_READ_TOKEN_CONFIRMED must be 'true'"
+            echo "(maintainer out-of-band read-scope attestation is missing)"
             exit 1
           fi
           # The source/destination literals are fixed and non-invertible.
@@ -192,13 +221,15 @@ jobs:
       - name: Validate promotion plan (dry-run, no writes)
         env:
           EXPECTED_PRODUCTION_COUNT: ${{ inputs.expected_production_object_count }}
+          EXPECTED_PRODUCTION_FINGERPRINT: ${{ inputs.expected_production_inventory_fingerprint }}
           RELEASE_MANIFEST_PATH: ${{ env.RELEASE_MANIFEST_PATH }}
         run: |
           set -euo pipefail
           node scripts/promote-catalog-production.mjs \
             --release-manifest "${RELEASE_MANIFEST_PATH}" \
             --backup-manifest "${RUNNER_TEMP}/r2-output/manifest.json" \
-            --expected-production-count "${EXPECTED_PRODUCTION_COUNT}"
+            --expected-production-count "${EXPECTED_PRODUCTION_COUNT}" \
+            --expected-production-fingerprint "${EXPECTED_PRODUCTION_FINGERPRINT}"
 
       - name: Execute production promotion (images first, artworks.json last)
         if: ${{ inputs.execute_promotion == true }}
@@ -208,6 +239,7 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           EXPECTED_PRODUCTION_COUNT: ${{ inputs.expected_production_object_count }}
+          EXPECTED_PRODUCTION_FINGERPRINT: ${{ inputs.expected_production_inventory_fingerprint }}
           RELEASE_MANIFEST_PATH: ${{ env.RELEASE_MANIFEST_PATH }}
           RELEASE_MANIFEST_SHA256: ${{ inputs.release_manifest_sha256 }}
           PROMOTION_CONFIRM: ${{ inputs.confirmation_phrase }}
@@ -224,6 +256,7 @@ jobs:
             --release-manifest-sha256 "${RELEASE_MANIFEST_SHA256}" \
             --backup-manifest "${RUNNER_TEMP}/r2-output/manifest.json" \
             --expected-production-count "${EXPECTED_PRODUCTION_COUNT}" \
+            --expected-production-fingerprint "${EXPECTED_PRODUCTION_FINGERPRINT}" \
             --execute \
             --confirm "${PROMOTION_CONFIRM}" \
             --wrangler "pnpm exec wrangler"

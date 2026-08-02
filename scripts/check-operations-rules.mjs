@@ -629,17 +629,34 @@ function main() {
     }
 
     // Required dispatch inputs (confirmation boolean + phrase + manifest hash +
-    // production drift count + execute flag).
+    // production drift count + content-exact production fingerprint + execute flag).
     for (const inputName of [
       'confirm_promote_to_production',
       'confirmation_phrase',
       'release_manifest_sha256',
       'expected_production_object_count',
+      'expected_production_inventory_fingerprint',
       'execute_promotion'
     ]) {
       if (!new RegExp('^\\s+' + inputName + ':', 'm').test(promoteWf)) {
         fail(promoteWfPath + ' must declare input ' + inputName);
       }
+    }
+
+    // The maintainer out-of-band read-scope attestation (repo VARIABLE, never a
+    // secret) must be referenced via env and validated == 'true' in the gate. It
+    // must never appear inside an if:/raw expression.
+    if (!/vars\.CLOUDFLARE_R2_READ_TOKEN_CONFIRMED/.test(promoteWf)) {
+      fail(promoteWfPath + ' prerequisite gate must read vars.CLOUDFLARE_R2_READ_TOKEN_CONFIRMED via env');
+    }
+    // The actual enforcement: a shell comparison of the env var against "true".
+    if (!/TOKEN_CONFIRMED_VAR.*!=.*"true"/.test(promoteWf)) {
+      fail(promoteWfPath + ' prerequisite gate must compare CLOUDFLARE_R2_READ_TOKEN_CONFIRMED to "true" and fail closed');
+    }
+    // The content-exact production fingerprint must be shape-validated (64 hex) in
+    // the gate and passed to the promotion client.
+    if (!/expected_production_inventory_fingerprint must be 64 lowercase hex/.test(promoteWf)) {
+      fail(promoteWfPath + ' prerequisite gate must validate expected_production_inventory_fingerprint as 64 lowercase hex');
     }
 
     // The exact strong confirmation phrase must appear and be gated on.
@@ -766,6 +783,15 @@ function main() {
     if (!/verifyPreviewInventoryMatchesRelease/.test(promoteScript)) {
       fail(promoteScriptPath + ' must call verifyPreviewInventoryMatchesRelease (reject missing/extra preview objects)');
     }
+    // The content-exact production drift guard: the client must require the
+    // operator-pinned production inventory fingerprint and enforce it via the
+    // handshake (count match + fingerprint mismatch must fail closed).
+    if (!/--expected-production-fingerprint/.test(promoteScript)) {
+      fail(promoteScriptPath + ' must require --expected-production-fingerprint (content-exact production drift guard)');
+    }
+    if (!/\binventoryFingerprint\b/.test(promoteScript)) {
+      fail(promoteScriptPath + ' must compute inventoryFingerprint to report/verify the production fingerprint');
+    }
     // Images must upload before artworks.json (metadata-last ordering).
     if (!/artworks.json LAST|Publishing approved artworks.json.*LAST|artworks\.json.*LAST/i.test(promoteScript)) {
       fail(promoteScriptPath + ' must publish artworks.json LAST (after images)');
@@ -805,10 +831,12 @@ function main() {
       'SOURCE_BUCKET',
       'DESTINATION_BUCKET',
       'PROMOTION_CONFIRM_PHRASE',
+      'INVENTORY_FINGERPRINT_ALGORITHM',
       'buildReleaseManifest',
       'validateReleaseManifest',
       'verifyProductionBackupHandshake',
-      'verifyPreviewInventoryMatchesRelease'
+      'verifyPreviewInventoryMatchesRelease',
+      'inventoryFingerprint'
     ]) {
       if (!new RegExp('\\b' + sym + '\\b').test(releaseCore)) {
         fail(releaseCorePath + ' must define/export ' + sym);

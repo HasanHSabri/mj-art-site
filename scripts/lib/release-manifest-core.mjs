@@ -49,9 +49,6 @@ export const RELEASE_MANIFEST_KIND = 'mj-art-production-catalogue-release';
 // with them, and the promotion client asserts the agreement before any transfer.
 export const SOURCE_BUCKET = 'mj-art-images-preview';
 export const DESTINATION_BUCKET = 'mj-art-images';
-export const ARTWORKS_JSON_SIZE = 113368;
-export const ARTWORKS_JSON_SHA256 =
-  '8cfdf39f56bd0541b5f20b9e10c66e9bd3fccdda51c1e8936983781d2e12cc69';
 
 // Strong, exact confirmation phrase required to authorize a production write.
 // The promotion client rejects --execute unless --confirm equals this literal.
@@ -275,6 +272,25 @@ export function validateReleaseManifest(manifest, catalog, schemaFns) {
 // Backup handshake / production inventory fingerprint
 // ---------------------------------------------------------------------------
 
+// Inventory fingerprint algorithm label + semantics. The promotion workflow pins
+// the EXPECTED production inventory by this exact content fingerprint (in addition
+// to the count), so a same-count drift (a byte change or a key swap that leaves
+// the object count unchanged) is detected before any production write.
+//
+// ALGORITHM (v1): deterministic, order-independent, content-exact.
+//   1. Normalize each object to a {key, size, sha256} record.
+//   2. Sort the records ascending by `key` (byte-wise).
+//   3. Render each record as the line `<key>\t<size>\t<sha256>` (sha256, or `-`
+//      when a body was not downloaded/checksummed).
+//   4. Join the lines with `\n` (no trailing newline).
+//   5. sha256 of that UTF-8 text is the fingerprint.
+//
+// Any change to a key, size, or sha256 — including a same-count byte/key swap —
+// changes the digest. The object count is carried alongside (not hashed) so a
+// count mismatch is reported as a count error and a content mismatch as a
+// fingerprint error. Bump the label only on an incompatible algorithm change.
+export const INVENTORY_FINGERPRINT_ALGORITHM = 'mj-art-inventory-fingerprint-v1';
+
 // Extract a bucket's inventory from a parsed read-only backup manifest (as
 // produced by scripts/r2-readonly-backup.mjs). Returns { name, objectCount,
 // objects: [{ key, size, sha256, downloaded }], allBodiesDownloaded }.
@@ -335,10 +351,21 @@ export function inventoryFingerprint(bucketInventory) {
 //      rollback source exists and is byte-verified).
 //   3. The recorded production object count must equal the expected count
 //      (drift guard: unseen production change -> mismatch -> fail closed).
+//   4. When `expectedFingerprintSha256` is supplied, it must be valid 64-char hex
+//      AND equal the production inventory fingerprint (content-exact drift guard).
+//      This catches same-count drift (a byte change or a key swap) that a
+//      count-only guard cannot detect, so the handshake cannot pass with a count
+//      match but a content mismatch. The promotion client always supplies it.
 // Returns the verified production inventory. Throws on any failure.
-export function verifyProductionBackupHandshake(backupManifest, expectedProductionObjectCount) {
+export function verifyProductionBackupHandshake(backupManifest, expectedProductionObjectCount, expectedFingerprintSha256) {
   if (!Number.isInteger(expectedProductionObjectCount) || expectedProductionObjectCount < 0) {
     throw new Error('expectedProductionObjectCount must be a non-negative integer');
+  }
+  const hasFp = expectedFingerprintSha256 !== undefined && expectedFingerprintSha256 !== null && expectedFingerprintSha256 !== '';
+  if (hasFp) {
+    if (typeof expectedFingerprintSha256 !== 'string' || !SHA256_RE.test(expectedFingerprintSha256)) {
+      throw new Error('expectedFingerprintSha256 must be 64-char lowercase hex when provided');
+    }
   }
   const prod = extractBackupBucket(backupManifest, DESTINATION_BUCKET);
   if (!prod.allBodiesDownloaded) {
@@ -353,6 +380,16 @@ export function verifyProductionBackupHandshake(backupManifest, expectedProducti
     throw new Error(
       `production backup handshake failed: inventory has ${prod.objects.length} records, expected ${expectedProductionObjectCount}`
     );
+  }
+  if (hasFp) {
+    const fp = inventoryFingerprint(prod);
+    if (fp.sha256 !== expectedFingerprintSha256) {
+      throw new Error(
+        `production backup handshake failed: production inventory fingerprint mismatch (content drift). ` +
+        `Count matched (${fp.objectCount}) but key/size/sha256 content did not. ` +
+        `Re-derive expected_production_inventory_fingerprint from a freshly verified production backup.`
+      );
+    }
   }
   return prod;
 }

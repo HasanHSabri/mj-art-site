@@ -15,6 +15,9 @@
 //     (from the same workflow run) must be supplied and must confirm the current
 //     production inventory with every body downloaded and checksummed. A missing
 //     or short backup -> no writes. This is the rollback-source handshake.
+//     The handshake is CONTENT-EXACT: the operator pins the expected production
+//     inventory fingerprint (sha256 over sorted key/size/sha256 lines) and the
+//     fresh backup must reproduce it, so a same-count byte/key drift cannot pass.
 //   * The approved preview inventory (from that same fresh backup) must match the
 //     release manifest expected set EXACTLY: no missing, no extra.
 //   * All 173 expected objects are downloaded from preview and verified by
@@ -36,7 +39,8 @@
 //   node scripts/promote-catalog-production.mjs \
 //     --release-manifest catalog/production-release-manifest.json \
 //     --backup-manifest <run-temp>/r2-output/manifest.json \
-//     --expected-production-count 19
+//     --expected-production-count 19 \
+//     --expected-production-fingerprint <64-hex production inventory fingerprint>
 //
 //   # execute (images first, readback, artworks.json last, readback) to PRODUCTION
 //   node scripts/promote-catalog-production.mjs \
@@ -44,6 +48,7 @@
 //     --release-manifest-sha256 <pinned-sha> \
 //     --backup-manifest <run-temp>/r2-output/manifest.json \
 //     --expected-production-count 19 \
+//     --expected-production-fingerprint <64-hex production inventory fingerprint> \
 //     --execute --confirm I-CONFIRM-PRODUCTION-CATALOGUE-PROMOTION \
 //     --wrangler "pnpm exec wrangler"
 
@@ -59,10 +64,12 @@ import {
   ARTWORKS_JSON_KEY,
   DESTINATION_BUCKET,
   EXPECTED_IMAGES,
+  INVENTORY_FINGERPRINT_ALGORITHM,
   OBJECT_KEY_RE,
   PROMOTION_CONFIRM_PHRASE,
   SOURCE_BUCKET,
   hashReleaseManifestBytes,
+  inventoryFingerprint,
   validateReleaseManifest,
   verifyArtworksReadback,
   verifyPreviewInventoryMatchesRelease,
@@ -155,6 +162,7 @@ function main() {
   if (!args['release-manifest']) fail('--release-manifest <path> is required (catalog/production-release-manifest.json)');
   if (!args['backup-manifest']) fail('--backup-manifest <path> is required (the fresh production backup manifest from this run)');
   if (!args['expected-production-count']) fail('--expected-production-count <n> is required (drift guard)');
+  if (!args['expected-production-fingerprint']) fail('--expected-production-fingerprint <64-hex> is required (content-exact production drift guard)');
 
   const releaseManifestPath = path.resolve(args['release-manifest']);
   const backupManifestPath = path.resolve(args['backup-manifest']);
@@ -164,6 +172,15 @@ function main() {
   const expectedProductionCount = Number.parseInt(args['expected-production-count'], 10);
   if (!Number.isInteger(expectedProductionCount) || expectedProductionCount < 0) {
     fail('--expected-production-count must be a non-negative integer');
+  }
+
+  // Content-exact production drift guard: the operator supplies the canonical
+  // production inventory fingerprint (64 lowercase hex), derived from a verified
+  // production backup. The fresh in-run backup must reproduce it exactly before
+  // any write, so a same-count byte/key change cannot pass the handshake.
+  const expectedProductionFingerprint = args['expected-production-fingerprint'];
+  if (!/^[0-9a-f]{64}$/.test(expectedProductionFingerprint)) {
+    fail('--expected-production-fingerprint must be exactly 64 lowercase hex characters');
   }
 
   // 1) Release manifest file hash pin (if supplied). Prevents a tampered manifest.
@@ -184,8 +201,12 @@ function main() {
 
   // 3) Fresh production backup handshake + preview inventory cross-check. Both
   //    come from the SAME fresh backup artifact produced earlier in this run.
+  //    The handshake enforces the expected count AND the content-exact inventory
+  //    fingerprint, so the run cannot pass with a count match but a content
+  //    (key/size/sha256) mismatch.
   const backup = JSON.parse(readFileSync(backupManifestPath, 'utf8'));
-  const prodInventory = verifyProductionBackupHandshake(backup, expectedProductionCount);
+  const prodInventory = verifyProductionBackupHandshake(backup, expectedProductionCount, expectedProductionFingerprint);
+  const actualProdFingerprint = inventoryFingerprint(prodInventory);
   verifyPreviewInventoryMatchesRelease(backup, release);
 
   const imageObjects = release.expectedObjects.filter((e) => OBJECT_KEY_RE.test(e.key));
@@ -202,6 +223,7 @@ function main() {
   console.log(`backup snapshot:     ${release.approvedPreview && release.approvedPreview.verifiedByBackupSnapshot}`);
   console.log(`preview objects:     ${release.expectedObjectCount} (172 images + artworks.json)`);
   console.log(`production now:      ${prodInventory.objectCount} legacy objects (retained, never deleted)`);
+  console.log(`prod fingerprint:    ${actualProdFingerprint.sha256} (${INVENTORY_FINGERPRINT_ALGORITHM}, content-exact)`);
   console.log(`artworks.json:       ${artworksObject.size} bytes, sha256 ${artworksObject.sha256} (PUT last)`);
   console.log(`manifest sha256:     ${releaseOnDiskSha}`);
   console.log(`wrangler:            ${binTokens.join(' ')}`);
