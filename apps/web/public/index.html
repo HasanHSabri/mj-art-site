@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#f8f1ea">
   <title>MJ Art</title>
   <meta
     name="description"
@@ -15,9 +16,10 @@
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
+  <a class="skip-link" href="#gallery">Skip to gallery</a>
   <div class="page-shell">
     <header class="hero">
-      <nav class="topbar">
+      <nav class="topbar" aria-label="Primary navigation">
         <a class="brand" href="#top">MJ</a>
         <div class="topbar-links">
           <a href="#gallery">Gallery</a>
@@ -150,13 +152,13 @@
         <div class="section-heading">
           <div>
             <p class="section-label">Contact</p>
-            <h2>Ask about a painting</h2>
+            <h2 id="contact-heading">Ask about a painting</h2>
           </div>
           <p class="section-note">The form opens the visitor's email app so visitors can contact MJ directly.</p>
         </div>
 
         <div class="contact-grid">
-          <form class="contact-form" id="inquiry-form">
+          <form class="contact-form" id="inquiry-form" aria-labelledby="contact-heading">
             <label>
               Your name
               <input type="text" id="customer-name" name="customer-name" placeholder="Jane Smith" required>
@@ -174,6 +176,14 @@
               <textarea id="message" name="message" rows="5" placeholder="Hi, I would love to ask about this painting..." required></textarea>
             </label>
             <button class="button button-primary" type="submit">Create email inquiry</button>
+            <p class="contact-status" id="contact-status" role="status" aria-live="polite"></p>
+            <noscript>
+              <p class="contact-noscript">
+                JavaScript is off. Email
+                <a class="inline-link" href="mailto:mjdonnellan73@gmail.com">mjdonnellan73@gmail.com</a>
+                to ask about a painting.
+              </p>
+            </noscript>
           </form>
 
         </div>

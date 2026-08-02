@@ -23,6 +23,9 @@ import {
 
 const CONTACT_EMAIL = 'mjdonnellan73@gmail.com';
 
+const reducedMotion = () =>
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
 const galleryGrid = document.getElementById('gallery-grid');
 const filterBar = document.getElementById('gallery-filters');
 const resultsStatus = document.getElementById('gallery-results');
@@ -40,6 +43,7 @@ const dialogInquire = document.getElementById('dialog-inquire');
 
 const inquiryForm = document.getElementById('inquiry-form');
 const paintingNameInput = document.getElementById('painting-name');
+const contactStatus = document.getElementById('contact-status');
 
 const dialogImageElement = document.createElement('img');
 dialogImageElement.alt = '';
@@ -171,10 +175,40 @@ dialog.addEventListener('click', (event) => {
   if (isOutside) dialog.close();
 });
 
+const DIALOG_FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function dialogFocusable() {
+  return Array.from(dialog.querySelectorAll(DIALOG_FOCUSABLE_SELECTOR)).filter(
+    (el) => !el.hidden && !el.disabled && el.offsetParent !== null
+  );
+}
+
+dialog.addEventListener('keydown', (event) => {
+  if (event.key !== 'Tab' || !dialog.open) return;
+  const focusable = dialogFocusable();
+  if (focusable.length === 0) return;
+  const first = focusable[0];
+  const last = focusable[focusable.length - 1];
+  const active = document.activeElement;
+  if (event.shiftKey) {
+    if (active === first || !dialog.contains(active)) {
+      event.preventDefault();
+      last.focus();
+    }
+  } else if (active === last || !dialog.contains(active)) {
+    event.preventDefault();
+    first.focus();
+  }
+});
+
 dialogInquire.addEventListener('click', () => {
   paintingNameInput.value = paintingNameInput.value || selectedDialogTitle();
   dialog.close();
-  document.getElementById('contact').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  document.getElementById('contact').scrollIntoView({
+    behavior: reducedMotion() ? 'auto' : 'smooth',
+    block: 'start'
+  });
   paintingNameInput.focus();
 });
 
@@ -189,6 +223,10 @@ inquiryForm.addEventListener('submit', (event) => {
   const customerEmail = document.getElementById('customer-email').value.trim();
   const painting = paintingNameInput.value.trim();
   const message = document.getElementById('message').value.trim();
+
+  if (contactStatus) {
+    contactStatus.textContent = 'Opening your email app...';
+  }
 
   window.location.href = buildInquiryMailto({
     email: CONTACT_EMAIL,
@@ -207,9 +245,6 @@ const backToTopButton = document.getElementById('back-to-top');
 const BACK_TO_TOP_THRESHOLD = 400;
 
 if (backToTopButton) {
-  const reducedMotion = () =>
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
   const syncBackToTop = () => {
     backToTopButton.hidden =
       dialog.open || window.scrollY < BACK_TO_TOP_THRESHOLD;
