@@ -257,6 +257,38 @@ test('EOI form and its grid children/controls can shrink (min-width:0) to avoid 
   assert.match(booksCss, /\.books-eoi-form\s+input[\s\S]*?max-width:\s*100%/, 'inputs must be capped to their cell');
 });
 
+test('EOI form and nested label/fieldset grids pin an explicit minmax(0,1fr) track (root-cause 320px fix)', () => {
+  // Root cause: styles.css makes every <label> a display:grid container, and
+  // .books-eoi-form + .books-fieldset are grids too. Their implicit auto tracks
+  // (minmax(auto,auto)) will not shrink below intrinsic control widths, forcing
+  // horizontal overflow at 320px. Each grid level must declare an explicit
+  // minmax(0,1fr) single track. The standalone form rule is uniquely identified
+  // by max-width:620px (the grouped surface rule lacks it); the two lookaheads
+  // are order-independent within that one rule body.
+  assert.match(
+    booksCss,
+    /\.books-eoi-form\s*\{(?=[^}]*max-width:\s*620px)(?=[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\))/,
+    'the standalone .books-eoi-form grid must declare a minmax(0,1fr) track'
+  );
+  assert.match(
+    booksCss,
+    /\.books-fieldset\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/,
+    '.books-fieldset grid must declare a minmax(0,1fr) track'
+  );
+  assert.match(
+    booksCss,
+    /\.books-eoi-form\s+label\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/,
+    'form labels must override the inherited <label>{display:grid} with a minmax(0,1fr) track'
+  );
+  // Negative guard: no grid container in the form subtree may regress to a
+  // bare/implicit track (auto min) that would reintroduce overflow.
+  assert.doesNotMatch(
+    booksCss,
+    /\.books-(eoi-form|fieldset)\s*\{[^}]*grid-template-columns:\s*(1fr|2fr|auto|repeat\([^)]*\))/,
+    'form grids must not regress to bare fr/auto tracks'
+  );
+});
+
 test('the honeypot is fully removed from layout (off-screen + 1px)', () => {
   const hp = ruleBody(booksCss, '.books-honeypot');
   assert.ok(hp);

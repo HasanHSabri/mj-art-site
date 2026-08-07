@@ -111,6 +111,7 @@
 
 .books-eoi-form {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   width: 100%;
   max-width: 620px;
@@ -118,12 +119,17 @@
   padding: 28px;
 }
 
-/* Prevent a 320px horizontal overflow: grid items default to min-width: auto,
-   so neither the form nor its fields can shrink below intrinsic control widths.
-   min-width: 0 lets every level shrink; max-width: 100% keeps selects/inputs
-   within their cell. Padding stays as-is (260px of content room at 320px). */
+/* Prevent a 320px horizontal overflow. The shared styles.css turns every
+   <label> into a display:grid container, and this form plus .books-fieldset are
+   grids too; their implicit auto tracks (minmax(auto,auto)) refuse to shrink
+   below intrinsic control widths, forcing overflow at 320px. Pinning each track
+   to minmax(0,1fr) lets every level shrink to the content box. min-width:0 and
+   max-width:100% are kept as belt-and-suspenders. (.books-choice/.books-consent
+   are flex, so a grid track is a no-op there; .books-honeypot label keeps its
+   own `none` via higher specificity.) */
 .books-eoi-form fieldset,
 .books-eoi-form label {
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
 }
 
@@ -136,6 +142,7 @@
 
 .books-fieldset {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 10px;
   margin: 0;
   padding: 0;
