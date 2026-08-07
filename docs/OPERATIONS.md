@@ -841,44 +841,9 @@ Exact operator procedure:
    its `/api/books/health` smoke proves the complete
    Turnstile/limiter/Neon/crypto setup.
 
-### 13.6 Temporary accidental Worker cleanup
-
-**TEMPORARY: remove `.github/workflows/cleanup-accidental-workers.yml`,
-`scripts/cleanup-accidental-worker.mjs`, and their policy checks immediately after
-two successful runs have deleted `mj-art-preview-preview` and
-`mj-art-production`.** This path exists only to repair the two names accidentally
-created by the earlier Turnstile environment mis-targeting. It must not become a
-general Worker deletion facility.
-
-The workflow is manual-only and globally serialized. Its credential-free gate
-accepts a choice of exactly those two accidental names and requires the exact
-target-specific phrase `I-CONFIRM-WORKER-DELETE-<target>`. Only the gate's
-validated output enters the credentialed job. The intended Workers
-`mj-art-preview` and `mj-art` are hard-blocked and checked for HTTP 200 both
-before and after deletion.
-
-Cleanup uses Cloudflare's direct Workers Scripts API, not Wrangler configuration:
-`GET` and `DELETE /accounts/{account_id}/workers/scripts/{script_name}`. The
-official [download Worker API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/get/)
-documents the exact-script GET, and the official
-[delete Worker API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/delete/)
-documents exact-script DELETE and its optional `force` parameter. This workflow
-never supplies `force`, never retries, and has no wildcard, environment, or
-fallback path. It discards response bodies and emits only Worker names and HTTP
-statuses. Before DELETE, both intended Workers and the selected accidental Worker
-must return 200. After DELETE, the selected target must return 404 and both
-intended Workers must still return 200.
-
-Run each target exactly once from `main`, reviewing the target-specific phrase:
-
-```sh
-gh workflow run cleanup-accidental-workers.yml --ref main -f target=mj-art-preview-preview -f confirmation_phrase=I-CONFIRM-WORKER-DELETE-mj-art-preview-preview
-gh workflow run cleanup-accidental-workers.yml --ref main -f target=mj-art-production -f confirmation_phrase=I-CONFIRM-WORKER-DELETE-mj-art-production
-```
-
-Do not dispatch both concurrently; the fixed concurrency group queues the second
-run rather than cancelling an in-progress cleanup. Remove the temporary path only
-after both audit summaries show target 404 and both intended Workers 200.
+Historical incident evidence: the one-time Turnstile mis-targeting repair completed
+successfully in GitHub Actions runs `31189090300` and `31189222411`. No temporary
+repair tooling remains in the repository.
 
 Rate-limit state is isolated twice. `apps/web/wrangler.jsonc` assigns distinct
 namespace IDs to local/base (`1001`), preview (`1002`), and production (`1003`),
