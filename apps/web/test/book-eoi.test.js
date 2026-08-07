@@ -13,6 +13,7 @@ import {
   liveCatalogProbe
 } from '../../../scripts/check-book-eoi-schema.mjs';
 import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 
 const {
@@ -46,6 +47,12 @@ const ENC_KEY = 'test-enc-secret--' + '0123456789'.repeat(3);
 const SESSION_SECRET = 'test-admin-session-secret-0123456789';
 const SESSION_COOKIE = 'mj_art_admin';
 const SESSION_MAX_AGE_MS = 60 * 60 * 8 * 1000;
+const TURNSTILE_SITE_KEY = 'test-site-key';
+const TURNSTILE_SECRET_KEY = 'turnstile-secret';
+
+function turnstileFingerprint(sitekey = TURNSTILE_SITE_KEY, secret = TURNSTILE_SECRET_KEY) {
+  return createHash('sha256').update(sitekey).update(Buffer.from([0])).update(secret).digest('hex');
+}
 
 const SQL_PATH = path.resolve(import.meta.dirname, '..', '..', '..', 'database', 'mj-eoi-schema.sql');
 
@@ -97,6 +104,7 @@ function makeEnv({ sql, turnstile, rateLimiter, withConfig = true } = {}) {
     ADMIN_SESSION_SECRET: SESSION_SECRET,
     BOOK_EOI_TURNSTILE_ACTION: 'books-eoi',
     BOOK_EOI_ALLOWED_HOSTNAMES: 'localhost',
+    BOOK_EOI_ENVIRONMENT: 'local',
     BOOK_EOI_RATE_LIMITER: rateLimiter || { async limit() { return { success: true }; } },
     TURNSTILE_FETCH: turnstile || okTurnstile()
   };
@@ -104,8 +112,9 @@ function makeEnv({ sql, turnstile, rateLimiter, withConfig = true } = {}) {
     env.NEON_DATABASE_URL = 'postgres://u:p@host/db';
     env.BOOK_EOI_HMAC_KEY = HMAC_KEY;
     env.BOOK_EOI_ENCRYPTION_KEY = ENC_KEY;
-    env.TURNSTILE_SECRET_KEY = 'turnstile-secret';
-    env.TURNSTILE_SITE_KEY = 'test-site-key';
+    env.TURNSTILE_SECRET_KEY = TURNSTILE_SECRET_KEY;
+    env.TURNSTILE_SITE_KEY = TURNSTILE_SITE_KEY;
+    env.TURNSTILE_WIDGET_FINGERPRINT = turnstileFingerprint();
   }
   if (sql) env.BOOK_EOI_SQL = sql;
   return env;
@@ -520,7 +529,7 @@ test('rate limiter is keyed per client IP', async () => {
     env
   );
   assert.equal(res.status, 200);
-  assert.equal(seenKey, 'books-eoi:203.0.113.7');
+  assert.equal(seenKey, 'local:books-eoi:203.0.113.7');
 });
 
 // ===========================================================================
@@ -762,6 +771,32 @@ test('health returns unavailable when TURNSTILE_SECRET_KEY is missing', async ()
   const res = await worker.fetch(req('/api/books/health'), env);
   assert.equal(res.status, 503);
   assert.deepEqual(await body(res), { status: 'unavailable' });
+});
+
+test('health returns unavailable when TURNSTILE_WIDGET_FINGERPRINT is missing', async () => {
+  const env = makeEnv({ sql: liveCatalogSql(liveCatalogFixture()) });
+  delete env.TURNSTILE_WIDGET_FINGERPRINT;
+  const res = await worker.fetch(req('/api/books/health'), env);
+  assert.equal(res.status, 503);
+  assert.deepEqual(await body(res), { status: 'unavailable' });
+});
+
+test('health returns unavailable when the Turnstile sitekey/secret pair does not match its fingerprint', async () => {
+  const env = makeEnv({ sql: liveCatalogSql(liveCatalogFixture()) });
+  env.TURNSTILE_SECRET_KEY = 'different-turnstile-secret';
+  const res = await worker.fetch(req('/api/books/health'), env);
+  assert.equal(res.status, 503);
+  assert.deepEqual(await body(res), { status: 'unavailable' });
+});
+
+test('health returns unavailable when the rate limiter is missing or lacks limit()', async () => {
+  for (const limiter of [undefined, {}]) {
+    const env = makeEnv({ sql: liveCatalogSql(liveCatalogFixture()) });
+    env.BOOK_EOI_RATE_LIMITER = limiter;
+    const res = await worker.fetch(req('/api/books/health'), env);
+    assert.equal(res.status, 503);
+    assert.deepEqual(await body(res), { status: 'unavailable' });
+  }
 });
 
 test('health returns unavailable when the allowed hostname allowlist is empty', async () => {
@@ -1240,6 +1275,9 @@ test('liveCatalogProbe emits information_schema + pg_catalog queries', () => {
   assert.ok(probe.includes('pg_constraint'));
   assert.ok(probe.includes('pg_indexes'));
   assert.ok(probe.includes('role_table_grants'));
+  assert.ok(probe.includes("has_database_privilege(current_user, current_database(), 'TEMPORARY')"));
+  assert.ok(probe.includes("has_schema_privilege(current_user, 'public', 'USAGE')"));
+  assert.ok(probe.includes("has_function_privilege(current_user, p.oid, 'EXECUTE')"));
 });
 
 test('the SQL declares the UNIQUE(book_code, email_hash) constraint', () => {
@@ -1253,6 +1291,9 @@ test('the SQL documents the SELECT/INSERT/UPDATE-only role contract', () => {
   const sql = readFileSync(SQL_PATH, 'utf8');
   assert.ok(/GRANT SELECT, INSERT, UPDATE/.test(sql));
   assert.ok(/REVOKE DELETE/.test(sql));
+  assert.ok(/REVOKE TEMPORARY ON DATABASE/.test(sql));
+  assert.ok(/REVOKE USAGE, CREATE ON SCHEMA public/.test(sql));
+  assert.ok(/REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public/.test(sql));
   // And forbids DELETE/TRUNCATE in executable SQL.
   const stripped = stripSqlComments(sql);
   assert.equal(/\bDELETE\s+FROM\b/i.test(stripped), false);
@@ -1388,7 +1429,7 @@ test('rate-limit key uses cf-connecting-ip and ignores spoofable X-Forwarded-For
     headers: { 'content-type': 'application/json', origin: 'http://localhost', 'cf-connecting-ip': '198.51.100.2', 'x-forwarded-for': '10.0.0.99' },
     body: JSON.stringify(validPayload())
   }), env);
-  assert.equal(seenKey, 'books-eoi:198.51.100.2');
+  assert.equal(seenKey, 'local:books-eoi:198.51.100.2');
 });
 
 test('rate-limit key falls back to a single stable unknown bucket (no XFF fan-out)', async () => {
@@ -1402,7 +1443,7 @@ test('rate-limit key falls back to a single stable unknown bucket (no XFF fan-ou
     headers: { 'content-type': 'application/json', origin: 'http://localhost', 'x-forwarded-for': '10.0.0.99' },
     body: JSON.stringify(validPayload())
   }), env);
-  assert.equal(seenKey, 'books-eoi:unknown');
+  assert.equal(seenKey, 'local:books-eoi:unknown');
 });
 
 // --- Turnstile idempotency_key + hostname-config fail-closed ---
@@ -1689,5 +1730,3 @@ test('unsupported methods on /books.html and /books/ return a JSON 405', async (
     assert.equal(res.headers.get('content-type'), 'application/json', `POST ${path} -> JSON`);
   }
 });
-
-

@@ -119,10 +119,10 @@ jobs:
           wrangler_args=()
           case "${TARGET_ENVIRONMENT}" in
             preview)
-              wrangler_args+=(--env preview --name mj-art-preview)
+              wrangler_args+=(--env preview)
               ;;
             production)
-              wrangler_args+=(--env production --name mj-art)
+              wrangler_args+=(--env production)
               ;;
             *)
               echo "fail closed: unsupported Worker environment"
@@ -132,21 +132,24 @@ jobs:
 
           SITE_KEY="$(<"${TURNSTILE_OUTPUT_DIR}/TURNSTILE_SITE_KEY")"
           SECRET_KEY="$(<"${TURNSTILE_OUTPUT_DIR}/TURNSTILE_SECRET_KEY")"
-          if [ -z "${SITE_KEY}" ] || [ -z "${SECRET_KEY}" ]; then
+          WIDGET_FINGERPRINT="$(<"${TURNSTILE_OUTPUT_DIR}/TURNSTILE_WIDGET_FINGERPRINT")"
+          if [ -z "${SITE_KEY}" ] || [ -z "${SECRET_KEY}" ] || [ -z "${WIDGET_FINGERPRINT}" ]; then
             echo "fail closed: staged Turnstile credential file is empty"
             exit 1
           fi
           printf '::add-mask::%s\n' "${SITE_KEY}"
           printf '::add-mask::%s\n' "${SECRET_KEY}"
+          printf '::add-mask::%s\n' "${WIDGET_FINGERPRINT}"
           printf '%s' "${SITE_KEY}" | pnpm exec wrangler secret put TURNSTILE_SITE_KEY "${wrangler_args[@]}"
           printf '%s' "${SECRET_KEY}" | pnpm exec wrangler secret put TURNSTILE_SECRET_KEY "${wrangler_args[@]}"
+          printf '%s' "${WIDGET_FINGERPRINT}" | pnpm exec wrangler secret put TURNSTILE_WIDGET_FINGERPRINT "${wrangler_args[@]}"
 
           pnpm exec wrangler secret list "${wrangler_args[@]}" --format json > "${SECRET_NAMES_FILE}"
           node --input-type=module - "${SECRET_NAMES_FILE}" <<'NODE'
           import { readFileSync } from 'node:fs';
           const entries = JSON.parse(readFileSync(process.argv[2], 'utf8'));
           const names = new Set(entries.map((entry) => entry.name));
-          for (const required of ['TURNSTILE_SITE_KEY', 'TURNSTILE_SECRET_KEY']) {
+          for (const required of ['TURNSTILE_SITE_KEY', 'TURNSTILE_SECRET_KEY', 'TURNSTILE_WIDGET_FINGERPRINT']) {
             if (!names.has(required)) throw new Error(`required Worker secret name is missing: ${required}`);
           }
           console.log('Required Turnstile Worker secret names are present.');
@@ -162,6 +165,7 @@ jobs:
           for staged in \
             "${TURNSTILE_OUTPUT_DIR}/TURNSTILE_SITE_KEY" \
             "${TURNSTILE_OUTPUT_DIR}/TURNSTILE_SECRET_KEY" \
+            "${TURNSTILE_OUTPUT_DIR}/TURNSTILE_WIDGET_FINGERPRINT" \
             "${SECRET_NAMES_FILE}"; do
             if [ -f "${staged}" ]; then shred -u "${staged}"; fi
           done

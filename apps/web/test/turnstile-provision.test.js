@@ -17,6 +17,7 @@ import path from 'node:path';
 import {
   TURNSTILE_TARGETS,
   runTurnstileProvisioner,
+  turnstileWidgetFingerprint,
   writeCredentialFiles
 } from '../../../scripts/provision-turnstile.mjs';
 
@@ -129,12 +130,24 @@ test('provision creates the exact managed single-hostname widget and writes mode
     domains: [target.hostname],
     mode: 'managed'
   });
-  for (const [filename, value] of [['TURNSTILE_SITE_KEY', SITEKEY], ['TURNSTILE_SECRET_KEY', SECRET]]) {
+  for (const [filename, value] of [
+    ['TURNSTILE_SITE_KEY', SITEKEY],
+    ['TURNSTILE_SECRET_KEY', SECRET],
+    ['TURNSTILE_WIDGET_FINGERPRINT', turnstileWidgetFingerprint(SITEKEY, SECRET)]
+  ]) {
     const file = path.join(outputDir, filename);
     assert.equal(readFileSync(file, 'utf8'), value);
     assert.equal(lstatSync(file).mode & 0o777, 0o600);
   }
   assert.doesNotMatch(output.value(), new RegExp(`${SITEKEY}|${SECRET}`));
+});
+
+test('widget fingerprint hashes the exact UTF-8 sitekey + NUL + secret tuple', () => {
+  assert.equal(
+    turnstileWidgetFingerprint('site', 'secret'),
+    'e30cc6fd4c6633bfca0d4eed774306068a78e1fa52166b7badcac3ca282e2d98'
+  );
+  assert.notEqual(turnstileWidgetFingerprint('site', 'secret'), turnstileWidgetFingerprint('sites', 'ecret'));
 });
 
 test('provision reuses one exact valid widget and GETs its secret without creating', async (t) => {

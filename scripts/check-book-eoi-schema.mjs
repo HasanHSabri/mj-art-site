@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // =============================================================================
-// Books EOI schema-drift guard (offline, deterministic, no network).
+// Books EOI schema-drift guard (offline by default; optional read-only live probe).
 // =============================================================================
 // Parses database/mj-eoi-schema.sql to extract the declared table, columns,
 // CHECK constraints, UNIQUE constraint, indexes, and the documented runtime
@@ -15,19 +15,25 @@
 //      operator can execute against Neon to compare the LIVE database to this
 //      canonical definition (the comparison query; not executed here).
 //
-// This is NOT a migration runner and makes no database calls. Exit status is
-// nonzero on any assertion failure. Wire it into CI/release checks via:
+// This is NOT a migration runner and never writes to the database. Exit status
+// is nonzero on any assertion failure. Wire it into CI/release checks via:
 //   node scripts/check-book-eoi-schema.mjs
-// Optional: --probe prints only the live-catalog probe SQL.
+// Optional: --probe prints only the live-catalog/privilege probe SQL.
+// Optional: --live runs the health-equivalent catalog comparison read-only.
 // =============================================================================
 
 import { readFileSync, existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 
 import {
   EXPECTED_SCHEMA_SIGNATURE,
   SCHEMA_TABLE,
-  computeColumnSignature
+  bookEoiSecretsOk,
+  compareLiveCatalog,
+  computeColumnSignature,
+  createNeonSqlExecutor,
+  probeLiveCatalogShape
 } from '../apps/web/src/book-eoi.js';
 
 const ROOT = path.resolve(scriptDir(), '..');
@@ -178,9 +184,32 @@ export function liveCatalogProbe() {
     "SELECT indexname, indexdef FROM pg_indexes",
     "WHERE schemaname = 'mj_eoi' AND tablename = 'book_eoi';",
     "",
-    "-- Table privileges granted to the app role (substitute your role name):",
+    "-- Effective runtime-role boundaries (run while connected as the app role)",
+    "SELECT current_user AS role_name, current_database() AS database_name,",
+    "  has_database_privilege(current_user, current_database(), 'CONNECT') AS has_connect,",
+    "  has_database_privilege(current_user, current_database(), 'TEMPORARY') AS has_temp,",
+    "  has_schema_privilege(current_user, 'mj_eoi', 'USAGE') AS has_mj_eoi_usage,",
+    "  has_schema_privilege(current_user, 'mj_eoi', 'CREATE') AS has_mj_eoi_create,",
+    "  has_schema_privilege(current_user, 'public', 'USAGE') AS has_public_usage,",
+    "  has_schema_privilege(current_user, 'public', 'CREATE') AS has_public_create,",
+    "  has_table_privilege(current_user, 'mj_eoi.book_eoi', 'SELECT') AS has_select,",
+    "  has_table_privilege(current_user, 'mj_eoi.book_eoi', 'INSERT') AS has_insert,",
+    "  has_table_privilege(current_user, 'mj_eoi.book_eoi', 'UPDATE') AS has_update,",
+    "  has_table_privilege(current_user, 'mj_eoi.book_eoi', 'DELETE') AS has_delete,",
+    "  has_table_privilege(current_user, 'mj_eoi.book_eoi', 'TRUNCATE') AS has_truncate,",
+    "  has_table_privilege(current_user, 'mj_eoi.book_eoi', 'REFERENCES') AS has_references,",
+    "  has_table_privilege(current_user, 'mj_eoi.book_eoi', 'TRIGGER') AS has_trigger;",
+    "",
+    "-- Must return zero rows: no executable routines in public for the app role",
+    "SELECT p.oid::regprocedure::text AS executable_public_routine",
+    "FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace",
+    "WHERE n.nspname = 'public' AND has_function_privilege(current_user, p.oid, 'EXECUTE')",
+    "ORDER BY 1;",
+    "",
+    "-- Explicit table grants (must be exactly SELECT, INSERT, UPDATE for the app role):",
     "SELECT grantee, privilege_type FROM information_schema.role_table_grants",
-    "WHERE table_schema = 'mj_eoi' AND table_name = 'book_eoi' ORDER BY grantee, privilege_type;"
+    "WHERE grantee = current_user AND table_schema = 'mj_eoi' AND table_name = 'book_eoi'",
+    "ORDER BY privilege_type;"
   ].join('\n');
 }
 
@@ -194,20 +223,45 @@ export function stripSqlComments(sql) {
     .replace(/--[^\n]*/g, '');
 }
 
-function main() {
+async function runLiveCheck(env = process.env) {
+  if (typeof env.NEON_DATABASE_URL !== 'string' || env.NEON_DATABASE_URL.length === 0) {
+    throw new Error('NEON_DATABASE_URL is missing or empty');
+  }
+  if (!bookEoiSecretsOk(env)) {
+    throw new Error('Books EOI crypto secrets are missing or below minimum strength');
+  }
+  const webRequire = createRequire(path.join(ROOT, 'apps', 'web', 'package.json'));
+  const { neon } = await import(webRequire.resolve('@neondatabase/serverless'));
+  const sql = createNeonSqlExecutor(neon(env.NEON_DATABASE_URL));
+  const result = compareLiveCatalog(await probeLiveCatalogShape(sql));
+  if (!result.match) throw new Error('live Books EOI catalog does not match the canonical shape');
+  console.log('check-book-eoi-schema: OK - live catalog matches canonical shape (read-only)');
+}
+
+async function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help') || args.includes('-h')) {
     process.stdout.write(
       [
         'check-book-eoi-schema.mjs - offline Books EOI schema-drift guard',
         '',
-        'Usage: node scripts/check-book-eoi-schema.mjs [--probe] [--help]',
+        'Usage: node scripts/check-book-eoi-schema.mjs [--probe|--live|--help]',
         '',
         'Exits nonzero if the canonical SQL signature drifts from the app expectation,',
-        'or if required constraints/indexes are missing. No network access.',
-        '  --probe  print the live-catalog comparison SQL and exit.'
+        'or if required constraints/indexes are missing. No database writes.',
+        '  --probe  print the live-catalog and privilege comparison SQL and exit.',
+        '  --live   compare the live catalog read-only using environment credentials.'
       ].join('\n') + '\n'
     );
+    return;
+  }
+
+  if (args.includes('--live')) {
+    try {
+      await runLiveCheck();
+    } catch {
+      fail('live read-only Books EOI catalog/config check failed');
+    }
     return;
   }
 
@@ -337,4 +391,4 @@ function main() {
   console.log('check-book-eoi-schema: OK - signature ' + signature);
 }
 
-main();
+await main();

@@ -65,6 +65,7 @@ a {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -381,6 +382,15 @@ label {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
+/* Current page uses the same non-colour shape/weight cues as an in-page
+   location, while remaining semantically distinct via aria-current="page". */
+.chapter-link[aria-current="page"] {
+  font-weight: 600;
+  color: var(--accent-deep);
+  background: rgba(154, 92, 75, 0.12);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 .chapter-nav[hidden] {
   display: none;
 }
@@ -391,6 +401,7 @@ label {
 .topbar a:focus-visible,
 .inline-link:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible,
 .chapter-link:focus-visible,
 .chapter-summary:focus-visible,
@@ -659,6 +670,7 @@ label {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   padding: 14px 16px;

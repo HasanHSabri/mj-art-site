@@ -38,10 +38,24 @@ are never reflected in Git, and Git commits never change live R2.
 - **Push to `main`** -> checks only (no deploy). Production is never deployed automatically.
 - **Pull request against `main`** -> checks only (no deploy).
 - **Manual `workflow_dispatch`** -> deploys the chosen `preview` (default) or `production`.
+- Manual deploys are globally serialized and never cancel an in-progress run. A
+  credential-free gate validates the exact target and is the only source for the
+  protected GitHub environment binding.
+- Before any bucket creation, Worker secret write, or deploy, the workflow checks
+  the selected Worker's three Turnstile binding names, Wrangler's effective
+  limiter/environment bindings via dry-run, crypto-secret strength, and the live
+  Neon catalog using read-only queries.
 
 This workflow **mutates** state: it creates R2 buckets, puts admin secrets, and
 deploys the Worker. It is therefore **not safe for inventory or backup**. Do not
 repurpose it, or its dispatch, for read-only R2 inspection.
+
+The release is a direct, single `wrangler deploy`; there is no rollback, version
+fallback, or controlled rollout in this workflow. Post-deploy smoke can detect a
+bad live release but cannot undo it, so a smoke failure may leave the new Worker
+already serving until an operator performs a separate corrective deploy. The
+stronger mutation-free preflight reduces that risk but cannot eliminate runtime
+or propagation failures after deployment.
 
 ## 4. Secrets (names only)
 
@@ -667,12 +681,37 @@ Each project has a dedicated SQL login role `mj_eoi_app`, least-privilege:
   `statement_timeout = 5000` (ms).
 - Granted only: `CONNECT` on `neondb`, `USAGE` on schema `mj_eoi`, and
   `SELECT, INSERT, UPDATE` on `mj_eoi.book_eoi`.
-- Revoked/denied: `DELETE`, `TRUNCATE`, `REFERENCES`, `TRIGGER`, schema `CREATE`
-  (and thus any DDL), and `PUBLIC` table grants.
+- Revoked/denied: database `TEMPORARY`/`TEMP`; `USAGE` and `CREATE` on schema
+  `public`; `EXECUTE` on every function/procedure in schema `public`; `DELETE`,
+  `TRUNCATE`, `REFERENCES`, `TRIGGER`; schema `CREATE` (and thus any DDL); and
+  `PUBLIC` table grants.
 - Verified live on both projects as the app role: it can read the catalog and
   SELECT/INSERT/UPDATE (write tests were rolled back so the table stays empty),
   and is denied `DELETE`, `TRUNCATE`, `CREATE TABLE`, and `DROP`. Both tables
   were empty (count 0) at handover.
+
+**Pending infrastructure correction:** live role grants must be re-audited and
+corrected by a Neon owner for both projects to enforce the explicit no-TEMP,
+no-`public`-schema-USAGE, and no-extra-`public`-routine-EXECUTE contract above.
+This commit changes no database state. `node scripts/check-book-eoi-schema.mjs
+--probe` now emits effective privilege checks capable of proving those absences;
+run it as `mj_eoi_app` after the operator revocations, and retain the result with
+the release evidence.
+
+For each isolated `neondb`, the owner must apply the following correction (replace
+`<owner>` only; the app role is fixed), then reconnect as `mj_eoi_app` and run the
+generated probe. Revoking from `PUBLIC` is required because PostgreSQL has no
+`DENY`; a direct revoke from `mj_eoi_app` cannot override an inherited public
+grant.
+
+```sql
+REVOKE TEMPORARY ON DATABASE neondb FROM PUBLIC, mj_eoi_app;
+REVOKE USAGE, CREATE ON SCHEMA public FROM PUBLIC, mj_eoi_app;
+REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC, mj_eoi_app;
+REVOKE EXECUTE ON ALL PROCEDURES IN SCHEMA public FROM PUBLIC, mj_eoi_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE <owner> IN SCHEMA public
+  REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+```
 
 ### 13.4 Connection and GitHub secrets (names only)
 
@@ -688,10 +727,12 @@ Secret names configured (names only, never values):
 - `BOOK_EOI_HMAC_KEY` (environment: preview, production)
 - `BOOK_EOI_ENCRYPTION_KEY` (environment: preview, production)
 
-`TURNSTILE_SECRET_KEY` and `TURNSTILE_SITE_KEY` are **not** GitHub secrets.
+`TURNSTILE_SECRET_KEY`, `TURNSTILE_SITE_KEY`, and
+`TURNSTILE_WIDGET_FINGERPRINT` are **not** GitHub secrets.
 They are provisioned directly on the selected Worker by the guarded, manual-only
 `.github/workflows/turnstile-provision.yml` workflow. The workflow receives the
-widget credentials from Cloudflare into mode-`0600` runner-temp files, masks the
+widget credentials from Cloudflare into mode-`0600` runner-temp files, derives
+SHA-256 over the exact UTF-8 `sitekey + NUL + secret` tuple, masks all three
 values, pipes them directly to `wrangler secret put`, validates only the resulting
 Worker secret **names**, and shreds the files. No Turnstile value is stored in
 GitHub, an artifact, logs, Git, or this document. They are unrelated to the Neon
@@ -702,23 +743,26 @@ deploy**:
   Worker into the `/books` page's Turnstile widget. If it is absent the Worker
   **fails closed with 503** for `/books` (no half-functional page is served).
 - `TURNSTILE_SECRET_KEY` verifies submitted tokens server-side.
+- `TURNSTILE_WIDGET_FINGERPRINT` binds the exact sitekey/secret pair without
+  exposing either value. Health recomputes and compares it without returning it.
 
-Both are enforced by the post-deploy **`/api/books/health` smoke** in the deploy
-workflow (`.github/workflows/deploy-cloudflare.yml`, "Verify deployment"): that
-probe's config gate requires `NEON_DATABASE_URL`, `TURNSTILE_SECRET_KEY`,
-`TURNSTILE_SITE_KEY`, both crypto keys, and the non-secret allowed Turnstile
-action/host, then compares the live schema. A preview/production deploy
-**deliberately cannot succeed** until both keys are present and the schema
+All three are enforced by the post-deploy **`/api/books/health` smoke** in the
+deploy workflow (`.github/workflows/deploy-cloudflare.yml`, "Verify deployment"): that
+probe's config gate requires `NEON_DATABASE_URL`, all three Turnstile bindings,
+the limiter `limit()` interface, the committed environment marker, both crypto
+keys, and the non-secret allowed Turnstile action/host, then compares the live
+schema. A preview/production deploy **deliberately cannot succeed** until the pair
+and fingerprint are present and matched and the schema
 matches — it is not merely pending. No existing repo-level secret was modified
-to add EOI; the EOI data/crypto secrets are environment-scoped only, and the two
-Turnstile keys are Worker-scoped only.
+to add EOI; the EOI data/crypto secrets are environment-scoped only, and the three
+Turnstile bindings are Worker-scoped only.
 
 The deploy workflow (`.github/workflows/deploy-cloudflare.yml`) reads the
 data/crypto secrets as environment secrets under the selected `environment:` and
 pushes them to the Worker as Wrangler secrets on manual `workflow_dispatch`
-deploy. The two Turnstile keys are **excluded** from that push list because they
-are provisioned by the separate guarded workflow. Push/PR still run checks only;
-production is never deployed automatically.
+deploy. The three Turnstile bindings are **excluded** from that push list because
+they are provisioned by the separate guarded workflow. Push/PR still run checks
+only; production is never deployed automatically.
 
 No connection string, password, or key value is stored in Git or this document.
 Rotation re-provisions the role password/keys against the project and resets the
@@ -730,12 +774,12 @@ greenfield), so there is intentionally no rotation/compatibility fallback path.
 The only approved Turnstile automation is
 `.github/workflows/turnstile-provision.yml`, backed by
 `scripts/provision-turnstile.mjs`. It is `workflow_dispatch` only, has
-`contents: read`, serializes per environment, uses immutable action pins, uploads
-no artifact, and has no widget update/delete/secret-rotation operation. Its token
+`contents: read`, serializes globally across both environments, uses immutable
+action pins, uploads no artifact, and has no widget update/delete/secret-rotation operation. Its token
 is supplied only through the `CLOUDFLARE_API_TOKEN` environment variable. The
 token must cover account `908b6ebad9914f568db2f19a25dd319b` and have Turnstile
 Sites Read for probes; provisioning additionally needs Turnstile Sites Write and
-Workers Scripts Write for the two Worker secret puts.
+Workers Scripts Write for the three Worker secret puts.
 
 The script accepts only the following hardcoded targets; account, Worker,
 hostname, and widget name cannot be overridden:
@@ -766,15 +810,28 @@ Exact operator procedure:
    There is no update, delete, or rotate fallback.
 5. The script refuses relative, traversing, permissive, foreign-owned, symlinked,
    or pre-existing output paths. It exclusively creates
-   `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` files at mode `0600` in the
-   runner's mode-`0700` temporary directory. The workflow masks both loaded
-   values before piping them directly to the exact environment's
-   `wrangler secret put` commands; only secret names are read back. Temp files
+   `TURNSTILE_SITE_KEY`, `TURNSTILE_SECRET_KEY`, and
+   `TURNSTILE_WIDGET_FINGERPRINT` files at mode `0600` in the runner's mode-`0700`
+   temporary directory. The fingerprint is never printed. The workflow masks all
+   three loaded values before piping them directly to the exact environment's
+   env-only (`--env`, never `--name`) `wrangler secret put` commands; only secret
+   names are read back. Temp files
    are shredded on every provision outcome. Values never become GitHub secrets.
-6. Verify the workflow succeeded and that its name-only check found both exact
+6. Verify the workflow succeeded and that its name-only check found all three exact
    Worker bindings. Do not copy credentials out of the run.
-7. Each `wrangler secret put` creates and immediately deploys a **secret-only
-   Worker version**. This does not replace the normal application release. After
+7. Each of the three `wrangler secret put` commands creates and immediately
+   deploys a **secret-only Worker version**. This does not replace the normal application release. After
    provisioning, run the final application deployment through the manual
    `.github/workflows/deploy-cloudflare.yml` workflow for the same environment;
-   its `/api/books/health` smoke proves the complete Turnstile/Neon/crypto setup.
+   its `/api/books/health` smoke proves the complete
+   Turnstile/limiter/Neon/crypto setup.
+
+Rate-limit state is isolated twice. `apps/web/wrangler.jsonc` assigns distinct
+namespace IDs to local/base (`1001`), preview (`1002`), and production (`1003`),
+and commits `BOOK_EOI_ENVIRONMENT=local|preview|production`; every limiter key is
+prefixed with that marker. This prevents counter collision even if a future
+namespace configuration drifts.
+
+Until this release commit is manually deployed, a live `404` on `/books` is the
+expected predeploy state and is not a code defect. Do not open a route bug for
+that observation alone.

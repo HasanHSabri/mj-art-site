@@ -88,6 +88,12 @@ test('shared styles.css is the inherited grid root cause: <label> is a grid with
     'the inherited label grid has no explicit track (the latent overflow source)');
 });
 
+test('shared public form controls include select in font, surface, and focus inheritance', () => {
+  assert.match(stylesCss, /button,\s*\ninput,\s*\nselect,\s*\ntextarea\s*\{\s*\n\s*font:\s*inherit/);
+  assert.match(stylesCss, /input,\s*\nselect,\s*\ntextarea\s*\{[^}]*width:\s*100%[^}]*color:\s*var\(--text\)/);
+  assert.match(stylesCss, /input:focus-visible,\s*\nselect:focus-visible,\s*\ntextarea:focus-visible/);
+});
+
 test('every grid level of the Books form resolves to a 0-minimum track (no 320px overflow)', () => {
   const formBody = ruleBodyFor(booksCss, '.books-eoi-form', 'max-width:\\s*620px');
   const fieldsetBody = ruleBodyFor(booksCss, '.books-fieldset');

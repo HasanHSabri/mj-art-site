@@ -12,8 +12,10 @@
 --     GRANT CONNECT ON DATABASE <db> TO <app_role>;
 --     GRANT USAGE  ON SCHEMA  mj_eoi TO <app_role>;
 --     GRANT SELECT, INSERT, UPDATE ON mj_eoi.book_eoi TO <app_role>;
---   It must NOT hold DELETE, TRUNCATE, or any DDL privilege, and must NOT have
---   access to any other schema/table. SELECT/INSERT/UPDATE only.
+--   It must NOT hold TEMPORARY/TEMP on the database; USAGE or CREATE on schema
+--   public; EXECUTE on routines in schema public; DELETE, TRUNCATE, REFERENCES,
+--   TRIGGER, or any DDL privilege; or access to any other schema/table.
+--   CONNECT + mj_eoi USAGE + SELECT/INSERT/UPDATE only.
 --
 -- PII PROTECTION CONTRACT (enforced in the Worker via Web Crypto):
 --   * email_hash  : HMAC-SHA256(normalized email) hex, 64 chars. Dedup key only.
@@ -68,5 +70,13 @@ COMMENT ON TABLE mj_eoi.book_eoi IS
 -- GRANT USAGE  ON SCHEMA  mj_eoi           TO <app_role>;
 -- GRANT SELECT, INSERT, UPDATE
 --   ON mj_eoi.book_eoi                     TO <app_role>;
--- -- Defense in depth: ensure DELETE/DDL are absent (idempotent no-ops if unset).
+-- -- Defense in depth: these revocations are pending operator correction where
+-- -- live role drift exists; this canonical file documents but does not apply it.
+-- -- PostgreSQL has no DENY: remove defaults inherited through PUBLIC as well as
+-- -- any direct app-role grant so the effective has_* privilege checks are false.
+-- REVOKE TEMPORARY ON DATABASE <db> FROM PUBLIC, <app_role>;
+-- REVOKE USAGE, CREATE ON SCHEMA public FROM PUBLIC, <app_role>;
+-- REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC, <app_role>;
+-- REVOKE EXECUTE ON ALL PROCEDURES IN SCHEMA public FROM PUBLIC, <app_role>;
 -- REVOKE DELETE, TRUNCATE ON mj_eoi.book_eoi FROM <app_role>;
+-- REVOKE REFERENCES, TRIGGER ON mj_eoi.book_eoi FROM <app_role>;

@@ -271,9 +271,11 @@ function main() {
       fail(deployWfPath + " workflow_dispatch environment input must not default to 'production'");
     }
 
-    // The deploy job if: condition (4-space job-level indent) must be gated to
-    // workflow_dispatch only and must not reference push.
-    const deployIf = deployWf.match(/^    if:\s*(.+)$/m);
+    const deployJob = deployWf.slice(deployWf.indexOf('  deploy:'));
+
+    // The deploy job must be gated to workflow_dispatch and a successful
+    // credential-free gate, while pushes continue through the check job only.
+    const deployIf = deployJob.match(/^    if:\s*(.+)$/m);
     if (!deployIf) {
       fail(deployWfPath + ' deploy job must declare a job-level if: condition');
     } else {
@@ -286,21 +288,30 @@ function main() {
       }
     }
 
-    // Job environment must come from inputs with no implicit production fallback.
-    if (!/inputs\.environment/.test(deployWf)) {
-      fail(deployWfPath + ' must set the deploy environment from inputs.environment');
+    // The gate validates the raw input and emits the only value allowed to bind
+    // the protected GitHub environment in the deploy job.
+    if (!/outputs:[\s\S]*environment:\s*\$\{\{\s*steps\.validate\.outputs\.environment\s*\}\}/.test(deployWf)) {
+      fail(deployWfPath + ' gate job must emit a validated environment output');
+    }
+    if (!/^    environment:\s*\$\{\{\s*needs\.gate\.outputs\.environment\s*\}\}\s*$/m.test(deployJob)) {
+      fail(deployWfPath + ' deploy job must bind the GitHub environment from needs.gate.outputs.environment');
+    }
+    if (/\$\{\{\s*inputs\.environment\s*\}\}/.test(deployJob)) {
+      fail(deployWfPath + ' deploy job must never consume the raw environment input');
     }
     if (/\|\|\s*'?production'?/.test(deployWf)) {
       fail(deployWfPath + " must not fall back to 'production' for the deploy environment");
     }
 
-    // Environment selection must use an explicit case over the supported targets
-    // (preview/production). No implicit else->production fallback may remain.
-    if (!/case\s+[^;]*inputs\.environment/.test(deployWf)) {
-      fail(deployWfPath + ' must select environment via an explicit case on inputs.environment');
+    // Environment selection must use explicit cases over the gated target.
+    if (!/case\s+"\$\{TARGET_ENVIRONMENT\}"/.test(deployJob)) {
+      fail(deployWfPath + ' must select environment via an explicit case on the gated output');
     }
     if (/\belse\b/.test(deployWf)) {
       fail(deployWfPath + ' must use explicit case targets (preview/production), no else fallback');
+    }
+    if (!/concurrency:\s*\n\s*group:\s*deploy-cloudflare\s*\n\s*cancel-in-progress:\s*false/.test(deployWf)) {
+      fail(deployWfPath + ' must globally serialize deployments without cancelling an in-progress run');
     }
   }
 
@@ -891,6 +902,25 @@ function main() {
     if (!/r2\s+bucket\s+create\s+"\$\{?BUCKET\}?"/.test(deployWf)) {
       fail(deployWfPath + ' must create the selected bucket via a case-selected "$BUCKET" variable');
     }
+    const preflightIndex = deployWf.indexOf('- name: Run mutation-free Worker and Books EOI preflight');
+    const bucketIndex = deployWf.indexOf('- name: Ensure selected-environment storage exists');
+    const secretPutIndex = deployWf.indexOf('wrangler secret put ADMIN_PASSWORD');
+    const deployIndex = deployWf.indexOf('pnpm exec wrangler deploy "${deploy_args[@]}"');
+    if (!(preflightIndex >= 0 && preflightIndex < bucketIndex && bucketIndex < secretPutIndex && secretPutIndex < deployIndex)) {
+      fail(deployWfPath + ' must complete every read-only preflight before bucket/secret/deploy mutations');
+    }
+    const preflight = deployWf.slice(preflightIndex, bucketIndex);
+    for (const required of [
+      'TURNSTILE_SITE_KEY',
+      'TURNSTILE_SECRET_KEY',
+      'TURNSTILE_WIDGET_FINGERPRINT',
+      'BOOK_EOI_RATE_LIMITER',
+      'BOOK_EOI_ENVIRONMENT',
+      'check-book-eoi-schema.mjs --live',
+      '--dry-run'
+    ]) {
+      if (!preflight.includes(required)) fail(deployWfPath + ' preflight is missing ' + required);
+    }
   }
 
   // 9) Guarded Turnstile provisioning. Probe is list-GET-only. Provision is
@@ -938,6 +968,7 @@ function main() {
     for (const required of [
       'secret put TURNSTILE_SITE_KEY',
       'secret put TURNSTILE_SECRET_KEY',
+      'secret put TURNSTILE_WIDGET_FINGERPRINT',
       'wrangler secret list',
       '::add-mask::%s',
       'shred -u'
@@ -946,6 +977,12 @@ function main() {
     }
     for (const forbidden of [/actions\/upload-artifact/i, /gh\s+secret/i, /secret\s+delete/i]) {
       if (forbidden.test(turnstileWf)) fail(turnstileWfPath + ' contains forbidden operation ' + forbidden);
+    }
+    if (/--name\b/.test(turnstileWf)) {
+      fail(turnstileWfPath + ' must target Worker secrets only with --env preview|production (no --name)');
+    }
+    if (/mj-art-preview-preview|mj-art-production/.test(turnstileWf)) {
+      fail(turnstileWfPath + ' contains a compounded/incorrect effective Worker name');
     }
   }
   if (turnstileScript !== null) {

@@ -308,6 +308,13 @@ test('current location is conveyed with shape/weight, not colour alone', () => {
   );
 });
 
+test('current Books page is conveyed with visible shape/weight, not colour alone', () => {
+  const body = ruleBody(stylesCss, '.chapter-link[aria-current="page"]');
+  assert.ok(body, 'aria-current="page" style must exist');
+  assert.match(body, /font-weight:\s*600/, 'heavier type');
+  assert.match(body, /box-shadow:\s*inset/, 'a non-colour inset marker');
+});
+
 test('anchor targets carry scroll-margin so fixed UI cannot obscure focused content', () => {
   assert.match(
     stylesCss,

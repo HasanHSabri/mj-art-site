@@ -64,6 +64,7 @@ const JPEG = 'image/jpeg';
 // reading the body, so an oversized payload is rejected even with no header.
 const MAX_ADMIN_LOGIN_BODY_BYTES = 4 * 1024;
 const MAX_BOOK_EOI_PATCH_BODY_BYTES = 2 * 1024;
+const BOOK_EOI_ENVIRONMENTS = new Set(['local', 'preview', 'production']);
 
 // Strict allowlist for served uploaded-image keys. Only canonical catalog JPEG
 // paths (full/thumb) ever match; everything else -- including artworks.json,
@@ -638,22 +639,37 @@ function bookEoiReadConfigOk(env) {
 }
 
 // Full deployment-config gate for the post-deploy /api/books/health probe. It
-// verifies that EVERY pre-provisioned Worker secret/binding is present so a
-// deploy fails closed when the Turnstile keys, DB URL, or crypto keys are
-// missing or misconfigured, and that the non-secret allowed Turnstile action
-// and hostname allowlist are set. Intentionally stricter than the per-route
-// read/write gates: its job is to catch an incompletely provisioned deployment
-// before it is trusted. It performs NO DB access.
-function bookEoiHealthConfigOk(env) {
-  return Boolean(
+// verifies that EVERY pre-provisioned Worker secret/binding is present, the
+// exact Turnstile sitekey+NUL+secret fingerprint matches, and the limiter exposes
+// limit(). It also requires DB/crypto/action/host/environment configuration.
+// Intentionally stricter than the per-route read/write gates. It performs no DB
+// access; the caller runs the separate live catalog probe after this passes.
+async function bookEoiHealthConfigOk(env) {
+  if (!(
     env &&
-      env.NEON_DATABASE_URL &&
-      typeof env.TURNSTILE_SECRET_KEY === 'string' && env.TURNSTILE_SECRET_KEY.length > 0 &&
-      typeof env.TURNSTILE_SITE_KEY === 'string' && env.TURNSTILE_SITE_KEY.length > 0 &&
-      typeof env.BOOK_EOI_TURNSTILE_ACTION === 'string' && env.BOOK_EOI_TURNSTILE_ACTION.length > 0 &&
-      parseAllowedHostnames(env.BOOK_EOI_ALLOWED_HOSTNAMES).length > 0 &&
-      bookEoiSecretsOk(env)
-  );
+    env.NEON_DATABASE_URL &&
+    typeof env.TURNSTILE_SECRET_KEY === 'string' && env.TURNSTILE_SECRET_KEY.length > 0 &&
+    typeof env.TURNSTILE_SITE_KEY === 'string' && env.TURNSTILE_SITE_KEY.length > 0 &&
+    typeof env.TURNSTILE_WIDGET_FINGERPRINT === 'string' && /^[0-9a-f]{64}$/.test(env.TURNSTILE_WIDGET_FINGERPRINT) &&
+    typeof env.BOOK_EOI_TURNSTILE_ACTION === 'string' && env.BOOK_EOI_TURNSTILE_ACTION.length > 0 &&
+    parseAllowedHostnames(env.BOOK_EOI_ALLOWED_HOSTNAMES).length > 0 &&
+    BOOK_EOI_ENVIRONMENTS.has(env.BOOK_EOI_ENVIRONMENT) &&
+    env.BOOK_EOI_RATE_LIMITER && typeof env.BOOK_EOI_RATE_LIMITER.limit === 'function' &&
+    bookEoiSecretsOk(env)
+  )) return false;
+
+  try {
+    const fingerprint = await turnstileWidgetFingerprint(env.TURNSTILE_SITE_KEY, env.TURNSTILE_SECRET_KEY);
+    return timingSafeEqual(fingerprint, env.TURNSTILE_WIDGET_FINGERPRINT);
+  } catch {
+    return false;
+  }
+}
+
+async function turnstileWidgetFingerprint(sitekey, secret) {
+  const input = new TextEncoder().encode(`${sitekey}\0${secret}`);
+  const digest = await crypto.subtle.digest('SHA-256', input);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
 // Same-origin enforcement: the request's Origin (or Referer) host must match the
@@ -700,11 +716,14 @@ function bookEoiRateLimitKey(request) {
 // not a legitimate rate-limit denial. A real denial ({ success: false }) sets
 // allowed=false with serviceError=false (-> 429). There is no fallback binding.
 async function rateLimit(env, key) {
+  if (!BOOK_EOI_ENVIRONMENTS.has(env.BOOK_EOI_ENVIRONMENT)) {
+    return { allowed: false, serviceError: true };
+  }
   const rl = env.BOOK_EOI_RATE_LIMITER;
   if (!rl || typeof rl.limit !== 'function') return { allowed: false, serviceError: true };
   let decision;
   try {
-    decision = await rl.limit({ key });
+    decision = await rl.limit({ key: `${env.BOOK_EOI_ENVIRONMENT}:${key}` });
   } catch {
     return { allowed: false, serviceError: true };
   }
@@ -893,11 +912,11 @@ async function handleBookInterest(env) {
 // outcome (healthy | mismatch | unavailable) and never the differences, column
 // data, or any internal detail.
 async function handleBookHealth(env) {
-  // Post-deploy smoke gate: the FULL pre-provisioned config (DB + both
-  // Turnstile keys + crypto keys + allowed action/host) must be present, then
+  // Post-deploy smoke gate: the full pre-provisioned config (DB + Turnstile
+  // pair/fingerprint + limiter/environment + crypto keys + action/host) must be present, then
   // the live schema is compared. The PUBLIC response reveals only the outcome
   // (healthy | mismatch | unavailable), never the differences or any detail.
-  if (!bookEoiHealthConfigOk(env)) {
+  if (!(await bookEoiHealthConfigOk(env))) {
     return jsonResponse({ status: 'unavailable' }, 503);
   }
   let sql;

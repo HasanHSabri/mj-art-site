@@ -66,6 +66,7 @@ function makeEnv(storedText) {
     },
     ADMIN_PASSWORD: 'secret',
     ADMIN_SESSION_SECRET: 'test-admin-session-secret-0123456789',
+    BOOK_EOI_ENVIRONMENT: 'local',
     BOOK_EOI_RATE_LIMITER: { async limit() { return { success: true }; } }
   };
 }
@@ -395,6 +396,7 @@ function makeStoreEnv() {
     },
     ADMIN_PASSWORD: 'secret',
     ADMIN_SESSION_SECRET: 'test-admin-session-secret-0123456789',
+    BOOK_EOI_ENVIRONMENT: 'local',
     BOOK_EOI_RATE_LIMITER: { async limit() { return { success: true }; } }
   };
 }

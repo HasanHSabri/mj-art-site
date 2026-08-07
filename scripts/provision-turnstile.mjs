@@ -12,6 +12,7 @@ import {
   unlinkSync,
   writeSync
 } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -19,7 +20,8 @@ const API_ROOT = 'https://api.cloudflare.com/client/v4';
 const ACCOUNT_ID = '908b6ebad9914f568db2f19a25dd319b';
 const OUTPUT_FILES = Object.freeze({
   sitekey: 'TURNSTILE_SITE_KEY',
-  secret: 'TURNSTILE_SECRET_KEY'
+  secret: 'TURNSTILE_SECRET_KEY',
+  fingerprint: 'TURNSTILE_WIDGET_FINGERPRINT'
 });
 
 export const TURNSTILE_TARGETS = Object.freeze({
@@ -185,6 +187,14 @@ function assertSecureOutputDirectory(outputDir) {
   return resolved;
 }
 
+export function turnstileWidgetFingerprint(sitekey, secret) {
+  return createHash('sha256')
+    .update(sitekey, 'utf8')
+    .update(Buffer.from([0]))
+    .update(secret, 'utf8')
+    .digest('hex');
+}
+
 export function writeCredentialFiles(outputDir, sitekey, secret, { openFile = openSync } = {}) {
   if (typeof sitekey !== 'string' || sitekey.length === 0 || typeof secret !== 'string' || secret.length === 0) {
     throw new Error('Cloudflare did not return both required Turnstile credentials');
@@ -193,7 +203,11 @@ export function writeCredentialFiles(outputDir, sitekey, secret, { openFile = op
     throw new Error('Cloudflare returned a Turnstile credential with an unsafe shape');
   }
   const safeDir = assertSecureOutputDirectory(outputDir);
-  const paths = [path.join(safeDir, OUTPUT_FILES.sitekey), path.join(safeDir, OUTPUT_FILES.secret)];
+  const paths = [
+    path.join(safeDir, OUTPUT_FILES.sitekey),
+    path.join(safeDir, OUTPUT_FILES.secret),
+    path.join(safeDir, OUTPUT_FILES.fingerprint)
+  ];
 
   for (const outputPath of paths) {
     try {
@@ -219,6 +233,7 @@ export function writeCredentialFiles(outputDir, sitekey, secret, { openFile = op
     }
     writeSync(fds[0], sitekey, null, 'utf8');
     writeSync(fds[1], secret, null, 'utf8');
+    writeSync(fds[2], turnstileWidgetFingerprint(sitekey, secret), null, 'utf8');
     for (const fd of fds) fsyncSync(fd);
   } catch (error) {
     for (const fd of fds) {

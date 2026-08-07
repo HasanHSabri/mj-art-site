@@ -202,7 +202,7 @@ test('deploy-cloudflare.yml never creates a bucket by literal name in a command'
 
 test('deploy-cloudflare.yml creates the selected bucket via a case-selected $BUCKET variable', () => {
   assert.match(DEPLOY, /r2\s+bucket\s+create\s+"\$\{?BUCKET\}?"/);
-  assert.match(DEPLOY, /case\s+[^;]*inputs\.environment/);
+  assert.match(DEPLOY, /case\s+"\$\{TARGET_ENVIRONMENT\}"/);
 });
 
 test('deploy-cloudflare.yml still defaults to preview and gates deploy on workflow_dispatch', () => {

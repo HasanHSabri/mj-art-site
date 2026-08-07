@@ -8,6 +8,7 @@ import { findInputsInRunBlocks, findSecretsInRunBlocks } from '../../../scripts/
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const workflow = readFileSync(path.join(root, '.github/workflows/turnstile-provision.yml'), 'utf8');
 const script = readFileSync(path.join(root, 'scripts/provision-turnstile.mjs'), 'utf8');
+const wrangler = readFileSync(path.join(root, 'apps/web/wrangler.jsonc'), 'utf8');
 
 test('Turnstile workflow is manual-only with minimal permissions and fixed concurrency', () => {
   assert.match(workflow, /^on:\s*\n  workflow_dispatch:/m);
@@ -49,13 +50,22 @@ test('probe step cannot invoke Wrangler or stage credentials', () => {
   assert.doesNotMatch(probe, /wrangler|secret put|TURNSTILE_OUTPUT_DIR/);
 });
 
-test('provision uses arrays, exact Worker mappings, masked file values, secret-name validation, and shredding', () => {
+test('provision uses env-only targeting for the exact effective Workers and rejects compounded names', () => {
   assert.match(workflow, /wrangler_args=\(\)/);
-  assert.match(workflow, /--env preview --name mj-art-preview/);
-  assert.match(workflow, /--env production --name mj-art/);
+  assert.match(workflow, /wrangler_args\+=\(--env preview\)/);
+  assert.match(workflow, /wrangler_args\+=\(--env production\)/);
+  assert.match(wrangler, /"production"\s*:\s*\{\s*\n\s*"name"\s*:\s*"mj-art"/);
+  assert.match(wrangler, /"preview"\s*:\s*\{\s*\n\s*"name"\s*:\s*"mj-art-preview"/);
+  assert.doesNotMatch(workflow, /--name\b/);
+  assert.doesNotMatch(workflow, /mj-art-preview-preview|mj-art-production/);
+});
+
+test('provision masks, puts, verifies, and shreds all three Turnstile bindings', () => {
   assert.match(workflow, /::add-mask::%s/);
   assert.match(workflow, /secret put TURNSTILE_SITE_KEY "\$\{wrangler_args\[@\]\}"/);
   assert.match(workflow, /secret put TURNSTILE_SECRET_KEY "\$\{wrangler_args\[@\]\}"/);
+  assert.match(workflow, /secret put TURNSTILE_WIDGET_FINGERPRINT "\$\{wrangler_args\[@\]\}"/);
+  assert.match(workflow, /\['TURNSTILE_SITE_KEY', 'TURNSTILE_SECRET_KEY', 'TURNSTILE_WIDGET_FINGERPRINT'\]/);
   assert.match(workflow, /wrangler secret list/);
   assert.match(workflow, /shred -u/);
   assert.doesNotMatch(workflow, /actions\/upload-artifact|gh secret|secret delete/i);
@@ -86,6 +96,9 @@ test('script writes only protected, exclusive files and never prints credential 
   assert.match(script, /O_EXCL/);
   assert.match(script, /O_NOFOLLOW/);
   assert.match(script, /fchmodSync\(fd, 0o600\)/);
+  assert.match(script, /TURNSTILE_WIDGET_FINGERPRINT/);
+  assert.match(script, /createHash\('sha256'\)/);
+  assert.match(script, /Buffer\.from\(\[0\]\)/);
   assert.match(script, /must not contain symlinks/);
   assert.doesNotMatch(script, /stdout\.write\([^\n]*(?:sitekey|secret)/i);
 });
