@@ -10,10 +10,21 @@
   --accent-deep: #6f3f35;
   --on-accent: #fff8f4;
   --shadow: 0 24px 60px rgba(81, 50, 37, 0.12);
-  /* Persistent chapter navigator: a fixed right-edge rail on wide screens
-     and a bottom-right disclosure menu below that breakpoint. */
-  --chapter-rail-width: 124px;
-  --chapter-rail-gap: 16px;
+  /* Persistent chapter navigator: a native <details>/<summary> disclosure
+     pinned bottom-right below the wide breakpoint, and a fixed right-edge
+     rail only where an unreserved gutter genuinely fits (>=1440px).
+
+     Gutter math is evidence-based: the page-shell is centred at <=1180px, so
+     at 1440px each side gutter is (1440-1180)/2 = 130px. A 116px rail plus a
+     14px gap consumes exactly that 130px, so the rail overlays only the
+     gutter and the body keeps zero right padding (content + Back to Top stay
+     viewport-centred, never shifted). Below 1440px the gutter is too narrow
+     and the disclosure is used instead. */
+  --chapter-rail-width: 116px;
+  --chapter-rail-gap: 14px;
+  --chapter-summary-min: 44px;
+  --chapter-disclosure-inset: 16px;
+  --btt-narrow-lift-gap: 16px;
 }
 
 * {
@@ -274,10 +285,13 @@ label {
 }
 
 /* Persistent chapter navigation. Mobile-first: the rail is hidden and a
-   bottom-right "Explore" disclosure button is shown, opening an upward menu.
-   The wide-screen rail is layered on at min-width: 1280px below. The closed
-   menu carries the [hidden] attribute so it is fully removed from the tab and
-   focus order (display: none), not merely visually hidden. */
+   native <details>/<summary> disclosure pinned bottom-right is shown,
+   opening its menu upward. The summary IS the disclosure control: the
+   browser exposes its button role and expanded state from the `open`
+   attribute automatically (WAI-ARIA disclosure pattern, native), so no
+   manual aria-expanded/aria-controls wiring is duplicated. The wide-screen
+   rail is layered on at min-width: 1440px below, only where it fits the
+   unreserved gutter without shifting the body. */
 .chapter-nav {
   z-index: 40;
 }
@@ -289,20 +303,40 @@ label {
   list-style: none;
 }
 
-.chapter-toggle {
+/* The disclosure container is fixed bottom-right (safe-area aware). It is the
+   positioning context for the absolutely-placed upward menu. */
+.chapter-disclosure {
   position: fixed;
-  right: calc(env(safe-area-inset-right, 0px) + 16px);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
-  min-width: 44px;
-  min-height: 44px;
-  padding: 0 18px;
+  right: calc(env(safe-area-inset-right, 0px) + var(--chapter-disclosure-inset));
+  bottom: calc(env(safe-area-inset-bottom, 0px) + var(--chapter-disclosure-inset));
   z-index: 40;
 }
 
+/* Summary is the visible >=44px control. The native disclosure triangle is
+   removed (the pill is self-evident) on both legacy and spec selectors. */
+.chapter-summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: var(--chapter-summary-min);
+  min-height: var(--chapter-summary-min);
+  padding: 0 18px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.chapter-summary::-webkit-details-marker {
+  display: none;
+}
+
+.chapter-summary::marker {
+  content: '';
+}
+
 .chapter-menu {
-  position: fixed;
-  right: calc(env(safe-area-inset-right, 0px) + 16px);
-  bottom: calc(env(safe-area-inset-bottom, 0px) + 72px);
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 8px);
   display: grid;
   gap: 4px;
   width: max-content;
@@ -314,10 +348,12 @@ label {
   border-radius: 18px;
   background: var(--surface-strong);
   box-shadow: var(--shadow);
-  z-index: 41;
 }
 
-.chapter-menu[hidden] {
+/* A closed <details> hides its non-summary content from the rendering (and
+   thus the tab/focus order). This explicit rule makes that contract
+   enforceable rather than relying solely on the user-agent default. */
+.chapter-disclosure:not([open]) .chapter-menu {
   display: none;
 }
 
@@ -357,7 +393,7 @@ label {
 input:focus-visible,
 textarea:focus-visible,
 .chapter-link:focus-visible,
-.chapter-toggle:focus-visible,
+.chapter-summary:focus-visible,
 .back-to-top:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 3px;
@@ -695,22 +731,20 @@ textarea {
   margin: 0;
 }
 
-@media (min-width: 1280px) {
-  /* Reserve a right-hand lane for the fixed chapter rail so page content
-     NEVER sits underneath it. The rail itself is anchored to the viewport
-     right edge; padding the body shifts the centred page-shell clear of it. */
-  body {
-    padding-right: calc(var(--chapter-rail-width) + var(--chapter-rail-gap));
-  }
+@media (min-width: 1440px) {
+  /* The fixed rail overlays ONLY the unreserved right gutter beside the
+     centred 1180px page-shell. The body deliberately keeps zero right
+     padding: content and the centred Back-to-Top therefore never shift, and
+     the rail can never sit on top of content (it lives in the 130px gutter
+     that exists at >=1440px). See the --chapter-rail-* token maths above. */
 
-  /* The mobile disclosure + menu are not used on wide screens. */
-  .chapter-toggle,
-  .chapter-menu {
+  /* The mobile disclosure is not used where the rail fits. */
+  .chapter-disclosure {
     display: none;
   }
 
   /* Fixed right-edge vertical rail. Vertically centred via grid
-     align-content (no transform, so nothing can clash with hover nudges). */
+      align-content (no transform, so nothing can clash with hover nudges). */
   .chapter-rail {
     position: fixed;
     top: 0;
@@ -807,6 +841,23 @@ textarea {
 
   h1 {
     max-width: none;
+  }
+}
+
+/* Very narrow viewports (320-360px): the centred "Back to Top" (~120px wide)
+   and the bottom-right disclosure summary collide horizontally. Lift Back to
+   Top above the disclosure so the two stack vertically with a measured gap,
+   while preserving its centering (left:0/right:0 + margin-inline:auto) and
+   the safe-area inset. Above this width the centred BTT clears the
+   right-anchored disclosure naturally. */
+@media (max-width: 380px) {
+  .back-to-top {
+    bottom: calc(
+      env(safe-area-inset-bottom, 0px) +
+      var(--chapter-disclosure-inset) +
+      var(--chapter-summary-min) +
+      var(--btt-narrow-lift-gap)
+    );
   }
 }
 
