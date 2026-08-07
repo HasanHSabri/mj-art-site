@@ -20,6 +20,8 @@ import { findInputsInRunBlocks, findSecretsInRunBlocks } from './lib/catalog-imp
 const ROOT = path.resolve(scriptDir(), '..');
 const MANDATORY_PARAGRAPH =
   'MJ-ART deploys exclusively through GitHub Actions. Cloudflare credentials are GitHub Actions secrets and are not expected in the local shell. Read docs/OPERATIONS.md before proposing deployment, Cloudflare, Wrangler, or R2 work.';
+const GLOBAL_DEFAULT_FUNCTION_REVOKE =
+  'ALTER DEFAULT PRIVILEGES FOR ROLE neondb_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;';
 
 function scriptDir() {
   const url = import.meta.url;
@@ -117,6 +119,14 @@ function main() {
     fail('docs/OPERATIONS.md is missing');
   } else if (!ops.includes(MANDATORY_PARAGRAPH)) {
     fail('docs/OPERATIONS.md is missing the mandatory operations paragraph (verbatim).');
+  } else {
+    const normalizedOps = ops.replace(/\s+/g, ' ');
+    if (!normalizedOps.includes(GLOBAL_DEFAULT_FUNCTION_REVOKE)) {
+      fail('docs/OPERATIONS.md must contain the global neondb_owner default function privilege correction.');
+    }
+    if (/ALTER\s+DEFAULT\s+PRIVILEGES\s+FOR\s+ROLE\s+neondb_owner\s+IN\s+SCHEMA\s+public/i.test(ops)) {
+      fail('docs/OPERATIONS.md must not use a schema-specific default function privilege correction.');
+    }
   }
 
   // 2) Required files exist.

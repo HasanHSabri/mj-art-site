@@ -10,6 +10,7 @@ import {
   parseChecks,
   extractIndexes,
   compareCanonicalDefinitions,
+  DEFAULT_FUNCTION_PRIVILEGE_CORRECTION,
   stripSqlComments,
   liveCatalogProbe
 } from '../../../scripts/check-book-eoi-schema.mjs';
@@ -952,6 +953,9 @@ function runtimePrivilegesFixture() {
       insert: true, insert_grant: false, update: true, update_grant: false,
       delete: false, truncate: false, references: false, trigger: false
     }],
+    defaultFunctionAcls: [
+      { owner: 'neondb_owner', is_global: true, object_type: 'f', public_execute: false }
+    ],
     executablePublicRoutines: [],
     columnAcls: [],
     ownedObjects: [],
@@ -967,7 +971,7 @@ test('compareRuntimePrivileges accepts only the canonical effective privilege fi
   assert.deepEqual(compareRuntimePrivileges(runtimePrivilegesFixture()), { match: true, mismatches: [] });
 });
 
-test('compareRuntimePrivileges rejects representative database, schema, table, routine, ownership, role, setting, and membership drift', () => {
+test('compareRuntimePrivileges rejects representative database, schema, table, default ACL, routine, ownership, role, setting, and membership drift', () => {
   const mutations = [
     (fixture) => { fixture.summary.has_temporary = true; },
     (fixture) => { fixture.schemas[1].usage = true; },
@@ -975,6 +979,8 @@ test('compareRuntimePrivileges rejects representative database, schema, table, r
     (fixture) => { fixture.tables[0].delete = true; },
     (fixture) => { fixture.tables[0].select_grant = true; },
     (fixture) => { fixture.tables.push({ schema: 'public', name: 'extra', select: true, insert: false, update: false, delete: false, truncate: false, references: false, trigger: false }); },
+    (fixture) => { fixture.defaultFunctionAcls[0].public_execute = true; },
+    (fixture) => { fixture.defaultFunctionAcls[0].is_global = false; },
     (fixture) => { fixture.executablePublicRoutines.push({ routine: 'public.extra()' }); },
     (fixture) => { fixture.columnAcls.push({ schema: 'mj_eoi', table: 'book_eoi', column: 'email_hash', privilege_type: 'SELECT' }); },
     (fixture) => { fixture.ownedObjects.push({ kind: 'relation', name: 'mj_eoi.book_eoi' }); },
@@ -989,13 +995,14 @@ test('compareRuntimePrivileges rejects representative database, schema, table, r
   }
 });
 
-test('probeRuntimePrivileges performs all eight read-only effective-privilege catalog queries', async () => {
+test('probeRuntimePrivileges performs all nine read-only effective-privilege catalog queries', async () => {
   const fixture = runtimePrivilegesFixture();
   const sql = makeSql((text) => {
     if (/FROM pg_roles r WHERE/.test(text)) return [fixture.summary];
     if (/FROM pg_shdepend/.test(text)) return fixture.ownedObjects;
     if (/FROM pg_namespace n/.test(text)) return fixture.schemas;
     if (/FROM pg_class c JOIN pg_namespace/.test(text) && /has_table_privilege/.test(text)) return fixture.tables;
+    if (/FROM pg_roles r LEFT JOIN pg_default_acl/.test(text)) return fixture.defaultFunctionAcls;
     if (/FROM pg_proc p JOIN pg_namespace/.test(text) && /has_function_privilege/.test(text)) return fixture.executablePublicRoutines;
     if (/FROM pg_attribute a/.test(text)) return fixture.columnAcls;
     if (/FROM pg_db_role_setting/.test(text)) return fixture.settings;
@@ -1003,8 +1010,12 @@ test('probeRuntimePrivileges performs all eight read-only effective-privilege ca
     throw new Error('unexpected privilege probe SQL: ' + text);
   });
   const result = await probeRuntimePrivileges(sql);
-  assert.equal(sql.calls.length, 8);
+  assert.equal(sql.calls.length, 9);
   assert.equal(compareRuntimePrivileges(result).match, true);
+  const defaultAclProbe = sql.calls.find((call) => /FROM pg_roles r LEFT JOIN pg_default_acl/.test(call.text));
+  assert.match(defaultAclProbe.text, /d\.defaclnamespace = 0/);
+  assert.match(defaultAclProbe.text, /d\.defaclobjtype = 'f'/);
+  assert.doesNotMatch(defaultAclProbe.text, /nspname\s*=\s*'public'|IN SCHEMA public/i);
 });
 
 // ===========================================================================
@@ -1432,6 +1443,10 @@ test('liveCatalogProbe emits information_schema + pg_catalog queries', () => {
   assert.ok(probe.includes("has_database_privilege(current_user, current_database(), 'TEMPORARY')"));
   assert.ok(probe.includes("has_schema_privilege(current_user, 'public', 'USAGE')"));
   assert.ok(probe.includes("has_function_privilege(current_user, p.oid, 'EXECUTE')"));
+  assert.ok(probe.includes(DEFAULT_FUNCTION_PRIVILEGE_CORRECTION));
+  assert.ok(probe.includes('d.defaclnamespace = 0'));
+  assert.ok(probe.includes("d.defaclobjtype = 'f'"));
+  assert.equal(/ALTER DEFAULT PRIVILEGES[^\n]*IN SCHEMA public/i.test(probe), false);
   assert.equal(probe.includes('postgres://'), false);
 });
 
@@ -1449,6 +1464,9 @@ test('the SQL documents the SELECT/INSERT/UPDATE-only role contract', () => {
   assert.ok(/REVOKE TEMPORARY ON DATABASE/.test(sql));
   assert.ok(/REVOKE USAGE, CREATE ON SCHEMA public/.test(sql));
   assert.ok(/REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public/.test(sql));
+  const documentedSql = sql.replace(/^\s*--\s?/gm, '').replace(/\s+/g, ' ');
+  assert.ok(documentedSql.includes(DEFAULT_FUNCTION_PRIVILEGE_CORRECTION));
+  assert.equal(/ALTER\s+DEFAULT\s+PRIVILEGES\s+FOR\s+ROLE\s+neondb_owner\s+IN\s+SCHEMA\s+public/i.test(sql), false);
   // And forbids DELETE/TRUNCATE in executable SQL.
   const stripped = stripSqlComments(sql);
   assert.equal(/\bDELETE\s+FROM\b/i.test(stripped), false);

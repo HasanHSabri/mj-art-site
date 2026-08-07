@@ -657,6 +657,9 @@ export const EXPECTED_RUNTIME_PRIVILEGES = {
       trigger: false
     }
   ],
+  defaultFunctionAcls: [
+    { owner: 'neondb_owner', isGlobal: true, objectType: 'f', publicExecute: false }
+  ],
   settings: [
     { database: 'CURRENT', setting: 'search_path=pg_catalog, mj_eoi' },
     { database: 'CURRENT', setting: 'statement_timeout=5000' }
@@ -906,6 +909,15 @@ export function compareRuntimePrivileges(live, expected = EXPECTED_RUNTIME_PRIVI
     mismatches
   );
 
+  const defaultFunctionAcls = (live?.defaultFunctionAcls || []).map((row) => ({
+    owner: normText(row.owner), isGlobal: bool(row.is_global),
+    objectType: normText(row.object_type), publicExecute: bool(row.public_execute)
+  }));
+  exactRows(
+    'default function ACL', defaultFunctionAcls, expected.defaultFunctionAcls,
+    ['owner', 'isGlobal', 'objectType', 'publicExecute'], mismatches
+  );
+
   const currentDatabase = normText(summary.database_name);
   const settings = (live?.settings || []).map((row) => ({
     database: normText(row.database) === currentDatabase ? 'CURRENT' : normText(row.database),
@@ -920,7 +932,7 @@ export function compareRuntimePrivileges(live, expected = EXPECTED_RUNTIME_PRIVI
 }
 
 export async function probeRuntimePrivileges(sql) {
-  const [summaryRows, schemas, tables, executablePublicRoutines, columnAcls, ownedObjects, settings, memberships] = await Promise.all([
+  const [summaryRows, schemas, tables, defaultFunctionAcls, executablePublicRoutines, columnAcls, ownedObjects, settings, memberships] = await Promise.all([
     sql(
       'SELECT current_database() AS database_name, r.rolsuper AS superuser, r.rolinherit AS inherit, ' +
         'r.rolcreaterole AS create_role, r.rolcreatedb AS create_db, r.rolcanlogin AS can_login, ' +
@@ -961,6 +973,13 @@ export async function probeRuntimePrivileges(sql) {
         'ORDER BY n.nspname, c.relname'
     ),
     sql(
+      "SELECT r.rolname AS owner, (d.defaclnamespace = 0) AS is_global, d.defaclobjtype AS object_type, " +
+        "EXISTS (SELECT 1 FROM aclexplode(COALESCE(d.defaclacl, acldefault('f', r.oid))) acl " +
+        "WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE') AS public_execute " +
+        'FROM pg_roles r LEFT JOIN pg_default_acl d ON d.defaclrole = r.oid ' +
+        "AND d.defaclnamespace = 0 AND d.defaclobjtype = 'f' WHERE r.rolname = 'neondb_owner'"
+    ),
+    sql(
       "SELECT p.oid::regprocedure::text AS routine FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace " +
         "WHERE n.nspname = 'public' AND has_function_privilege(current_user, p.oid, 'EXECUTE') ORDER BY 1"
     ),
@@ -990,6 +1009,7 @@ export async function probeRuntimePrivileges(sql) {
     summary: Array.isArray(summaryRows) ? summaryRows[0] || {} : {},
     schemas: Array.isArray(schemas) ? schemas : [],
     tables: Array.isArray(tables) ? tables : [],
+    defaultFunctionAcls: Array.isArray(defaultFunctionAcls) ? defaultFunctionAcls : [],
     executablePublicRoutines: Array.isArray(executablePublicRoutines) ? executablePublicRoutines : [],
     columnAcls: Array.isArray(columnAcls) ? columnAcls : [],
     ownedObjects: Array.isArray(ownedObjects) ? ownedObjects : [],

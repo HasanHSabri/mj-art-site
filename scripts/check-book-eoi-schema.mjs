@@ -40,6 +40,8 @@ import {
 
 const ROOT = path.resolve(scriptDir(), '..');
 const SQL_PATH = path.join(ROOT, 'database', 'mj-eoi-schema.sql');
+export const DEFAULT_FUNCTION_PRIVILEGE_CORRECTION =
+  'ALTER DEFAULT PRIVILEGES FOR ROLE neondb_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;';
 
 function scriptDir() {
   return new URL('.', import.meta.url).pathname.replace(/\/$/, '');
@@ -266,6 +268,16 @@ export function liveCatalogProbe() {
     "WHERE n.nspname = 'public' AND has_function_privilege(current_user, p.oid, 'EXECUTE')",
     "ORDER BY 1;",
     "",
+    "-- Required owner correction if the global default assertion fails:",
+    "-- " + DEFAULT_FUNCTION_PRIVILEGE_CORRECTION,
+    "-- Must return one global function row with public_execute false; schema-specific rows are irrelevant.",
+    "SELECT r.rolname AS owner, (d.defaclnamespace = 0) AS is_global, d.defaclobjtype AS object_type,",
+    "  EXISTS (SELECT 1 FROM aclexplode(COALESCE(d.defaclacl, acldefault('f', r.oid))) acl",
+    "    WHERE acl.grantee = 0 AND acl.privilege_type = 'EXECUTE') AS public_execute",
+    "FROM pg_roles r LEFT JOIN pg_default_acl d ON d.defaclrole = r.oid",
+    "  AND d.defaclnamespace = 0 AND d.defaclobjtype = 'f'",
+    "WHERE r.rolname = 'neondb_owner';",
+    "",
     "-- Machine assertion: psql exits nonzero on schema or least-privilege drift.",
     "DO $books_contract$",
     "DECLARE",
@@ -414,6 +426,13 @@ export function liveCatalogProbe() {
     "      WHERE n.nspname = 'public' AND has_function_privilege(current_user, p.oid, 'EXECUTE')) THEN",
     "    RAISE EXCEPTION 'Books role can execute a public routine';",
     "  END IF;",
+    "  IF COALESCE((SELECT bool_or(acl.grantee = 0 AND acl.privilege_type = 'EXECUTE')",
+    "      FROM pg_roles r LEFT JOIN pg_default_acl d ON d.defaclrole = r.oid",
+    "        AND d.defaclnamespace = 0 AND d.defaclobjtype = 'f'",
+    "      CROSS JOIN LATERAL aclexplode(COALESCE(d.defaclacl, acldefault('f', r.oid))) acl",
+    "      WHERE r.rolname = 'neondb_owner'), true) THEN",
+    "    RAISE EXCEPTION 'Books owner global function defaults grant EXECUTE to PUBLIC';",
+    "  END IF;",
     "  IF EXISTS (SELECT 1 FROM pg_auth_members m",
     "      WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = current_user)) THEN",
     "    RAISE EXCEPTION 'Books role has a role membership';",
@@ -516,6 +535,14 @@ async function main() {
   }
 
   const { columns, tableConstraints } = parseTableBody(table.body);
+
+  const documentedSql = sql.replace(/^\s*--\s?/gm, '').replace(/\s+/g, ' ');
+  if (!documentedSql.includes(DEFAULT_FUNCTION_PRIVILEGE_CORRECTION)) {
+    fail('canonical SQL must document the global neondb_owner default function privilege correction');
+  }
+  if (/ALTER\s+DEFAULT\s+PRIVILEGES\s+FOR\s+ROLE\s+neondb_owner\s+IN\s+SCHEMA\s+public/i.test(sql)) {
+    fail('canonical SQL must not use a schema-specific default function privilege correction');
+  }
 
   // Exact ordered columns with exact base type, nullability, and default.
   // Mirrors database/mj-eoi-schema.sql verbatim (the canonical source).

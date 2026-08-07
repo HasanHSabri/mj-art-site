@@ -694,9 +694,12 @@ Each project has a dedicated SQL login role `mj_eoi_app`, least-privilege:
   and is denied `DELETE`, `TRUNCATE`, `CREATE TABLE`, and `DROP`. Both tables
   were empty (count 0) at handover.
 
-**Pending infrastructure correction:** live role grants must be re-audited and
-corrected by a Neon owner for both projects to enforce the explicit no-TEMP,
-no-`public`-schema-USAGE, and no-extra-`public`-routine-EXECUTE contract above.
+**Pending infrastructure correction:** preview has the existing database,
+schema, and routine revocations, but still needs the global owner default below.
+Production has not been mutated and still needs the complete correction. The
+global default is required because a schema-specific `ALTER DEFAULT PRIVILEGES`
+does not override PostgreSQL's built-in global `PUBLIC EXECUTE` default for new
+functions.
 Repository checks change no database state. `node
 scripts/check-book-eoi-schema.mjs --probe` emits fail-fast SQL (`ON_ERROR_STOP`
 plus contract exceptions) for manual execution as `mj_eoi_app`. `--live` uses
@@ -704,22 +707,24 @@ the app-role `NEON_DATABASE_URL` to assert the same effective matrix and exits
 nonzero for any violation; it never prints the URL or secrets. Both modes check
 database TEMP/CREATE, exact schema and table privileges, public routine
 execution, ownership, role memberships/attributes, grant options and column
-ACLs, and the exact documented per-database settings. The generated SQL also
-asserts the exact column, constraint, and index contract. Run it after operator
-revocations and retain the result with release evidence.
+ACLs, the exact documented per-database settings, and the effective global
+default function ACL for `neondb_owner`. The expected `pg_default_acl` row has
+`defaclnamespace = 0`, `defaclobjtype = 'f'`, and no `PUBLIC EXECUTE`; no
+schema-specific default ACL is required. The generated SQL also asserts the
+exact column, constraint, and index contract. Run it after operator revocations
+and retain the result with release evidence.
 
-For each isolated `neondb`, the owner must apply the following correction (replace
-`<owner>` only; the app role is fixed), then reconnect as `mj_eoi_app` and run the
-generated probe. Revoking from `PUBLIC` is required because PostgreSQL has no
-`DENY`; a direct revoke from `mj_eoi_app` cannot override an inherited public
-grant.
+For each isolated `neondb`, `neondb_owner` must apply the remaining applicable
+statements below, then reconnect as `mj_eoi_app` and run the generated probe.
+Revoking from `PUBLIC` is required because PostgreSQL has no `DENY`; a direct
+revoke from `mj_eoi_app` cannot override an inherited public grant.
 
 ```sql
 REVOKE TEMPORARY ON DATABASE neondb FROM PUBLIC, mj_eoi_app;
 REVOKE USAGE, CREATE ON SCHEMA public FROM PUBLIC, mj_eoi_app;
 REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA public FROM PUBLIC, mj_eoi_app;
 REVOKE EXECUTE ON ALL PROCEDURES IN SCHEMA public FROM PUBLIC, mj_eoi_app;
-ALTER DEFAULT PRIVILEGES FOR ROLE <owner> IN SCHEMA public
+ALTER DEFAULT PRIVILEGES FOR ROLE neondb_owner
   REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 ```
 
