@@ -23,7 +23,11 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
-  font-family: "Inter", sans-serif;
+  font-family: "Hanken Grotesk", sans-serif;
+  font-size: 1rem;
+  font-weight: 400;
+  line-height: 1.65;
+  letter-spacing: -0.005em;
   color: var(--text);
   background:
     radial-gradient(circle at top left, rgba(255, 226, 204, 0.7), transparent 26%),
@@ -88,6 +92,8 @@ h3 {
   display: flex;
   gap: 18px;
   color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 500;
 }
 
 .hero-content {
@@ -142,15 +148,15 @@ h3 {
 .hero-card-label {
   text-transform: uppercase;
   letter-spacing: 0.16em;
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-weight: 600;
 }
 
 h1 {
-  margin: 10px 0 18px;
-  font-size: clamp(3rem, 7vw, 5.8rem);
-  line-height: 0.94;
-  max-width: 10ch;
+  margin: 8px 0 14px;
+  font-size: clamp(2.75rem, 6vw, 5.2rem);
+  line-height: 0.98;
+  max-width: 13ch;
 }
 
 h2 {
@@ -162,6 +168,7 @@ h2 {
 h3 {
   margin: 0;
   font-size: 1.7rem;
+  font-weight: 600;
 }
 
 .hero-text,
@@ -337,9 +344,13 @@ textarea:focus-visible,
 }
 
 .intro-grid,
-.story-layout,
-.contact-grid {
+.story-layout {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.contact-grid {
+  grid-template-columns: 1fr;
+  justify-items: center;
 }
 
 .stats-panel {
@@ -384,6 +395,7 @@ textarea:focus-visible,
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.5);
   color: var(--muted);
+  font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
   transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
@@ -451,12 +463,18 @@ textarea:focus-visible,
   padding: 18px;
 }
 
+.painting-card-body p {
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+
 .painting-card-body span {
   display: inline-flex;
   margin-top: 14px;
   padding: 6px 10px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.55);
+  font-size: 0.8rem;
 }
 
 .story-copy {
@@ -504,6 +522,8 @@ textarea:focus-visible,
 .contact-form {
   display: grid;
   gap: 16px;
+  width: 100%;
+  max-width: 740px;
   padding: 28px;
 }
 
@@ -589,11 +609,13 @@ textarea {
   .hero-content,
   .intro-grid,
   .story-layout,
-  .contact-grid,
   .painting-dialog[open],
-  .gallery-grid,
   .testimonials-grid {
     grid-template-columns: 1fr;
+  }
+
+  .gallery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .stats-panel {
@@ -606,6 +628,12 @@ textarea {
 
   .preview-large {
     min-height: 240px;
+  }
+}
+
+@media (max-width: 680px) {
+  .gallery-grid {
+    grid-template-columns: 1fr;
   }
 }
 
