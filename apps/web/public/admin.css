@@ -198,6 +198,7 @@ textarea {
 button:focus-visible,
 .button:focus-visible,
 input:focus-visible,
+textarea:focus-visible,
 select:focus-visible,
 .books-table a:focus-visible {
   outline: 3px solid var(--focus-ring);

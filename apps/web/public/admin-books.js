@@ -89,19 +89,23 @@ export function buildSummaryTiles(summary) {
     label: STATUS_LABELS[code] || code,
     value: numeric(byStatus[code])
   });
+  const statusTiles = STATUS_ORDER.map(statusTile);
+  const statusTotal = statusTiles.reduce((total, tile) => total + tile.value, 0);
+  const reportedTotal = Number(s.total);
+  if (summary != null && s.total != null && Number.isFinite(reportedTotal) && reportedTotal !== statusTotal) {
+    throw new Error('Book summary total does not match status counts.');
+  }
   return [
     bookTile('biography'),
     bookTile('childrens'),
     windowTile('today', 'Submissions received — Today'),
     windowTile('last7Days', 'Submissions received — Last 7 days'),
-    statusTile('new'),
-    statusTile('contacted'),
-    statusTile('withdrawn'),
+    ...statusTiles,
     {
       kind: 'total',
       key: 'total',
       label: 'Total',
-      value: numeric(s.total)
+      value: statusTotal
     }
   ];
 }

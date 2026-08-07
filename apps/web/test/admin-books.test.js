@@ -104,7 +104,7 @@ test('safeMailtoHref rejects injection / attribute-breakout payloads', () => {
 // buildSummaryTiles
 // ---------------------------------------------------------------------------
 
-test('buildSummaryTiles returns the canonical ordered tile set from a full summary', () => {
+test('buildSummaryTiles returns the exact canonical tile set when the reported total matches normalized statuses', () => {
   const tiles = buildSummaryTiles({
     books: {
       biography: { interestCount: 3, requestedCopies: 7 },
@@ -127,12 +127,21 @@ test('buildSummaryTiles returns the canonical ordered tile set from a full summa
   ]);
 });
 
-test('buildSummaryTiles is tolerant of null input and returns eight numeric zero tiles', () => {
-  const tiles = buildSummaryTiles(null);
-  assert.equal(tiles.length, 8);
-  assert.deepEqual(tiles.map((t) => t.key), ['biography', 'childrens', 'today', 'last7Days', 'new', 'contacted', 'withdrawn', 'total']);
-  assert.deepEqual(tiles.map((t) => t.value), Array(8).fill(0));
-  assert.deepEqual(tiles.filter((t) => 'secondary' in t).map((t) => t.secondary), [0, 0, 0, 0]);
+test('buildSummaryTiles returns the exact all-zero tile set for null or absent summaries', () => {
+  for (const summary of [null, undefined]) {
+    const tiles = buildSummaryTiles(summary);
+    assert.equal(tiles.length, 8);
+    assert.deepEqual(tiles.map((t) => t.key), ['biography', 'childrens', 'today', 'last7Days', 'new', 'contacted', 'withdrawn', 'total']);
+    assert.deepEqual(tiles.map((t) => t.value), Array(8).fill(0));
+    assert.deepEqual(tiles.filter((t) => 'secondary' in t).map((t) => t.secondary), [0, 0, 0, 0]);
+  }
+});
+
+test('buildSummaryTiles rejects a finite reported total that differs from normalized statuses', () => {
+  assert.throws(
+    () => buildSummaryTiles({ byStatus: { new: '3', contacted: 2, withdrawn: 1 }, total: 7 }),
+    /summary total does not match status counts/
+  );
 });
 
 test('buildSummaryTiles normalizes partial and malformed numeric fields', () => {
@@ -140,9 +149,9 @@ test('buildSummaryTiles normalizes partial and malformed numeric fields', () => 
     books: { biography: { interestCount: '5', requestedCopies: 'not-a-number' } },
     today: { submissions: Infinity, copies: -2 },
     byStatus: { new: '3' },
-    total: '8'
+    total: Infinity
   });
-  assert.deepEqual(tiles.map((t) => t.value), [5, 0, 0, 0, 3, 0, 0, 8]);
+  assert.deepEqual(tiles.map((t) => t.value), [5, 0, 0, 0, 3, 0, 0, 3]);
   assert.deepEqual(tiles.filter((t) => 'secondary' in t).map((t) => t.secondary), [0, 0, 0, 0]);
 });
 
@@ -297,6 +306,21 @@ test('logout resets the Books surface (clears PII from the DOM)', () => {
   assert.ok(after.includes('resetBooksSurface()'), 'logout must call resetBooksSurface()');
 });
 
+test('Books summary mismatches reach the load catch, which shows an error and clears rendered sensitive data', () => {
+  const catchBlock = booksCode.match(/\.catch\(\(\) => \{([\s\S]*?)\n\s*\}\)\n\s*\.finally/);
+  assert.ok(catchBlock, 'loadBooksDashboard must contain a catch before finally');
+  assert.ok(
+    booksCode.indexOf('renderBooksTiles(summary)') < booksCode.indexOf('.catch(() => {'),
+    'a summary invariant error must reject into the load catch'
+  );
+  assert.match(catchBlock[1], /bookRows\s*=\s*\[\]/, 'stale row data is discarded');
+  assert.match(catchBlock[1], /booksLoadedAt\s*=\s*null/, 'stale update metadata is discarded');
+  assert.match(catchBlock[1], /renderBooksTiles\(null\)/, 'stale summary values are replaced with zero tiles');
+  assert.match(catchBlock[1], /renderBooksList\(\)/, 'the rendered row list is cleared');
+  assert.match(catchBlock[1], /booksError\.hidden\s*=\s*false/, 'the panel error is shown');
+  assert.match(catchBlock[1], /booksError\.textContent\s*=\s*['"][^'"]+['"]/, 'the panel error explains the failure');
+});
+
 test('admin.html exposes nav anchors for Artwork Catalogue and Book Interest Dashboard', () => {
   assert.match(adminHtml, /href="#artwork-section"[^>]*>Artwork Catalogue/);
   assert.match(adminHtml, /href="#books-dashboard"[^>]*>Book Interest Dashboard/);
@@ -328,7 +352,7 @@ test('summary tiles use auto-fit with minmax so columns never leave gaps', () =>
 });
 
 test('admin keyboard focus rings cover controls, section anchors, and Books email links', () => {
-  for (const selector of ['.section-anchor:focus-visible', 'button:focus-visible', '.button:focus-visible', 'input:focus-visible', 'select:focus-visible', '.books-table a:focus-visible']) {
+  for (const selector of ['.section-anchor:focus-visible', 'button:focus-visible', '.button:focus-visible', 'input:focus-visible', 'textarea:focus-visible', 'select:focus-visible', '.books-table a:focus-visible']) {
     assert.ok(adminCss.includes(selector), `${selector} has an explicit focus-visible style`);
   }
   const focusRule = adminCss.match(/\.section-anchor:focus-visible,[\s\S]*?\.books-table a:focus-visible\s*\{([^}]*)\}/);
