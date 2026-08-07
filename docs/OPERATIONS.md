@@ -689,10 +689,14 @@ Secret names configured (names only, never values):
 - `BOOK_EOI_ENCRYPTION_KEY` (environment: preview, production)
 
 `TURNSTILE_SECRET_KEY` and `TURNSTILE_SITE_KEY` are **not** GitHub secrets.
-Per the infrastructure plan they are **pre-provisioned directly on the Worker**
-(via `wrangler secret put` / dashboard, per environment) and never pushed from
-CI. They are unrelated to this data-layer provisioning, but they are **not
-optional for the Books page or a deploy**:
+They are provisioned directly on the selected Worker by the guarded, manual-only
+`.github/workflows/turnstile-provision.yml` workflow. The workflow receives the
+widget credentials from Cloudflare into mode-`0600` runner-temp files, masks the
+values, pipes them directly to `wrangler secret put`, validates only the resulting
+Worker secret **names**, and shreds the files. No Turnstile value is stored in
+GitHub, an artifact, logs, Git, or this document. They are unrelated to the Neon
+data-layer provisioning, but they are **not optional for the Books page or a
+deploy**:
 
 - `TURNSTILE_SITE_KEY` (non-secret, but kept out of Git) is injected by the
   Worker into the `/books` page's Turnstile widget. If it is absent the Worker
@@ -713,11 +717,64 @@ The deploy workflow (`.github/workflows/deploy-cloudflare.yml`) reads the
 data/crypto secrets as environment secrets under the selected `environment:` and
 pushes them to the Worker as Wrangler secrets on manual `workflow_dispatch`
 deploy. The two Turnstile keys are **excluded** from that push list because they
-are pre-provisioned directly. Push/PR still run checks only; production is never
-deployed automatically.
+are provisioned by the separate guarded workflow. Push/PR still run checks only;
+production is never deployed automatically.
 
 No connection string, password, or key value is stored in Git or this document.
 Rotation re-provisions the role password/keys against the project and resets the
 environment secret; there is no row data to migrate (the table is empty,
 greenfield), so there is intentionally no rotation/compatibility fallback path.
 
+### 13.5 Guarded Turnstile widget and Worker-secret provisioning
+
+The only approved Turnstile automation is
+`.github/workflows/turnstile-provision.yml`, backed by
+`scripts/provision-turnstile.mjs`. It is `workflow_dispatch` only, has
+`contents: read`, serializes per environment, uses immutable action pins, uploads
+no artifact, and has no widget update/delete/secret-rotation operation. Its token
+is supplied only through the `CLOUDFLARE_API_TOKEN` environment variable. The
+token must cover account `908b6ebad9914f568db2f19a25dd319b` and have Turnstile
+Sites Read for probes; provisioning additionally needs Turnstile Sites Write and
+Workers Scripts Write for the two Worker secret puts.
+
+The script accepts only the following hardcoded targets; account, Worker,
+hostname, and widget name cannot be overridden:
+
+| Environment | Worker | Single allowed hostname | Exact widget name |
+| --- | --- | --- | --- |
+| `preview` | `mj-art-preview` | `mj-art-preview.drhasansabri.workers.dev` | `mj-art-books-eoi-preview` |
+| `production` | `mj-art` | `mj-art.drhasansabri.workers.dev` | `mj-art-books-eoi-production` |
+
+Exact operator procedure:
+
+1. Dispatch **Turnstile Provision** with `mode=probe`, first for
+   `environment=preview`, then for `environment=production`; leave
+   `confirmation_phrase` empty. Probe performs only paginated `GET` requests to
+   the account widget-list endpoint. It reports list permission yes/no and never
+   prints a sitekey or secret. An HTTP 403 is a hard stop: fix the token's
+   Turnstile Sites Read/account scope before any provision attempt.
+2. Review both probe runs. Do not proceed unless both succeeded and no unexpected
+   workflow change is present.
+3. For the intended environment only, re-dispatch with `mode=provision` and the
+   exact phrase `I-CONFIRM-TURNSTILE-PROVISION`. The credential-free first step
+   fails closed before checkout or token exposure if the mode, environment, or
+   phrase differs.
+4. Provision lists widgets and matches the exact mapped name. No match creates
+   one `managed` widget with exactly the single mapped hostname. One match is
+   reused only if its mode and domain list are exact; mismatch or duplicates fail
+   closed. Reuse performs an exact-widget `GET` to retrieve its current secret.
+   There is no update, delete, or rotate fallback.
+5. The script refuses relative, traversing, permissive, foreign-owned, symlinked,
+   or pre-existing output paths. It exclusively creates
+   `TURNSTILE_SITE_KEY` and `TURNSTILE_SECRET_KEY` files at mode `0600` in the
+   runner's mode-`0700` temporary directory. The workflow masks both loaded
+   values before piping them directly to the exact environment's
+   `wrangler secret put` commands; only secret names are read back. Temp files
+   are shredded on every provision outcome. Values never become GitHub secrets.
+6. Verify the workflow succeeded and that its name-only check found both exact
+   Worker bindings. Do not copy credentials out of the run.
+7. Each `wrangler secret put` creates and immediately deploys a **secret-only
+   Worker version**. This does not replace the normal application release. After
+   provisioning, run the final application deployment through the manual
+   `.github/workflows/deploy-cloudflare.yml` workflow for the same environment;
+   its `/api/books/health` smoke proves the complete Turnstile/Neon/crypto setup.

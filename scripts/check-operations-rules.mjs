@@ -893,6 +893,80 @@ function main() {
     }
   }
 
+  // 9) Guarded Turnstile provisioning. Probe is list-GET-only. Provision is
+  //    manual, exact-target, strongly confirmed, non-rotating, and non-deleting.
+  const turnstileWfPath = '.github/workflows/turnstile-provision.yml';
+  const turnstileScriptPath = 'scripts/provision-turnstile.mjs';
+  const turnstileWf = readText(turnstileWfPath);
+  const turnstileScript = readText(turnstileScriptPath);
+  if (turnstileWf === null) fail(turnstileWfPath + ' is missing');
+  if (turnstileScript === null) fail(turnstileScriptPath + ' is missing');
+  if (turnstileWf !== null) {
+    const turnstileTriggers = extractOnTriggers(turnstileWf);
+    if (!(turnstileTriggers?.length === 1 && turnstileTriggers[0] === 'workflow_dispatch')) {
+      fail(turnstileWfPath + ' must be workflow_dispatch only');
+    }
+    if (!hasWorkflowLevelContentsRead(turnstileWf)) {
+      fail(turnstileWfPath + ' must declare workflow-level contents: read');
+    }
+    assertThirdPartyActionsPinned(turnstileWfPath, turnstileWf);
+    if (!/I-CONFIRM-TURNSTILE-PROVISION/.test(turnstileWf)) {
+      fail(turnstileWfPath + ' must require the exact provision confirmation phrase');
+    }
+    if (!/group:\s*turnstile-provision-\$\{\{ inputs\.environment \}\}/.test(turnstileWf)) {
+      fail(turnstileWfPath + ' must serialize runs per exact environment');
+    }
+    if (!/options:\s*\n\s+- probe\s*\n\s+- provision/.test(turnstileWf) ||
+        !/options:\s*\n\s+- preview\s*\n\s+- production/.test(turnstileWf)) {
+      fail(turnstileWfPath + ' must expose only probe|provision and preview|production choices');
+    }
+    if (findInputsInRunBlocks(turnstileWf).length || findSecretsInRunBlocks(turnstileWf).length) {
+      fail(turnstileWfPath + ' must not interpolate raw inputs or secrets in run blocks');
+    }
+    const gateIndex = turnstileWf.indexOf('Fail closed unless dispatch inputs are exact');
+    const credentialIndex = turnstileWf.indexOf('secrets.CLOUDFLARE_API_TOKEN');
+    if (gateIndex < 0 || credentialIndex < 0 || gateIndex >= credentialIndex) {
+      fail(turnstileWfPath + ' must run the provision gate before exposing credentials');
+    }
+    for (const required of [
+      'secret put TURNSTILE_SITE_KEY',
+      'secret put TURNSTILE_SECRET_KEY',
+      'wrangler secret list',
+      '::add-mask::%s',
+      'shred -u'
+    ]) {
+      if (!turnstileWf.includes(required)) fail(turnstileWfPath + ' is missing required guard: ' + required);
+    }
+    for (const forbidden of [/actions\/upload-artifact/i, /gh\s+secret/i, /secret\s+delete/i]) {
+      if (forbidden.test(turnstileWf)) fail(turnstileWfPath + ' contains forbidden operation ' + forbidden);
+    }
+  }
+  if (turnstileScript !== null) {
+    for (const required of [
+      '908b6ebad9914f568db2f19a25dd319b',
+      'mj-art-preview.drhasansabri.workers.dev',
+      'mj-art.drhasansabri.workers.dev',
+      'mj-art-books-eoi-preview',
+      'mj-art-books-eoi-production',
+      'O_EXCL',
+      'O_NOFOLLOW',
+      '0o600'
+    ]) {
+      if (!turnstileScript.includes(required)) fail(turnstileScriptPath + ' is missing fixed safety value ' + required);
+    }
+    for (const forbidden of [
+      /method:\s*['"](?:DELETE|PUT|PATCH)['"]/,
+      /rotate_secret/i,
+      /CLOUDFLARE_ACCOUNT_ID/,
+      /--(?:account-id|hostname|widget-name|worker)/
+    ]) {
+      if (forbidden.test(turnstileScript)) fail(turnstileScriptPath + ' contains forbidden override/mutation ' + forbidden);
+    }
+    if (!/widgets\.filter\(\(widget\) => widget\?\.name === target\.widgetName\)/.test(turnstileScript)) {
+      fail(turnstileScriptPath + ' must find widgets by exact mapped name');
+    }
+  }
+
   if (process.exitCode) {
     console.error('check-operations-rules: one or more assertions failed.');
     return;

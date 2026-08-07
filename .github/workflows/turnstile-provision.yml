@@ -1,0 +1,169 @@
+# Guarded Turnstile widget and Worker-secret provisioning.
+# Probe is GET-list-only. Provision is explicitly confirmed and never rotates or deletes.
+name: Turnstile Provision
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'probe performs only Turnstile widget list GETs; provision creates/reuses the exact mapped widget and updates Worker secrets.'
+        required: true
+        default: 'probe'
+        type: choice
+        options:
+          - probe
+          - provision
+      environment:
+        description: 'Exact hardcoded target environment.'
+        required: true
+        default: 'preview'
+        type: choice
+        options:
+          - preview
+          - production
+      confirmation_phrase:
+        description: 'Provision only: must be exactly I-CONFIRM-TURNSTILE-PROVISION. Leave empty for probe.'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: turnstile-provision-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24'
+  TURNSTILE_CONFIRMATION_PHRASE: I-CONFIRM-TURNSTILE-PROVISION
+
+jobs:
+  turnstile-provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Fail closed unless dispatch inputs are exact
+        if: always()
+        env:
+          TARGET_MODE: ${{ inputs.mode }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          PROVIDED_CONFIRMATION: ${{ inputs.confirmation_phrase }}
+          REQUIRED_CONFIRMATION: ${{ env.TURNSTILE_CONFIRMATION_PHRASE }}
+        run: |
+          set -euo pipefail
+          case "${TARGET_MODE}" in
+            probe|provision) ;;
+            *) echo "fail closed: mode must be exactly probe or provision"; exit 1 ;;
+          esac
+          case "${TARGET_ENVIRONMENT}" in
+            preview|production) ;;
+            *) echo "fail closed: environment must be exactly preview or production"; exit 1 ;;
+          esac
+          if [ "${TARGET_MODE}" = "provision" ] && [ "${PROVIDED_CONFIRMATION}" != "${REQUIRED_CONFIRMATION}" ]; then
+            echo "fail closed: provision requires the exact confirmation phrase"
+            exit 1
+          fi
+          echo "Turnstile ${TARGET_MODE} gate passed for ${TARGET_ENVIRONMENT}; no credential exposed yet."
+
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Probe Turnstile widget list permission (GET only)
+        if: inputs.mode == 'probe'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+        run: |
+          set -euo pipefail
+          node scripts/provision-turnstile.mjs --mode probe --environment "${TARGET_ENVIRONMENT}"
+
+      - name: Install pnpm for provision mode
+        if: inputs.mode == 'provision'
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
+
+      - name: Install locked dependencies for provision mode
+        if: inputs.mode == 'provision'
+        run: pnpm install --frozen-lockfile
+
+      - name: Create or reuse exact widget and stage credentials
+        if: inputs.mode == 'provision'
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          TURNSTILE_OUTPUT_DIR: ${{ runner.temp }}/turnstile-provision
+        run: |
+          set -euo pipefail
+          install -d -m 0700 "${TURNSTILE_OUTPUT_DIR}"
+          node scripts/provision-turnstile.mjs \
+            --mode provision \
+            --environment "${TARGET_ENVIRONMENT}" \
+            --output-dir "${TURNSTILE_OUTPUT_DIR}"
+
+      - name: Put exact Worker secrets and validate names
+        if: inputs.mode == 'provision'
+        working-directory: apps/web
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TARGET_ENVIRONMENT: ${{ inputs.environment }}
+          TURNSTILE_OUTPUT_DIR: ${{ runner.temp }}/turnstile-provision
+          SECRET_NAMES_FILE: ${{ runner.temp }}/turnstile-secret-names.json
+        run: |
+          set -euo pipefail
+          wrangler_args=()
+          case "${TARGET_ENVIRONMENT}" in
+            preview)
+              wrangler_args+=(--env preview --name mj-art-preview)
+              ;;
+            production)
+              wrangler_args+=(--env production --name mj-art)
+              ;;
+            *)
+              echo "fail closed: unsupported Worker environment"
+              exit 1
+              ;;
+          esac
+
+          SITE_KEY="$(<"${TURNSTILE_OUTPUT_DIR}/TURNSTILE_SITE_KEY")"
+          SECRET_KEY="$(<"${TURNSTILE_OUTPUT_DIR}/TURNSTILE_SECRET_KEY")"
+          if [ -z "${SITE_KEY}" ] || [ -z "${SECRET_KEY}" ]; then
+            echo "fail closed: staged Turnstile credential file is empty"
+            exit 1
+          fi
+          printf '::add-mask::%s\n' "${SITE_KEY}"
+          printf '::add-mask::%s\n' "${SECRET_KEY}"
+          printf '%s' "${SITE_KEY}" | pnpm exec wrangler secret put TURNSTILE_SITE_KEY "${wrangler_args[@]}"
+          printf '%s' "${SECRET_KEY}" | pnpm exec wrangler secret put TURNSTILE_SECRET_KEY "${wrangler_args[@]}"
+
+          pnpm exec wrangler secret list "${wrangler_args[@]}" --format json > "${SECRET_NAMES_FILE}"
+          node --input-type=module - "${SECRET_NAMES_FILE}" <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const entries = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          const names = new Set(entries.map((entry) => entry.name));
+          for (const required of ['TURNSTILE_SITE_KEY', 'TURNSTILE_SECRET_KEY']) {
+            if (!names.has(required)) throw new Error(`required Worker secret name is missing: ${required}`);
+          }
+          console.log('Required Turnstile Worker secret names are present.');
+          NODE
+
+      - name: Shred staged credentials
+        if: always() && inputs.mode == 'provision'
+        env:
+          TURNSTILE_OUTPUT_DIR: ${{ runner.temp }}/turnstile-provision
+          SECRET_NAMES_FILE: ${{ runner.temp }}/turnstile-secret-names.json
+        run: |
+          set -euo pipefail
+          for staged in \
+            "${TURNSTILE_OUTPUT_DIR}/TURNSTILE_SITE_KEY" \
+            "${TURNSTILE_OUTPUT_DIR}/TURNSTILE_SECRET_KEY" \
+            "${SECRET_NAMES_FILE}"; do
+            if [ -f "${staged}" ]; then shred -u "${staged}"; fi
+          done
+          if [ -d "${TURNSTILE_OUTPUT_DIR}" ]; then rmdir "${TURNSTILE_OUTPUT_DIR}"; fi
