@@ -59,7 +59,8 @@ Read-only inventory/backup uses a **separate, dedicated** token
 ### VPS private master-assets (catalogue import)
 
 The catalogue import fetches private ORIGINAL masters from a hardened VPS over
-SSH (no Neon is used anywhere). These GitHub Actions variables and secrets hold
+SSH; the catalogue import and its runtime use no Neon database (Neon is confined
+to the Books EOI data layer in §13). These GitHub Actions variables and secrets hold
 the connection material (names only, never values):
 
 - **Variables** (set under Settings > Secrets and variables > Actions > Variables):
@@ -687,8 +688,13 @@ Secret names configured (names only, never values):
 - `BOOK_EOI_HMAC_KEY` (environment: preview, production)
 - `BOOK_EOI_ENCRYPTION_KEY` (environment: preview, production)
 
-`TURNSTILE_SECRET_KEY` is **not yet set** and is intentionally deferred; it is
-unrelated to this data-layer provisioning. No existing repo-level secret was
+`TURNSTILE_SECRET_KEY` is **currently absent** and intentionally deferred. It is
+unrelated to this data-layer provisioning, but it is **not optional for deploy**:
+the deploy workflow's fail-closed secret gate (§1,
+`.github/workflows/deploy-cloudflare.yml`, "Verify required secrets are present")
+lists `TURNSTILE_SECRET_KEY` among the required secrets and exits non-zero while
+it is empty, so a preview/production deploy **deliberately cannot proceed until it
+is configured** — it is not merely pending. No existing repo-level secret was
 modified to add EOI; the EOI secrets are environment-scoped only.
 
 The deploy workflow (`.github/workflows/deploy-cloudflare.yml`) reads these as
