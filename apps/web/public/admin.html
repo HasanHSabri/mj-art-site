@@ -37,7 +37,12 @@
     </section>
 
     <div id="admin-content" hidden>
-      <section class="admin-grid" aria-label="Artwork editor">
+      <nav class="admin-section-nav" aria-label="Admin sections">
+        <a class="section-anchor" href="#artwork-section">Artwork Catalogue</a>
+        <a class="section-anchor" href="#books-dashboard">Book Interest Dashboard</a>
+      </nav>
+
+      <section class="admin-grid" id="artwork-section" aria-label="Artwork editor" style="scroll-margin-top: 84px;">
         <form class="panel editor-panel" id="artwork-form" novalidate>
           <div class="section-heading inline-heading">
             <div>
@@ -203,6 +208,71 @@
         </div>
         <p class="reorder-note" aria-live="polite" id="reorder-note"></p>
         <div class="draft-list" id="artwork-list"></div>
+      </section>
+
+      <section class="panel books-panel" id="books-dashboard" aria-labelledby="books-heading" style="scroll-margin-top: 84px;" hidden>
+        <div class="section-heading inline-heading">
+          <div>
+            <p class="eyebrow">Books expression of interest</p>
+            <h2 id="books-heading">Book interest dashboard</h2>
+          </div>
+          <div class="books-toolbar">
+            <button class="button ghost-button" type="button" id="books-refresh">Refresh</button>
+          </div>
+        </div>
+        <p class="copy-status" id="books-status" role="status" aria-live="polite"></p>
+        <p class="books-error" id="books-error" role="alert" hidden></p>
+
+        <div class="books-tiles" id="books-tiles"></div>
+
+        <div class="section-heading inline-heading books-filters">
+          <div>
+            <p class="eyebrow">Recent submissions</p>
+            <h2>Recent interest</h2>
+          </div>
+          <div class="books-filter-controls">
+            <label class="search-label">
+              Search name or email
+              <input id="books-search" type="search" placeholder="Filter by name or email" autocomplete="off">
+            </label>
+            <label class="filter-label">
+              Book
+              <select id="books-filter-book">
+                <option value="all">All books</option>
+                <option value="biography">Biography</option>
+                <option value="childrens">Children&rsquo;s Book</option>
+              </select>
+            </label>
+            <label class="filter-label">
+              Status
+              <select id="books-filter-status">
+                <option value="all">All statuses</option>
+                <option value="new">New</option>
+                <option value="contacted">Contacted</option>
+                <option value="withdrawn">Withdrawn</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div class="books-table-wrap">
+          <table class="books-table" id="books-table">
+            <caption class="visually-hidden">Recent book expressions of interest, newest first. Maximum 100 rows.</caption>
+            <thead>
+              <tr>
+                <th scope="col">Submitted</th>
+                <th scope="col">Name</th>
+                <th scope="col">Email</th>
+                <th scope="col">Book</th>
+                <th scope="col">Format</th>
+                <th scope="col">Copies</th>
+                <th scope="col">Status</th>
+                <th scope="col">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="books-tbody"></tbody>
+          </table>
+        </div>
       </section>
     </div>
   </main>

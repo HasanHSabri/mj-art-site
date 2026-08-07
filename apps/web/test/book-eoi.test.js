@@ -36,7 +36,8 @@ const {
   hmacEmailHash,
   encryptPii,
   decryptPii,
-  isUniqueViolation
+  isUniqueViolation,
+  summarizeBookEoi
 } = bookEoi;
 
 // Secrets must meet the >=32-byte runtime gate, so the test keys are >=32 chars.
@@ -897,7 +898,13 @@ test('DELETE on /api/books/interest returns 405', async () => {
 async function seedRowSql(rows) {
   return makeSql((text) => {
     if (/ORDER BY created_at DESC/.test(text)) return rows;
-    if (/GROUP BY status/.test(text)) return rows;
+    if (/AS bio_interest/.test(text)) {
+      return [{
+        bio_interest: 0, bio_copies: 0, child_interest: 0, child_copies: 0,
+        today_submissions: 0, today_copies: 0, last7_submissions: 0, last7_copies: 0,
+        status_new: 0, status_contacted: 0, status_withdrawn: 0, total: 0
+      }];
+    }
     if (/UPDATE mj_eoi.book_eoi SET status/.test(text)) return [{ id: 'updated' }];
     throw new Error('unexpected: ' + text);
   });
@@ -966,21 +973,93 @@ test('admin list: tampered ciphertext yields null PII without leaking raw', asyn
   assert.equal(data.rows[0].email, null);
 });
 
-test('admin summary returns counts by status + total, no PII', async () => {
-  const env = makeEnv({
-    sql: makeSql(() => [
-      { status: 'new', count: 4 },
-      { status: 'contacted', count: 2 },
-      { status: 'withdrawn', count: 1 }
-    ])
-  });
+test('admin summary returns per-book active counts, today + 7-day windows, statuses, total; no PII', async () => {
+  const summaryRow = {
+    bio_interest: 3, bio_copies: 7,
+    child_interest: 1, child_copies: 2,
+    today_submissions: 2, today_copies: 4,
+    last7_submissions: 5, last7_copies: 9,
+    status_new: 4, status_contacted: 2, status_withdrawn: 1,
+    total: 7
+  };
+  const env = makeEnv({ sql: makeSql(() => [summaryRow]) });
   const res = await worker.fetch(await authedReq('/api/admin/books/eoi/summary'), env);
   assert.equal(res.status, 200);
   const data = await body(res);
-  assert.equal(data.byStatus.new, 4);
+  assert.deepEqual(data.books.biography, { interestCount: 3, requestedCopies: 7 });
+  assert.deepEqual(data.books.childrens, { interestCount: 1, requestedCopies: 2 });
+  assert.deepEqual(data.today, { submissions: 2, copies: 4 });
+  assert.deepEqual(data.last7Days, { submissions: 5, copies: 9 });
+  assert.deepEqual(data.byStatus, { new: 4, contacted: 2, withdrawn: 1 });
   assert.equal(data.total, 7);
-  const text = JSON.stringify(data);
-  assert.equal(text.includes('@'), false);
+  assert.equal(JSON.stringify(data).includes('@'), false);
+});
+
+test('admin summary fails closed 503 when the DB throws', async () => {
+  const env = makeEnv({ sql: makeSql(() => { throw new Error('db down'); }) });
+  const res = await worker.fetch(await authedReq('/api/admin/books/eoi/summary'), env);
+  assert.equal(res.status, 503);
+});
+
+test('admin summary: empty DB yields all-zero windows, statuses, and books', async () => {
+  const env = makeEnv({ sql: makeSql(() => [{}]) });
+  const res = await worker.fetch(await authedReq('/api/admin/books/eoi/summary'), env);
+  const data = await body(res);
+  assert.deepEqual(data.books.biography, { interestCount: 0, requestedCopies: 0 });
+  assert.deepEqual(data.books.childrens, { interestCount: 0, requestedCopies: 0 });
+  assert.deepEqual(data.today, { submissions: 0, copies: 0 });
+  assert.deepEqual(data.last7Days, { submissions: 0, copies: 0 });
+  assert.deepEqual(data.byStatus, { new: 0, contacted: 0, withdrawn: 0 });
+  assert.equal(data.total, 0);
+});
+
+// --- summarizeBookEoi: parameterized date windows + counts (single scan) ---
+
+test('summarizeBookEoi computes UTC start-of-today and trailing-7-day boundaries and passes them parameterized', async () => {
+  const now = new Date(Date.UTC(2026, 7, 7, 13, 30, 45)); // 2026-08-07 13:30:45 UTC
+  const captured = [];
+  const sql = async (text, params) => { captured.push({ text, params }); return [{}]; };
+  await summarizeBookEoi(sql, { now });
+  assert.equal(captured.length, 1, 'a single table scan');
+  const { text, params } = captured[0];
+  // Allowlist constants are parameterized ($1..$7), never interpolated.
+  assert.equal(params[0], 'biography');
+  assert.equal(params[1], 'withdrawn');
+  assert.equal(params[2], 'childrens');
+  assert.equal(params[5], 'new');
+  assert.equal(params[6], 'contacted');
+  // Date windows are ISO strings derived from the injected clock.
+  const todayStart = new Date(Date.UTC(2026, 7, 7, 0, 0, 0)).toISOString();
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  assert.equal(params[3], todayStart, 'today boundary is UTC midnight of the injected clock');
+  assert.equal(params[4], sevenDaysAgo, '7-day boundary is now minus 7 days');
+  // Per-book active counts exclude withdrawn via status <> $2.
+  assert.match(text, /book_code = \$1 AND status <> \$2/);
+  assert.match(text, /book_code = \$3 AND status <> \$2/);
+  // Only created_at/quantity/status/book_code are referenced; no PII columns.
+  assert.equal(/pii_|email_hash/i.test(text), false);
+});
+
+test('summarizeBookEoi maps a single aggregated row into the canonical shape and coerces to numbers', async () => {
+  const sql = async () => [{
+    bio_interest: '3', bio_copies: '7', child_interest: '1', child_copies: '2',
+    today_submissions: '2', today_copies: '4', last7_submissions: '5', last7_copies: '9',
+    status_new: '4', status_contacted: '2', status_withdrawn: '1', total: '7'
+  }];
+  const out = await summarizeBookEoi(sql, { now: new Date('2026-08-07T10:00:00Z') });
+  assert.equal(typeof out.books.biography.interestCount, 'number');
+  assert.equal(out.books.biography.interestCount, 3);
+  assert.equal(out.books.biography.requestedCopies, 7);
+  assert.equal(out.today.submissions, 2);
+  assert.equal(out.today.copies, 4);
+  assert.equal(out.last7Days.submissions, 5);
+  assert.equal(out.byStatus.withdrawn, 1);
+  assert.equal(out.total, 7);
+});
+
+test('summarizeBookEoi throws on an invalid clock value (fails closed, never silently wrong)', async () => {
+  const sql = async () => [{}];
+  await assert.rejects(() => summarizeBookEoi(sql, { now: new Date('not-a-date') }));
 });
 
 test('admin PATCH updates status with {status} only', async () => {

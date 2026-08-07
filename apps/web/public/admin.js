@@ -11,6 +11,16 @@ import {
   renumber,
   reorder
 } from './admin-artwork.js';
+import {
+  STATUS_ORDER,
+  formatBookLabel,
+  formatFormatLabel,
+  formatStatusLabel,
+  formatCreatedDate,
+  safeMailtoHref,
+  buildSummaryTiles,
+  filterRows
+} from './admin-books.js';
 
 const MAX_SOURCE_BYTES = 30 * 1024 * 1024;
 const FULL_MAX_DIMENSION = 2000;
@@ -89,6 +99,7 @@ loginForm.addEventListener('submit', async (event) => {
 
 document.getElementById('logout').addEventListener('click', async () => {
   await fetch('/api/admin/logout', { method: 'POST' });
+  resetBooksSurface();
   adminContent.hidden = true;
   loginPanel.hidden = false;
   loginStatus.textContent = '';
@@ -283,6 +294,10 @@ async function loadArtworks() {
     resetForm('No artwork yet. Add the first painting.');
   }
   renderArtworkList();
+  // Load the Books dashboard only now that admin auth is confirmed. A Books
+  // failure is contained inside loadBooksDashboard (panel error) and must never
+  // break the artwork admin above.
+  loadBooksDashboard(false);
 }
 
 async function saveArtworks(savedArtwork) {
@@ -532,6 +547,332 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value).replaceAll('"', '&quot;');
+}
+
+// ===========================================================================
+// Books EOI dashboard
+// ===========================================================================
+// SECURITY CONTRACT (enforced here and by the tests in admin-books.test.js):
+//   * This dashboard loads ONLY after authenticated admin status is confirmed
+//     (loadArtworks has set adminContent.hidden = false). A Books API failure
+//     surfaces a panel error and never breaks the artwork admin.
+//   * Auth uses the existing HttpOnly session cookie set by the server. No PII
+//     is ever written to localStorage/sessionStorage or logged.
+//   * Every PII value is rendered with textContent / DOM property assignment.
+//     There is NO innerHTML / insertAdjacentHTML anywhere in this section. The
+//     mailto link is built from safeMailtoHref() and assigned to <a>.href.
+//   * The only mutation is PATCH {status}; there is no DELETE path or button.
+//     Status updates await the server (no optimistic UI) so rollback is robust;
+//     on failure the row is left unchanged and the error stays visible.
+//   * resetBooksSurface() clears all PII from the DOM on logout.
+
+const booksPanel = document.getElementById('books-dashboard');
+const booksStatus = document.getElementById('books-status');
+const booksError = document.getElementById('books-error');
+const booksTiles = document.getElementById('books-tiles');
+const booksTbody = document.getElementById('books-tbody');
+const booksSearch = document.getElementById('books-search');
+const booksFilterBook = document.getElementById('books-filter-book');
+const booksFilterStatus = document.getElementById('books-filter-status');
+const booksRefresh = document.getElementById('books-refresh');
+
+let bookRows = [];
+let booksLoadedAt = null;
+
+booksSearch.addEventListener('input', renderBooksList);
+booksFilterBook.addEventListener('change', renderBooksList);
+booksFilterStatus.addEventListener('change', renderBooksList);
+booksRefresh.addEventListener('click', () => loadBooksDashboard(true));
+
+// Load summary + recent rows. Runs only inside the authenticated admin content.
+// `isRefresh` true => a manual refresh; false => first load after sign-in.
+// Never throws: a failure is contained to the books panel.
+function loadBooksDashboard(isRefresh) {
+  booksPanel.hidden = false;
+  booksError.hidden = true;
+  booksError.textContent = '';
+  booksStatus.textContent = isRefresh ? 'Refreshing book interest…' : 'Loading book interest…';
+  booksRefresh.disabled = true;
+
+  return Promise.all([
+    fetch('/api/admin/books/eoi/summary', { cache: 'no-store' }),
+    fetch('/api/admin/books/eoi?limit=100', { cache: 'no-store' })
+  ])
+    .then(async ([summaryRes, listRes]) => {
+      // Session ended mid-session: collapse to the login panel (mirrors the
+      // artwork 401 handling) and do not attempt to render PII.
+      if (summaryRes.status === 401 || listRes.status === 401) {
+        resetBooksSurface();
+        adminContent.hidden = true;
+        loginPanel.hidden = false;
+        loginStatus.textContent = 'Session ended. Sign in again.';
+        return;
+      }
+      if (!summaryRes.ok || !listRes.ok) throw new Error('Book interest request failed.');
+
+      const summary = await summaryRes.json();
+      const data = await listRes.json();
+      bookRows = Array.isArray(data && data.rows) ? data.rows : [];
+      booksLoadedAt = new Date();
+
+      renderBooksTiles(summary);
+      renderBooksList();
+      booksStatus.textContent = 'Last updated ' + formatCreatedDate(booksLoadedAt) + '.';
+    })
+    .catch(() => {
+      // Contained failure: show a panel error, clear stale PII, leave the
+      // artwork admin untouched.
+      bookRows = [];
+      booksLoadedAt = null;
+      renderBooksTiles(null);
+      renderBooksList();
+      booksStatus.textContent = '';
+      booksError.hidden = false;
+      booksError.textContent = 'Could not load book interest. The artwork admin is unaffected.';
+    })
+    .finally(() => {
+      booksRefresh.disabled = false;
+    });
+}
+
+// Best-effort, non-blocking summary refresh used after a status PATCH so the
+// tiles reflect the new counts without a full reload. Failures are swallowed so
+// a tile refresh glitch never disturbs an in-progress status update.
+function refreshBooksSummary() {
+  fetch('/api/admin/books/eoi/summary', { cache: 'no-store' })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((summary) => {
+      if (summary) renderBooksTiles(summary);
+    })
+    .catch(() => {});
+}
+
+// Render the summary tiles. Built entirely with DOM APIs (no innerHTML).
+function renderBooksTiles(summary) {
+  booksTiles.textContent = '';
+  const tiles = buildSummaryTiles(summary);
+  tiles.forEach((tile) => {
+    const card = document.createElement('div');
+    card.className = 'tile tile-' + tile.kind + ' tile-' + tile.key;
+
+    const label = document.createElement('p');
+    label.className = 'tile-label';
+    label.textContent = tile.label;
+    card.appendChild(label);
+
+    if (tile.kind === 'status') {
+      const value = document.createElement('p');
+      value.className = 'tile-value';
+      value.textContent = String(tile.value);
+      card.appendChild(value);
+      const sub = document.createElement('p');
+      sub.className = 'tile-sub';
+      sub.textContent = 'interests';
+      card.appendChild(sub);
+    } else {
+      const interest = document.createElement('p');
+      interest.className = 'tile-value';
+      interest.textContent = String(tile.interest) + ' interested';
+      card.appendChild(interest);
+      const sub = document.createElement('p');
+      sub.className = 'tile-sub';
+      sub.textContent = tile.kind === 'book'
+        ? String(tile.copies) + ' copies requested'
+        : String(tile.submissions) + ' submissions · ' + String(tile.copies) + ' copies';
+      card.appendChild(sub);
+    }
+
+    booksTiles.appendChild(card);
+  });
+}
+
+// Render the recent list applying the current client filters. Newest-first
+// order comes from the API; filterRows preserves it.
+function renderBooksList() {
+  booksTbody.textContent = '';
+  const filtered = filterRows(bookRows, {
+    term: booksSearch.value,
+    book: booksFilterBook.value,
+    status: booksFilterStatus.value
+  });
+
+  if (!bookRows.length) {
+    booksTbody.appendChild(emptyRow('No expressions of interest yet.'));
+    return;
+  }
+  if (!filtered.length) {
+    booksTbody.appendChild(emptyRow('No submissions match the current filters.'));
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  filtered.forEach((row) => fragment.appendChild(renderBookRow(row)));
+  booksTbody.appendChild(fragment);
+}
+
+function emptyRow(message) {
+  const tr = document.createElement('tr');
+  const td = document.createElement('td');
+  td.colSpan = 8;
+  td.className = 'books-empty';
+  td.textContent = message;
+  tr.appendChild(td);
+  return tr;
+}
+
+// Build one table row with ONLY textContent / property assignment. Each cell
+// carries a data-label so the responsive CSS can rebuild it as a stacked card on
+// narrow screens (320px / 393px / 200% zoom) without horizontal scroll.
+function renderBookRow(row) {
+  const tr = document.createElement('tr');
+  tr.className = 'book-row book-row-' + (row.status || 'new');
+  if (row.id) tr.dataset.id = row.id;
+
+  tr.appendChild(textCell(formatCreatedDate(row.createdAt), 'Submitted'));
+  tr.appendChild(textCell(row.name || '—', 'Name'));
+
+  // Email: safe mailto link via property assignment, never innerHTML.
+  tr.appendChild(emailCell(row.email, 'Email'));
+
+  tr.appendChild(textCell(formatBookLabel(row.book), 'Book'));
+  tr.appendChild(textCell(formatFormatLabel(row.format), 'Format'));
+  tr.appendChild(textCell(String(row.quantity == null ? '—' : row.quantity), 'Copies'));
+  tr.appendChild(statusCell(row.status, 'Status'));
+  tr.appendChild(actionsCell(row));
+
+  return tr;
+}
+
+function textCell(value, label) {
+  const td = document.createElement('td');
+  if (label) td.setAttribute('data-label', label);
+  td.textContent = value == null ? '—' : String(value);
+  return td;
+}
+
+function emailCell(email, label) {
+  const td = document.createElement('td');
+  if (label) td.setAttribute('data-label', label);
+  const href = safeMailtoHref(email);
+  if (!href) {
+    td.textContent = '—';
+    return td;
+  }
+  const anchor = document.createElement('a');
+  anchor.href = href; // property assignment; encodeURIComponent neutralizes injection
+  anchor.textContent = email; // safe: never interpreted as HTML
+  td.appendChild(anchor);
+  return td;
+}
+
+function statusCell(status, label) {
+  const td = document.createElement('td');
+  if (label) td.setAttribute('data-label', label);
+  const badge = document.createElement('span');
+  badge.className = 'status-badge status-badge-' + (status || 'new');
+  badge.textContent = formatStatusLabel(status);
+  td.appendChild(badge);
+  return td;
+}
+
+// One button per status that is NOT the current status. Each button carries a
+// descriptive accessible name including the person's name. Withdrawn asks for
+// confirmation (it hides the interest from public counts). No DELETE control.
+function actionsCell(row) {
+  const td = document.createElement('td');
+  td.className = 'books-actions';
+  td.setAttribute('data-label', 'Actions');
+
+  STATUS_ORDER.forEach((status) => {
+    if (status === row.status) return;
+    const who = row.name || 'this interest';
+    const verb = status === 'new' ? 'Mark new' : status === 'contacted' ? 'Mark contacted' : 'Mark withdrawn';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'button ghost-button book-action' + (status === 'withdrawn' ? ' danger-button' : '');
+    button.textContent = verb;
+    button.setAttribute('aria-label', verb + ' — ' + who);
+    button.dataset.action = status;
+    button.addEventListener('click', () => patchBookStatus(row, status, button));
+    td.appendChild(button);
+  });
+  return td;
+}
+
+// PATCH {status} only. Awaits the server (no optimistic UI): on failure the row
+// is unchanged and the error stays visible. Sets aria-busy + disables the row's
+// buttons while in flight. On 401 the session is collapsed to the login panel.
+async function patchBookStatus(row, status, button) {
+  if (status === 'withdrawn') {
+    const who = row.name || 'this interest';
+    if (!window.confirm('Mark ' + who + ' as withdrawn? It will stop counting in public totals. You can change it back later.')) {
+      return;
+    }
+  }
+
+  const rowEl = button.closest('tr');
+  if (rowEl) rowEl.setAttribute('aria-busy', 'true');
+  setRowBusy(rowEl, true);
+  booksStatus.textContent = 'Updating status…';
+  booksError.hidden = true;
+  booksError.textContent = '';
+
+  try {
+    const response = await fetch('/api/admin/books/eoi/' + encodeURIComponent(row.id), {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status })
+    });
+    if (response.status === 401) {
+      resetBooksSurface();
+      adminContent.hidden = true;
+      loginPanel.hidden = false;
+      loginStatus.textContent = 'Session ended. Sign in again.';
+      return;
+    }
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      throw new Error(body.error || 'Status update failed.');
+    }
+    // Server confirmed: update the local row and re-render this view, then
+    // refresh the tiles in the background.
+    row.status = status;
+    booksStatus.textContent = 'Status updated.';
+    renderBooksList();
+    refreshBooksSummary();
+  } catch {
+    booksStatus.textContent = '';
+    booksError.hidden = false;
+    booksError.textContent = 'Could not update status. The row is unchanged.';
+  } finally {
+    setRowBusy(rowEl, false);
+    if (rowEl) rowEl.removeAttribute('aria-busy');
+  }
+}
+
+function setRowBusy(rowEl, busy) {
+  if (!rowEl) return;
+  rowEl.querySelectorAll('button').forEach((b) => {
+    b.disabled = busy;
+  });
+}
+
+// Clear all PII from the DOM on logout so nothing persists in the page. Auth is
+// cookie-only, so there is nothing to clear from storage.
+function resetBooksSurface() {
+  bookRows = [];
+  booksLoadedAt = null;
+  if (booksSearch) booksSearch.value = '';
+  if (booksFilterBook) booksFilterBook.value = 'all';
+  if (booksFilterStatus) booksFilterStatus.value = 'all';
+  if (booksStatus) booksStatus.textContent = '';
+  if (booksError) {
+    booksError.hidden = true;
+    booksError.textContent = '';
+  }
+  if (booksTiles) booksTiles.textContent = '';
+  if (booksTbody) booksTbody.textContent = '';
+  if (booksPanel) booksPanel.hidden = true;
 }
 
 loadArtworks();

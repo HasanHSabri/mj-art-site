@@ -957,7 +957,10 @@ async function handleAdminListBookEoi(request, env) {
   }
 }
 
-// GET /api/admin/books/eoi/summary -- counts by status + total. No PII.
+// GET /api/admin/books/eoi/summary -- per-book active counts/copies, today +
+// trailing-7-day submission/copy windows, counts by status, and a grand total.
+// Single parameterized conditional-aggregation scan over created_at/quantity/
+// status/book_code only. No PII is read or returned.
 async function handleAdminSummaryBookEoi(env) {
   let sql;
   try {
@@ -966,14 +969,8 @@ async function handleAdminSummaryBookEoi(env) {
     return jsonResponse({ error: 'Service unavailable.' }, 503);
   }
   try {
-    const rows = await summarizeBookEoi(sql);
-    const byStatus = {};
-    let total = 0;
-    for (const row of rows) {
-      byStatus[row.status] = Number(row.count);
-      total += Number(row.count);
-    }
-    return jsonResponse({ byStatus, total });
+    const summary = await summarizeBookEoi(sql, { now: new Date() });
+    return jsonResponse(summary);
   } catch {
     return jsonResponse({ error: 'Service unavailable.' }, 503);
   }

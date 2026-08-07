@@ -477,13 +477,63 @@ export async function listRecentBookEoi(sql, limit) {
   return Array.isArray(rows) ? rows : [];
 }
 
-// Summary counts grouped by status (admin).
-export async function summarizeBookEoi(sql) {
+// Admin summary in a single table scan using conditional (FILTER)
+// aggregation. Reads ONLY created_at, quantity, status, and book_code -- no
+// PII columns are touched and no schema change is required.
+//
+// "Today" is the start of the current UTC day (deterministic in a Worker, which
+// has no meaningful local timezone); "last 7 days" is a trailing 168-hour
+// window ending now. `windows.now` lets tests inject a deterministic clock.
+//
+// Returns the exact dashboard shape (no PII):
+//   {
+//     books: { biography:{interestCount,requestedCopies}, childrens:{...} },
+//     today: { submissions, copies },
+//     last7Days: { submissions, copies },
+//     byStatus: { new, contacted, withdrawn },
+//     total
+//   }
+// Per-book "active" counts EXCLUDE withdrawn rows (status <> 'withdrawn'), so a
+// withdrawn interest no longer counts toward a book's active interest/copies.
+export async function summarizeBookEoi(sql, windows) {
+  const now = windows && windows.now ? new Date(windows.now) : new Date();
+  if (Number.isNaN(now.getTime())) throw new Error('Invalid clock value for summary.');
+  const todayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
   const rows = await sql(
-    'SELECT status, COUNT(*)::int AS count FROM mj_eoi.book_eoi GROUP BY status',
-    []
+    'SELECT ' +
+      'COUNT(*) FILTER (WHERE book_code = $1 AND status <> $2) AS bio_interest, ' +
+      'COALESCE(SUM(quantity) FILTER (WHERE book_code = $1 AND status <> $2), 0)::int AS bio_copies, ' +
+      'COUNT(*) FILTER (WHERE book_code = $3 AND status <> $2) AS child_interest, ' +
+      'COALESCE(SUM(quantity) FILTER (WHERE book_code = $3 AND status <> $2), 0)::int AS child_copies, ' +
+      'COUNT(*) FILTER (WHERE created_at >= $4) AS today_submissions, ' +
+      'COALESCE(SUM(quantity) FILTER (WHERE created_at >= $4), 0)::int AS today_copies, ' +
+      'COUNT(*) FILTER (WHERE created_at >= $5) AS last7_submissions, ' +
+      'COALESCE(SUM(quantity) FILTER (WHERE created_at >= $5), 0)::int AS last7_copies, ' +
+      'COUNT(*) FILTER (WHERE status = $6) AS status_new, ' +
+      'COUNT(*) FILTER (WHERE status = $7) AS status_contacted, ' +
+      'COUNT(*) FILTER (WHERE status = $2) AS status_withdrawn, ' +
+      'COUNT(*) AS total ' +
+      'FROM mj_eoi.book_eoi',
+    ['biography', 'withdrawn', 'childrens', todayStart.toISOString(), sevenDaysAgo.toISOString(), 'new', 'contacted']
   );
-  return Array.isArray(rows) ? rows : [];
+  const r = Array.isArray(rows) && rows[0] ? rows[0] : {};
+  const num = (v) => Number(v) || 0;
+  return {
+    books: {
+      biography: { interestCount: num(r.bio_interest), requestedCopies: num(r.bio_copies) },
+      childrens: { interestCount: num(r.child_interest), requestedCopies: num(r.child_copies) }
+    },
+    today: { submissions: num(r.today_submissions), copies: num(r.today_copies) },
+    last7Days: { submissions: num(r.last7_submissions), copies: num(r.last7_copies) },
+    byStatus: {
+      new: num(r.status_new),
+      contacted: num(r.status_contacted),
+      withdrawn: num(r.status_withdrawn)
+    },
+    total: num(r.total)
+  };
 }
 
 // Live column-name probe for the schema-signature health/drift check. No PII.
