@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=type-gallery-2026-08">
+  <link rel="stylesheet" href="./styles.css?v=chapter-nav-phase2">
 </head>
 <body>
   <a class="skip-link" href="#gallery">Skip to gallery</a>
@@ -126,7 +126,7 @@
         </div>
       </section>
 
-      <section class="section testimonials-section">
+      <section class="section testimonials-section" id="testimonials">
         <div class="section-heading">
           <div>
             <p class="section-label">Testimonials</p>
@@ -222,6 +222,32 @@
 
   <button type="button" id="back-to-top" class="back-to-top button button-primary" hidden>Back to Top</button>
 
+  <!-- Persistent chapter navigation. A second, uniquely-labelled nav region
+       that complements the primary topbar. On wide screens it renders as a
+       fixed right-edge vertical rail; below that breakpoint it collapses into
+       a fixed bottom-right "Explore" disclosure button that opens an upward
+       menu. All links are real anchors/routes, so the nav is fully usable
+       without JavaScript (progressive enhancement). -->
+  <nav class="chapter-nav" aria-label="Chapter navigation">
+    <ul class="chapter-rail" id="chapter-rail">
+      <li><a class="chapter-link" href="#gallery" data-target="gallery">Gallery</a></li>
+      <li><a class="chapter-link" href="#story" data-target="story">Story</a></li>
+      <li><a class="chapter-link" href="#testimonials" data-target="testimonials">Testimonials</a></li>
+      <li><a class="chapter-link chapter-link-page" href="/books">Books</a></li>
+      <li><a class="chapter-link" href="#contact" data-target="contact">Contact</a></li>
+    </ul>
+
+    <button type="button" class="chapter-toggle button button-primary" id="chapter-toggle" aria-expanded="false" aria-controls="chapter-menu">Explore</button>
+    <ul class="chapter-menu" id="chapter-menu" hidden>
+      <li><a class="chapter-link" href="#gallery" data-target="gallery">Gallery</a></li>
+      <li><a class="chapter-link" href="#story" data-target="story">Story</a></li>
+      <li><a class="chapter-link" href="#testimonials" data-target="testimonials">Testimonials</a></li>
+      <li><a class="chapter-link chapter-link-page" href="/books">Books</a></li>
+      <li><a class="chapter-link" href="#contact" data-target="contact">Contact</a></li>
+    </ul>
+  </nav>
+
   <script type="module" src="./script.js?v=catalogue-gallery-btt"></script>
+  <script type="module" src="./chapter-nav.js?v=chapter-nav-phase2"></script>
 </body>
 </html>

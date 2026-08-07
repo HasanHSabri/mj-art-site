@@ -10,6 +10,10 @@
   --accent-deep: #6f3f35;
   --on-accent: #fff8f4;
   --shadow: 0 24px 60px rgba(81, 50, 37, 0.12);
+  /* Persistent chapter navigator: a fixed right-edge rail on wide screens
+     and a bottom-right disclosure menu below that breakpoint. */
+  --chapter-rail-width: 124px;
+  --chapter-rail-gap: 16px;
 }
 
 * {
@@ -18,6 +22,14 @@
 
 html {
   scroll-behavior: smooth;
+}
+
+/* Anchor targets get a small top margin so scrolling to a section leaves a
+   sliver of breathing room and never parks focused content flush to the
+   viewport edge or under any fixed control. */
+#top,
+.section[id] {
+  scroll-margin-top: 24px;
 }
 
 body {
@@ -261,6 +273,82 @@ label {
   display: none;
 }
 
+/* Persistent chapter navigation. Mobile-first: the rail is hidden and a
+   bottom-right "Explore" disclosure button is shown, opening an upward menu.
+   The wide-screen rail is layered on at min-width: 1280px below. The closed
+   menu carries the [hidden] attribute so it is fully removed from the tab and
+   focus order (display: none), not merely visually hidden. */
+.chapter-nav {
+  z-index: 40;
+}
+
+.chapter-rail {
+  display: none;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chapter-toggle {
+  position: fixed;
+  right: calc(env(safe-area-inset-right, 0px) + 16px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 18px;
+  z-index: 40;
+}
+
+.chapter-menu {
+  position: fixed;
+  right: calc(env(safe-area-inset-right, 0px) + 16px);
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 72px);
+  display: grid;
+  gap: 4px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  margin: 0;
+  padding: 10px;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--surface-strong);
+  box-shadow: var(--shadow);
+  z-index: 41;
+}
+
+.chapter-menu[hidden] {
+  display: none;
+}
+
+.chapter-menu a {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 12px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.chapter-menu a:hover {
+  background: rgba(154, 92, 75, 0.1);
+}
+
+/* Current in-page location. Uses aria-current="location" (an in-page
+   position, not aria-current="page") and is conveyed with shape AND weight,
+   never colour alone: a leading accent bar + heavier type + soft fill. */
+.chapter-link[aria-current="location"] {
+  font-weight: 600;
+  color: var(--accent-deep);
+  background: rgba(154, 92, 75, 0.12);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.chapter-nav[hidden] {
+  display: none;
+}
+
 .button:focus-visible,
 .dialog-close:focus-visible,
 .filter-chip:focus-visible,
@@ -268,6 +356,8 @@ label {
 .inline-link:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
+.chapter-link:focus-visible,
+.chapter-toggle:focus-visible,
 .back-to-top:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 3px;
@@ -603,6 +693,53 @@ textarea {
 .detail-list dt,
 .detail-list dd {
   margin: 0;
+}
+
+@media (min-width: 1280px) {
+  /* Reserve a right-hand lane for the fixed chapter rail so page content
+     NEVER sits underneath it. The rail itself is anchored to the viewport
+     right edge; padding the body shifts the centred page-shell clear of it. */
+  body {
+    padding-right: calc(var(--chapter-rail-width) + var(--chapter-rail-gap));
+  }
+
+  /* The mobile disclosure + menu are not used on wide screens. */
+  .chapter-toggle,
+  .chapter-menu {
+    display: none;
+  }
+
+  /* Fixed right-edge vertical rail. Vertically centred via grid
+     align-content (no transform, so nothing can clash with hover nudges). */
+  .chapter-rail {
+    position: fixed;
+    top: 0;
+    right: 0;
+    display: grid;
+    align-content: center;
+    gap: 4px;
+    width: var(--chapter-rail-width);
+    max-width: var(--chapter-rail-width);
+    height: 100dvh;
+    padding: 12px 10px;
+    border-left: 1px solid var(--border);
+    background: var(--surface-strong);
+    box-shadow: -12px 0 30px rgba(81, 50, 37, 0.08);
+  }
+
+  .chapter-rail a {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 12px;
+    border-radius: 12px;
+    color: var(--text);
+    white-space: nowrap;
+  }
+
+  .chapter-rail a:hover {
+    background: rgba(154, 92, 75, 0.1);
+  }
 }
 
 @media (max-width: 960px) {
