@@ -227,7 +227,7 @@ PREVIEW R2 bucket as a set of image derivatives plus a single `artworks.json`.
 Private ORIGINAL masters are a **versioned library on a hardened VPS** (mirroring
 the Drawer Organiser Library admin-curated draft -> preview -> publish model);
 public processed derivatives and the public `artworks.json` are **Cloudflare R2
-only. There is no Neon anywhere in this project.** This is a separate, dedicated,
+only; no Neon database stores catalogue state.** This is a separate, dedicated,
 preview-only workflow: `.github/workflows/catalog-import.yml`, backed by
 `scripts/generate-catalog-derivatives.mjs` (generation),
 `scripts/import-catalog-preview.mjs` (preview import client),
@@ -611,4 +611,93 @@ promotion workflow requires.
   never appears in an `if:`/raw expression.
 - **No deletes, ever.** Legacy objects are retained; canonical image keys do not
   overlap legacy keys.
+
+## 13. Books EOI Neon data layer (isolated, greenfield)
+
+The Books Expression-of-Interest (EOI) backend is the **only** Neon consumer in
+MJ-ART. It is provisioned as two **physically isolated** Neon projects, one per
+deployment environment. Everything in this section is non-secret; no connection
+string, password, or key value is recorded here or in Git.
+
+### 13.1 Environments and Neon project mapping
+
+| GitHub environment | Neon project (name) | Neon project id | Region |
+| --- | --- | --- | --- |
+| `preview` | `mj-art-eoi-preview` | `square-truth-11468808` | `aws-ap-southeast-2` (Sydney) |
+| `production` | `mj-art-eoi-production` | `cool-art-04117635` | `aws-ap-southeast-2` (Sydney) |
+
+Both projects live in organization `org-tiny-fog-95413927` (Neon "Ihab"). They
+are unrelated to, and must never be confused with, the Drawer Organiser project
+`fancy-poetry-96136890` in the same org, which is out of scope here.
+
+- Each project's default Postgres database is `neondb`; the EOI schema is `mj_eoi`.
+- Each project has exactly one root branch (`main`). **No branches are created or
+  used** for EOI: there is **no migration framework, no ALTER compatibility path,
+  and no child branches**. The canonical schema in
+  `database/mj-eoi-schema.sql` is applied once as initial provisioning on a
+  verified-empty database.
+- Architecture: schema-as-provisioning (not migrations). To change the shape,
+  edit `database/mj-eoi-schema.sql` and `apps/web/src/book-eoi.js`
+  (`EXPECTED_COLUMNS`/`EXPECTED_LIVE_CATALOG`) together; the drift tool and
+  health probe enforce consistency.
+
+### 13.2 Schema signature (drift probe contract)
+
+The single table is `mj_eoi.book_eoi`. Its column-name signature is:
+
+```
+mj_eoi.book_eoi|book_code,created_at,email_hash,format_code,id,pii_ciphertext,pii_iv,quantity,status,updated_at
+```
+
+This is recomputed from `information_schema` at runtime by `/api/books/health`
+and from `database/mj-eoi-schema.sql` by `scripts/check-book-eoi-schema.mjs`
+(offline drift guard). Initial provisioning was verified to match on both
+projects: 10 columns, 4 CHECK constraints, 1 `UNIQUE(book_code, email_hash)`,
+and 4 indexes (PK + UNIQUE + `book_eoi_book_status_idx` +
+`book_eoi_book_created_idx`). The `check:schema` guard passes.
+
+### 13.3 Runtime role contract (`mj_eoi_app`)
+
+Each project has a dedicated SQL login role `mj_eoi_app`, least-privilege:
+
+- Attributes: not superuser, not createdb, not createrole, not replication, not
+  bypassrls. It owns no objects and holds no `ALL`/DDL.
+- Per-database settings: `search_path = pg_catalog, mj_eoi` and a short
+  `statement_timeout = 5000` (ms).
+- Granted only: `CONNECT` on `neondb`, `USAGE` on schema `mj_eoi`, and
+  `SELECT, INSERT, UPDATE` on `mj_eoi.book_eoi`.
+- Revoked/denied: `DELETE`, `TRUNCATE`, `REFERENCES`, `TRIGGER`, schema `CREATE`
+  (and thus any DDL), and `PUBLIC` table grants.
+- Verified live on both projects as the app role: it can read the catalog and
+  SELECT/INSERT/UPDATE (write tests were rolled back so the table stays empty),
+  and is denied `DELETE`, `TRUNCATE`, `CREATE TABLE`, and `DROP`. Both tables
+  were empty (count 0) at handover.
+
+### 13.4 Connection and GitHub secrets (names only)
+
+The Worker connects via the **pooled** Neon endpoint (pooler host) through
+`NEON_DATABASE_URL`, stored as a **GitHub Actions environment secret** (not a
+repo-level secret) under each environment, so preview and production never share
+a database. Each environment also has its own distinct, high-entropy
+(>=32-byte ASCII) `BOOK_EOI_HMAC_KEY` (HMAC-SHA256 email-hash key) and
+`BOOK_EOI_ENCRYPTION_KEY` (AES-256-GCM PII key material, HKDF-derived at runtime).
+Secret names configured (names only, never values):
+
+- `NEON_DATABASE_URL` (environment: preview, production)
+- `BOOK_EOI_HMAC_KEY` (environment: preview, production)
+- `BOOK_EOI_ENCRYPTION_KEY` (environment: preview, production)
+
+`TURNSTILE_SECRET_KEY` is **not yet set** and is intentionally deferred; it is
+unrelated to this data-layer provisioning. No existing repo-level secret was
+modified to add EOI; the EOI secrets are environment-scoped only.
+
+The deploy workflow (`.github/workflows/deploy-cloudflare.yml`) reads these as
+environment secrets under the selected `environment:` and pushes them to the
+Worker as Wrangler secrets on manual `workflow_dispatch` deploy. Push/PR still
+run checks only; production is never deployed automatically.
+
+No connection string, password, or key value is stored in Git or this document.
+Rotation re-provisions the role password/keys against the project and resets the
+environment secret; there is no row data to migrate (the table is empty,
+greenfield), so there is intentionally no rotation/compatibility fallback path.
 
