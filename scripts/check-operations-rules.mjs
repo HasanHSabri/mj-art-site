@@ -72,21 +72,19 @@ function hasWorkflowLevelContentsRead(text) {
   return false;
 }
 
-// Policy: every THIRD-PARTY action (any owner other than the first-party
-// `actions/*` organization) must be pinned to a verified 40-character commit
-// SHA. First-party actions may remain on version tags. This is the supply-chain
-// guard required for the deploy and read-only backup workflows.
+// Policy: EVERY action -- first-party `actions/*` included -- must be pinned
+// to a verified 40-character commit SHA. Version tags (@vN) and branch refs
+// are mutable and are forbidden; this is the immutable supply-chain guard
+// required for the deploy and read-only backup workflows.
 function assertThirdPartyActionsPinned(wfPath, text) {
   if (text === null) return; // a missing workflow is reported by its own check
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^\s*-\s*uses:\s*([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)@([A-Za-z0-9._-]+)/);
+    const m = lines[i].match(/^\s*-?\s*uses:\s*([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)@([A-Za-z0-9._-]+)/);
     if (!m) continue;
-    const owner = m[1].split('/')[0].toLowerCase();
     const ref = m[2];
-    if (owner === 'actions') continue; // first-party: version tags permitted
     if (!/^[0-9a-f]{40}$/.test(ref)) {
-      fail(wfPath + ' third-party action ' + m[1] + ' must be pinned to a 40-char commit SHA (line ' + (i + 1) + '), found @' + ref);
+      fail(wfPath + ' action ' + m[1] + ' must be pinned to a 40-char commit SHA (line ' + (i + 1) + '), found @' + ref);
     }
   }
 }

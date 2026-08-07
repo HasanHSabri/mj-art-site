@@ -15,6 +15,8 @@ import {
   TURNSTILE_ACTION,
   createNeonSqlExecutor,
   bookEoiSecretsOk,
+  secretByteLength,
+  MIN_SECRET_BYTES,
   compareLiveCatalog,
   probeLiveCatalogShape,
   validateBookEoiPayload,
@@ -357,8 +359,21 @@ async function serveUploadedImage(url, env) {
   return new Response(object.body, { headers });
 }
 
+// Fail-closed admin session-secret gate, mirroring the Books PII secret gate.
+// The session-signing secret must be present AND carry at least MIN_SECRET_BYTES
+// of UTF-8 key material before login (and therefore session creation) proceeds.
+// A short/weak secret never signs a session and the password is never compared:
+// the route fails closed with 503. There is deliberately no compatibility
+// fallback (no live sessions/data are in scope for this greenfield route).
+function adminSessionSecretOk(env) {
+  return (
+    typeof env.ADMIN_SESSION_SECRET === 'string' &&
+    secretByteLength(env.ADMIN_SESSION_SECRET) >= MIN_SECRET_BYTES
+  );
+}
+
 async function login(request, env) {
-  if (!env.ADMIN_PASSWORD || !env.ADMIN_SESSION_SECRET) {
+  if (!env.ADMIN_PASSWORD || !adminSessionSecretOk(env)) {
     return jsonResponse({ error: 'Admin secrets are not configured.' }, 503);
   }
 

@@ -65,7 +65,7 @@ function makeEnv(storedText) {
       }
     },
     ADMIN_PASSWORD: 'secret',
-    ADMIN_SESSION_SECRET: 'test-secret-key',
+    ADMIN_SESSION_SECRET: 'test-admin-session-secret-0123456789',
     BOOK_EOI_RATE_LIMITER: { async limit() { return { success: true }; } }
   };
 }
@@ -394,7 +394,7 @@ function makeStoreEnv() {
       }
     },
     ADMIN_PASSWORD: 'secret',
-    ADMIN_SESSION_SECRET: 'test-secret-key',
+    ADMIN_SESSION_SECRET: 'test-admin-session-secret-0123456789',
     BOOK_EOI_RATE_LIMITER: { async limit() { return { success: true }; } }
   };
 }
@@ -715,6 +715,57 @@ test('login with non-object JSON body returns 401 (no crash)', async () => {
     body: '"just a string"'
   }), env);
   assert.equal(res.status, 401);
+});
+
+// ---------------------------------------------------------------------------
+// Admin session-secret strength gate (mirrors the Books PII secret gate).
+// login() must fail closed 503 BEFORE the password comparison when
+// ADMIN_SESSION_SECRET is shorter than MIN_SECRET_BYTES (32 UTF-8 bytes).
+// ---------------------------------------------------------------------------
+
+test('login fails closed 503 with a short ADMIN_SESSION_SECRET, before password compare', async () => {
+  const env = makeEnv(undefined);
+  env.ADMIN_SESSION_SECRET = 'short'; // < 32 bytes
+  // The correct password is supplied but must never be compared.
+  const res = await worker.fetch(req('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: 'secret' })
+  }), env);
+  assert.equal(res.status, 503);
+});
+
+test('login fails closed 503 with a multibyte ADMIN_SESSION_SECRET under 32 bytes', async () => {
+  const env = makeEnv(undefined);
+  env.ADMIN_SESSION_SECRET = '☃'.repeat(10); // 10 code points * 3 bytes = 30 UTF-8 bytes (< 32)
+  const res = await worker.fetch(req('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: 'secret' })
+  }), env);
+  assert.equal(res.status, 503);
+});
+
+test('login succeeds with a valid (>=32 UTF-8 byte) multibyte ADMIN_SESSION_SECRET', async () => {
+  const env = makeEnv(undefined);
+  env.ADMIN_SESSION_SECRET = '☃'.repeat(12); // 12 code points * 3 bytes = 36 UTF-8 bytes (>= 32)
+  const res = await worker.fetch(req('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: 'secret' })
+  }), env);
+  assert.equal(res.status, 200);
+  assert.ok(res.headers.get('set-cookie')?.startsWith('mj_art_admin='), 'session cookie is set with a strong secret');
+});
+
+test('an existing session token still verifies under a valid ADMIN_SESSION_SECRET', async () => {
+  const env = makeEnv(undefined);
+  env.ADMIN_SESSION_SECRET = '☃'.repeat(12); // 36 UTF-8 bytes
+  // Mint a token directly (simulating an already-issued session) and hit an
+  // admin route. requireAdmin re-signs with the same secret and must accept it.
+  const request = await authedReq('/api/admin/artworks', env.ADMIN_SESSION_SECRET);
+  const res = await worker.fetch(request, env);
+  assert.equal(res.status, 200); // not 401: the existing session is honored
 });
 
 test('session token with three segments is rejected (401)', async () => {

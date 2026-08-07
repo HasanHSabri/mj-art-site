@@ -41,7 +41,7 @@ const {
 // Secrets must meet the >=32-byte runtime gate, so the test keys are >=32 chars.
 const HMAC_KEY = 'test-hmac-secret-' + '0123456789'.repeat(3);
 const ENC_KEY = 'test-enc-secret--' + '0123456789'.repeat(3);
-const SESSION_SECRET = 'test-secret-key';
+const SESSION_SECRET = 'test-admin-session-secret-0123456789';
 const SESSION_COOKIE = 'mj_art_admin';
 const SESSION_MAX_AGE_MS = 60 * 60 * 8 * 1000;
 
