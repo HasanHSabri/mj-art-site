@@ -113,6 +113,25 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: Verify required secrets are present (fail-closed)
+        working-directory: apps/web
+        run: |
+          set -euo pipefail
+          for required in ADMIN_PASSWORD ADMIN_SESSION_SECRET NEON_DATABASE_URL BOOK_EOI_HMAC_KEY BOOK_EOI_ENCRYPTION_KEY TURNSTILE_SECRET_KEY; do
+            val="${!required}"
+            if [ -z "$val" ]; then
+              echo "Required secret is empty or missing: $required" >&2
+              exit 1
+            fi
+          done
+        env:
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          ADMIN_SESSION_SECRET: ${{ secrets.ADMIN_SESSION_SECRET }}
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          BOOK_EOI_HMAC_KEY: ${{ secrets.BOOK_EOI_HMAC_KEY }}
+          BOOK_EOI_ENCRYPTION_KEY: ${{ secrets.BOOK_EOI_ENCRYPTION_KEY }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+
       - name: Configure admin secrets
         working-directory: apps/web
         run: |
@@ -133,11 +152,19 @@ jobs:
 
           printf '%s' "$ADMIN_PASSWORD" | pnpm exec wrangler secret put ADMIN_PASSWORD "${deploy_args[@]}"
           printf '%s' "$ADMIN_SESSION_SECRET" | pnpm exec wrangler secret put ADMIN_SESSION_SECRET "${deploy_args[@]}"
+          printf '%s' "$NEON_DATABASE_URL" | pnpm exec wrangler secret put NEON_DATABASE_URL "${deploy_args[@]}"
+          printf '%s' "$BOOK_EOI_HMAC_KEY" | pnpm exec wrangler secret put BOOK_EOI_HMAC_KEY "${deploy_args[@]}"
+          printf '%s' "$BOOK_EOI_ENCRYPTION_KEY" | pnpm exec wrangler secret put BOOK_EOI_ENCRYPTION_KEY "${deploy_args[@]}"
+          printf '%s' "$TURNSTILE_SECRET_KEY" | pnpm exec wrangler secret put TURNSTILE_SECRET_KEY "${deploy_args[@]}"
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           ADMIN_SESSION_SECRET: ${{ secrets.ADMIN_SESSION_SECRET }}
+          NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
+          BOOK_EOI_HMAC_KEY: ${{ secrets.BOOK_EOI_HMAC_KEY }}
+          BOOK_EOI_ENCRYPTION_KEY: ${{ secrets.BOOK_EOI_ENCRYPTION_KEY }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
 
       - name: Deploy to Cloudflare Workers
         working-directory: apps/web

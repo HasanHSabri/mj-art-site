@@ -6,6 +6,31 @@ import {
   validateArtworkList
 } from './artwork-schema.js';
 import { renderArtworkCards } from './gallery-ssr.js';
+import {
+  BOOK_CODES,
+  BOOK_EOI_STATUSES,
+  MAX_BOOK_EOI_BODY_BYTES,
+  MAX_BOOK_EOI_ADMITTED_LIMIT,
+  DEFAULT_BOOK_EOI_LIMIT,
+  TURNSTILE_ACTION,
+  EXPECTED_SCHEMA_SIGNATURE,
+  SCHEMA_TABLE,
+  computeColumnSignature,
+  validateBookEoiPayload,
+  validateStatusUpdate,
+  hmacEmailHash,
+  encryptPii,
+  decryptPii,
+  isUniqueViolation,
+  findBookEoi,
+  insertBookEoi,
+  updateBookEoiOnResubmit,
+  updateBookEoiStatus,
+  countBookInterest,
+  listRecentBookEoi,
+  summarizeBookEoi,
+  probeBookEoiSchemaColumns
+} from './book-eoi.js';
 
 const ARTWORKS_KEY = 'artworks.json';
 const SESSION_COOKIE = 'mj_art_admin';
@@ -69,6 +94,52 @@ export default {
 
     if (url.pathname.startsWith('/artwork-uploaded/') && request.method === 'GET') {
       return serveUploadedImage(url, env);
+    }
+
+    // -------------------------------------------------------------------------
+    // Books Expression of Interest (public). Unknown/unsupported /api/books/*
+    // returns a JSON 404/405 and NEVER falls through to static assets.
+    // -------------------------------------------------------------------------
+    if (url.pathname.startsWith('/api/books/')) {
+      if (url.pathname === '/api/books/eoi' && request.method === 'POST') {
+        return handleCreateBookEoi(request, env);
+      }
+      if (url.pathname === '/api/books/interest' && request.method === 'GET') {
+        return handleBookInterest(env);
+      }
+      if (url.pathname === '/api/books/health' && request.method === 'GET') {
+        return handleBookHealth(env);
+      }
+      // Known path, unsupported method -> 405; unknown path -> 404.
+      if (url.pathname === '/api/books/eoi' || url.pathname === '/api/books/interest' || url.pathname === '/api/books/health') {
+        return jsonResponse({ error: 'Method not allowed.' }, 405);
+      }
+      return jsonResponse({ error: 'Not found.' }, 404);
+    }
+
+    // -------------------------------------------------------------------------
+    // Books EOI (admin). Auth is enforced before any DB/crypto work. No DELETE.
+    // -------------------------------------------------------------------------
+    if (url.pathname === '/api/admin/books/eoi' && request.method === 'GET') {
+      const auth = await requireAdmin(request, env);
+      if (auth) return auth;
+      return handleAdminListBookEoi(request, env);
+    }
+    if (url.pathname === '/api/admin/books/eoi/summary' && request.method === 'GET') {
+      const auth = await requireAdmin(request, env);
+      if (auth) return auth;
+      return handleAdminSummaryBookEoi(env);
+    }
+    if (request.method === 'PATCH' && url.pathname.startsWith('/api/admin/books/eoi/')) {
+      const auth = await requireAdmin(request, env);
+      if (auth) return auth;
+      const id = decodeURIComponent(url.pathname.slice('/api/admin/books/eoi/'.length));
+      return handleAdminPatchBookEoi(request, env, id);
+    }
+    if (url.pathname.startsWith('/api/admin/books/')) {
+      const auth = await requireAdmin(request, env);
+      if (auth) return auth;
+      return jsonResponse({ error: 'Not found.' }, 404);
     }
 
     return env.ASSETS.fetch(request);
@@ -387,4 +458,373 @@ function base64UrlEncode(value) {
 function base64UrlDecode(value) {
   const base64 = value.replaceAll('-', '+').replaceAll('_', '/').padEnd(Math.ceil(value.length / 4) * 4, '=');
   return atob(base64);
+}
+
+// ===========================================================================
+// Books Expression of Interest
+// ===========================================================================
+//
+// PII handling: the normalized email is HMAC-hashed (dedup key) and {name,email}
+// is AES-256-GCM encrypted before any storage. Plaintext PII, hashes, and
+// ciphertext are NEVER returned to public callers and are NEVER logged. Only
+// authenticated admin result rows are decrypted. All statements are
+// parameterized and fully-qualified to mj_eoi.book_eoi.
+
+// Build the Neon SQL executor for this request. The driver is imported lazily so
+// it is only loaded when a Books/DB route is actually hit (keeping the module
+// importable in environments where the package is absent, e.g. unit tests). The
+// BOOK_EOI_SQL env hook lets tests inject a fake executor.
+async function getBookEoiSql(env) {
+  if (env.BOOK_EOI_SQL) return env.BOOK_EOI_SQL;
+  const { neon } = await import('@neondatabase/serverless');
+  return neon(env.NEON_DATABASE_URL);
+}
+
+// Fail-closed config gate: every Books EOI secret/binding must be present before
+// any submission is accepted. A missing binding means the route is unavailable.
+function bookEoiConfigOk(env) {
+  return Boolean(
+    env.NEON_DATABASE_URL &&
+      env.BOOK_EOI_HMAC_KEY &&
+      env.BOOK_EOI_ENCRYPTION_KEY &&
+      env.TURNSTILE_SECRET_KEY &&
+      env.BOOK_EOI_RATE_LIMITER
+  );
+}
+
+function bookEoiReadConfigOk(env) {
+  return Boolean(env.NEON_DATABASE_URL);
+}
+
+// Same-origin enforcement: the request's Origin (or Referer) host must match the
+// host the Worker is serving. Blocks cross-site submissions without needing env.
+function sameOrigin(request) {
+  const host = new URL(request.url).host;
+  const origin = request.headers.get('origin');
+  if (origin) {
+    try {
+      return new URL(origin).host === host;
+    } catch {
+      return false;
+    }
+  }
+  const referer = request.headers.get('referer');
+  if (referer) {
+    try {
+      return new URL(referer).host === host;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function clientIp(request) {
+  const cf = request.headers.get('cf-connecting-ip');
+  if (cf) return cf;
+  const xff = request.headers.get('x-forwarded-for');
+  if (xff) return xff.split(',')[0].trim();
+  return null;
+}
+
+function bookEoiRateLimitKey(request) {
+  const ip = clientIp(request);
+  return ip ? `books-eoi:${ip}` : 'books-eoi:global';
+}
+
+function parseAllowedHostnames(value) {
+  if (!value) return [];
+  return String(value)
+    .split(',')
+    .map((h) => h.trim().toLowerCase())
+    .filter((h) => h.length > 0);
+}
+
+// Verify a Turnstile token via Siteverify. Validates success, expected action,
+// and expected hostname (when configured). Returns { ok, failClosed }.
+// On network failure (cannot reach/exceed 2xx) it fails closed.
+async function verifyTurnstile(env, token, remoteip) {
+  const fetcher = env.TURNSTILE_FETCH || fetch;
+  const form = new URLSearchParams();
+  form.append('secret', env.TURNSTILE_SECRET_KEY);
+  form.append('response', token);
+  if (remoteip) form.append('remoteip', remoteip);
+
+  let res;
+  try {
+    res = await fetcher('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      body: form
+    });
+  } catch {
+    return { ok: false, failClosed: true };
+  }
+  if (!res || !res.ok) return { ok: false, failClosed: true };
+
+  let data;
+  try {
+    data = await res.json();
+  } catch {
+    return { ok: false, failClosed: true };
+  }
+
+  const action = env.BOOK_EOI_TURNSTILE_ACTION || TURNSTILE_ACTION;
+  const allowedHosts = parseAllowedHostnames(env.BOOK_EOI_ALLOWED_HOSTNAMES);
+  const actionOk = data.action === action;
+  const hostOk = allowedHosts.length === 0 ? true : allowedHosts.includes(String(data.hostname || '').toLowerCase());
+  return { ok: Boolean(data.success && actionOk && hostOk), failClosed: false };
+}
+
+// POST /api/books/eoi -- strict validation, honeypot, rate limit, mandatory
+// Turnstile, then parameterized upsert on (book, email_hash). New, duplicate,
+// and honeypot submissions all return the same generic { ok: true } so the
+// response cannot be used to enumerate interest.
+async function handleCreateBookEoi(request, env) {
+  if (!bookEoiConfigOk(env)) return jsonResponse({ ok: false, error: 'Service unavailable.' }, 503);
+  if (!sameOrigin(request)) return jsonResponse({ error: 'Bad request.' }, 400);
+
+  const contentType = request.headers.get('content-type') || '';
+  if (contentType.split(';')[0].trim().toLowerCase() !== 'application/json') {
+    return jsonResponse({ error: 'Request must be JSON.' }, 415);
+  }
+
+  const declaredLength = Number(request.headers.get('content-length') || 0);
+  if (declaredLength > MAX_BOOK_EOI_BODY_BYTES) {
+    return jsonResponse({ error: 'Request body is too large.' }, 413);
+  }
+
+  let body;
+  try {
+    const text = await request.text();
+    if (new TextEncoder().encode(text).length > MAX_BOOK_EOI_BODY_BYTES) {
+      return jsonResponse({ error: 'Request body is too large.' }, 413);
+    }
+    body = JSON.parse(text);
+  } catch {
+    return jsonResponse({ error: 'Request body is not valid JSON.' }, 400);
+  }
+
+  const validation = validateBookEoiPayload(body);
+  if (!validation.ok) {
+    // Honeypot: accept silently with the same generic response as success.
+    if (validation.honeypot) return jsonResponse({ ok: true });
+    return jsonResponse({ error: validation.error }, validation.status || 400);
+  }
+  const { book, format, quantity, name, email, turnstileToken } = validation.fields;
+
+  const decision = await env.BOOK_EOI_RATE_LIMITER.limit({ key: bookEoiRateLimitKey(request) });
+  if (decision && decision.success === false) {
+    return jsonResponse({ error: 'Too many requests.' }, 429);
+  }
+
+  const turnstile = await verifyTurnstile(env, turnstileToken, clientIp(request));
+  if (turnstile.failClosed) return jsonResponse({ error: 'Service unavailable.' }, 503);
+  if (!turnstile.ok) return jsonResponse({ error: 'Verification failed.' }, 400);
+
+  try {
+    const emailHash = await hmacEmailHash(env.BOOK_EOI_HMAC_KEY, email);
+    let sql;
+    try {
+      sql = await getBookEoiSql(env);
+    } catch {
+      return jsonResponse({ error: 'Service unavailable.' }, 503);
+    }
+
+    const existing = await findBookEoi(sql, book, emailHash);
+    const id = existing ? existing.id : crypto.randomUUID();
+    const { ciphertext, iv } = await encryptPii(env.BOOK_EOI_ENCRYPTION_KEY, { name, email }, id);
+
+    if (existing) {
+      await updateBookEoiOnResubmit(sql, id, {
+        piiCiphertext: ciphertext,
+        piiIv: iv,
+        quantity,
+        formatCode: format
+      });
+    } else {
+      try {
+        await insertBookEoi(sql, {
+          id,
+          bookCode: book,
+          emailHash,
+          piiCiphertext: ciphertext,
+          piiIv: iv,
+          quantity,
+          formatCode: format
+        });
+      } catch (insertError) {
+        // Concurrent insert raced past the SELECT: the unique(book,email_hash)
+        // constraint makes this idempotent. Treat as a duplicate success.
+        if (!isUniqueViolation(insertError)) throw insertError;
+      }
+    }
+
+    return jsonResponse({ ok: true });
+  } catch {
+    // Any unexpected failure fails closed with a generic message; no PII leaks.
+    return jsonResponse({ ok: false, error: 'Service unavailable.' }, 503);
+  }
+}
+
+// GET /api/books/interest -- public per-book active counts + requested-copy sum.
+// Always returns both books. Short public cache: non-sensitive aggregate, and
+// caching reduces DB load on a hot public endpoint.
+async function handleBookInterest(env) {
+  if (!bookEoiReadConfigOk(env)) return jsonResponse({ error: 'Service unavailable.' }, 503);
+  let sql;
+  try {
+    sql = await getBookEoiSql(env);
+  } catch {
+    return jsonResponse({ error: 'Service unavailable.' }, 503);
+  }
+  try {
+    const rows = await countBookInterest(sql);
+    const byCode = new Map(rows.map((r) => [r.book_code, r]));
+    const books = [...BOOK_CODES].map((code) => {
+      const r = byCode.get(code);
+      return {
+        book: code,
+        interestCount: r ? Number(r.interest_count) : 0,
+        requestedCopies: r ? Number(r.requested_copies) : 0
+      };
+    });
+    return new Response(JSON.stringify({ books }), {
+      status: 200,
+      headers: {
+        'content-type': 'application/json',
+        'cache-control': 'public, max-age=60'
+      }
+    });
+  } catch {
+    return jsonResponse({ error: 'Service unavailable.' }, 503);
+  }
+}
+
+// GET /api/books/health -- schema-signature/read probe for post-deploy
+// validation. No PII, no credentials. Compares the live column-name signature
+// to the expected constant.
+async function handleBookHealth(env) {
+  if (!bookEoiReadConfigOk(env)) {
+    return jsonResponse({ status: 'unhealthy', error: 'Not configured.' }, 503);
+  }
+  let sql;
+  try {
+    sql = await getBookEoiSql(env);
+  } catch {
+    return jsonResponse({ status: 'unhealthy', error: 'Database unreachable.' }, 503);
+  }
+  try {
+    const columns = await probeBookEoiSchemaColumns(sql);
+    const tableExists = columns.length > 0;
+    const liveSignature = computeColumnSignature(SCHEMA_TABLE, columns);
+    const match = tableExists && liveSignature === EXPECTED_SCHEMA_SIGNATURE;
+    return jsonResponse(
+      {
+        status: match ? 'healthy' : 'degraded',
+        tableExists,
+        columnCount: columns.length,
+        schemaSignature: match ? 'match' : 'mismatch'
+      },
+      match ? 200 : 503
+    );
+  } catch {
+    return jsonResponse({ status: 'unhealthy', error: 'Probe failed.' }, 503);
+  }
+}
+
+// GET /api/admin/books/eoi?limit= -- recent rows with PII decrypted. limit<=100.
+async function handleAdminListBookEoi(request, env) {
+  const url = new URL(request.url);
+  const rawLimit = Number(url.searchParams.get('limit'));
+  let limit = Number.isInteger(rawLimit) && rawLimit > 0 ? rawLimit : DEFAULT_BOOK_EOI_LIMIT;
+  if (limit > MAX_BOOK_EOI_ADMITTED_LIMIT) limit = MAX_BOOK_EOI_ADMITTED_LIMIT;
+
+  let sql;
+  try {
+    sql = await getBookEoiSql(env);
+  } catch {
+    return jsonResponse({ error: 'Service unavailable.' }, 503);
+  }
+  try {
+    const rows = await listRecentBookEoi(sql, limit);
+    const out = [];
+    for (const row of rows) {
+      let pii = null;
+      try {
+        pii = await decryptPii(env.BOOK_EOI_ENCRYPTION_KEY, row.pii_ciphertext, row.pii_iv, row.id);
+      } catch {
+        pii = null; // unreadable (tamper/key/ADD mismatch): do not expose raw.
+      }
+      out.push({
+        id: row.id,
+        book: row.book_code,
+        name: pii ? pii.name : null,
+        email: pii ? pii.email : null,
+        quantity: row.quantity,
+        format: row.format_code,
+        status: row.status,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at
+      });
+    }
+    return jsonResponse({ rows: out });
+  } catch {
+    return jsonResponse({ error: 'Service unavailable.' }, 503);
+  }
+}
+
+// GET /api/admin/books/eoi/summary -- counts by status + total. No PII.
+async function handleAdminSummaryBookEoi(env) {
+  let sql;
+  try {
+    sql = await getBookEoiSql(env);
+  } catch {
+    return jsonResponse({ error: 'Service unavailable.' }, 503);
+  }
+  try {
+    const rows = await summarizeBookEoi(sql);
+    const byStatus = {};
+    let total = 0;
+    for (const row of rows) {
+      byStatus[row.status] = Number(row.count);
+      total += Number(row.count);
+    }
+    return jsonResponse({ byStatus, total });
+  } catch {
+    return jsonResponse({ error: 'Service unavailable.' }, 503);
+  }
+}
+
+// PATCH /api/admin/books/eoi/:id -- strict {status}-only update. No DELETE.
+async function handleAdminPatchBookEoi(request, env, id) {
+  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!id || !UUID_RE.test(id)) return jsonResponse({ error: 'Not found.' }, 404);
+
+  const contentType = request.headers.get('content-type') || '';
+  if (contentType.split(';')[0].trim().toLowerCase() !== 'application/json') {
+    return jsonResponse({ error: 'Request must be JSON.' }, 415);
+  }
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return jsonResponse({ error: 'Request body is not valid JSON.' }, 400);
+  }
+
+  const validation = validateStatusUpdate(body);
+  if (!validation.ok) return jsonResponse({ error: validation.error }, validation.status);
+
+  let sql;
+  try {
+    sql = await getBookEoiSql(env);
+  } catch {
+    return jsonResponse({ error: 'Service unavailable.' }, 503);
+  }
+  try {
+    const updated = await updateBookEoiStatus(sql, id, validation.status);
+    if (!updated) return jsonResponse({ error: 'Not found.' }, 404);
+    return jsonResponse({ ok: true });
+  } catch {
+    return jsonResponse({ error: 'Service unavailable.' }, 503);
+  }
 }

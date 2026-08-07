@@ -18,7 +18,11 @@
   },
 
   "vars": {
-    "NEXT_PUBLIC_APP_URL": "https://mj-art.drhasansabri.workers.dev"
+    "NEXT_PUBLIC_APP_URL": "https://mj-art.drhasansabri.workers.dev",
+    // Non-secret Books EOI / Turnstile expectations. The Turnstile secret and
+    // DB URL are provisioned as encrypted secrets (never in this file).
+    "BOOK_EOI_TURNSTILE_ACTION": "books-eoi",
+    "BOOK_EOI_ALLOWED_HOSTNAMES": "mj-art.drhasansabri.workers.dev"
   },
 
   "r2_buckets": [
@@ -28,31 +32,69 @@
     }
   ],
 
+  // Cloudflare Rate Limiting binding for the public Books EOI endpoint. Coarse
+  // per-IP limit; the Worker calls env.BOOK_EOI_RATE_LIMITER.limit({ key }).
+  // `unsafe.bindings` is the current Wrangler config shape for rate limiters.
+  "unsafe": {
+    "bindings": [
+      {
+        "type": "ratelimit",
+        "name": "BOOK_EOI_RATE_LIMITER",
+        "namespace_id": "1001",
+        "simple": { "limit": 10, "period": 60 }
+      }
+    ]
+  },
+
   "env": {
     "production": {
       "name": "mj-art",
       "workers_dev": true,
       "vars": {
-        "NEXT_PUBLIC_APP_URL": "https://mj-art.drhasansabri.workers.dev"
+        "NEXT_PUBLIC_APP_URL": "https://mj-art.drhasansabri.workers.dev",
+        "BOOK_EOI_TURNSTILE_ACTION": "books-eoi",
+        "BOOK_EOI_ALLOWED_HOSTNAMES": "mj-art.drhasansabri.workers.dev"
       },
       "r2_buckets": [
         {
           "binding": "ARTWORK_IMAGES",
           "bucket_name": "mj-art-images"
         }
-      ]
+      ],
+      "unsafe": {
+        "bindings": [
+          {
+            "type": "ratelimit",
+            "name": "BOOK_EOI_RATE_LIMITER",
+            "namespace_id": "1001",
+            "simple": { "limit": 10, "period": 60 }
+          }
+        ]
+      }
     },
     "preview": {
       "name": "mj-art-preview",
       "vars": {
-        "NEXT_PUBLIC_APP_URL": "https://mj-art-preview.drhasansabri.workers.dev"
+        "NEXT_PUBLIC_APP_URL": "https://mj-art-preview.drhasansabri.workers.dev",
+        "BOOK_EOI_TURNSTILE_ACTION": "books-eoi",
+        "BOOK_EOI_ALLOWED_HOSTNAMES": "mj-art-preview.drhasansabri.workers.dev"
       },
       "r2_buckets": [
         {
           "binding": "ARTWORK_IMAGES",
           "bucket_name": "mj-art-images-preview"
         }
-      ]
+      ],
+      "unsafe": {
+        "bindings": [
+          {
+            "type": "ratelimit",
+            "name": "BOOK_EOI_RATE_LIMITER",
+            "namespace_id": "1001",
+            "simple": { "limit": 10, "period": 60 }
+          }
+        ]
+      }
     }
   }
 }
