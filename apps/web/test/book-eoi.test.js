@@ -9,6 +9,7 @@ import {
   parseTableBody,
   parseChecks,
   extractIndexes,
+  compareCanonicalDefinitions,
   stripSqlComments,
   liveCatalogProbe
 } from '../../../scripts/check-book-eoi-schema.mjs';
@@ -29,7 +30,9 @@ const {
   bookEoiSecretsOk,
   secretByteLength,
   compareLiveCatalog,
+  compareRuntimePrivileges,
   probeLiveCatalogShape,
+  probeRuntimePrivileges,
   validateBookEoiPayload,
   validateStatusUpdate,
   normalizeEmail,
@@ -679,31 +682,28 @@ function liveColumnsFixture() {
   }));
 }
 function liveChecksFixture() {
-  return [
-    { name: 'book_eoi_book_code_check', definition: "CHECK ((book_code = ANY (ARRAY['biography'::text, 'childrens'::text])))" },
-    { name: 'book_eoi_format_code_check', definition: "CHECK ((format_code = ANY (ARRAY['hardcover'::text, 'paperback'::text, 'ebook'::text, 'unsure'::text])))" },
-    { name: 'book_eoi_status_check', definition: "CHECK ((status = ANY (ARRAY['new'::text, 'contacted'::text, 'withdrawn'::text])))" },
-    { name: 'book_eoi_quantity_check', definition: 'CHECK ((quantity >= 1) AND (quantity <= 10))' }
-  ];
-}
-function liveUniqueFixture() {
-  return [{ name: 'book_eoi_book_email_unique', definition: 'UNIQUE (book_code, email_hash)' }];
+  return EXPECTED_LIVE_CATALOG.constraints.map((constraint) => ({ ...constraint }));
 }
 function liveIndexesFixture() {
-  return [
-    { name: 'book_eoi_book_status_idx', definition: 'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING btree (book_code, status)' },
-    { name: 'book_eoi_book_created_idx', definition: 'CREATE INDEX book_eoi_book_created_idx ON mj_eoi.book_eoi USING btree (book_code, created_at DESC)' }
-  ];
+  return EXPECTED_LIVE_CATALOG.indexes.map((index) => ({
+    name: index.name,
+    definition: index.definition,
+    unique: index.unique,
+    primary: index.primary,
+    valid: true,
+    ready: true,
+    nulls_not_distinct: false,
+    options: null
+  }));
 }
 function liveCatalogFixture() {
-  return { columns: liveColumnsFixture(), checks: liveChecksFixture(), unique: liveUniqueFixture(), indexes: liveIndexesFixture() };
+  return { columns: liveColumnsFixture(), constraints: liveChecksFixture(), indexes: liveIndexesFixture() };
 }
 function liveCatalogSql(catalog) {
   return makeSql((text) => {
     if (/information_schema\.columns/.test(text)) return catalog.columns;
-    if (/con\.contype = 'c'/.test(text)) return catalog.checks;
-    if (/con\.contype = 'u'/.test(text)) return catalog.unique;
-    if (/pg_indexes/.test(text)) return catalog.indexes;
+    if (/pg_constraint/.test(text)) return catalog.constraints;
+    if (/pg_index/.test(text)) return catalog.indexes;
     throw new Error('unexpected probe SQL: ' + text);
   });
 }
@@ -724,9 +724,12 @@ test('health reports mismatch (503) when a column type drifts', async () => {
   assert.deepEqual(await body(res), { status: 'mismatch' });
 });
 
-test('health reports mismatch when a CHECK value set drifts', async () => {
+test('health reports mismatch when a complete CHECK definition drifts', async () => {
   const drifted = liveCatalogFixture();
-  drifted.checks[0] = { name: 'book_eoi_book_code_check', definition: "CHECK ((book_code = ANY (ARRAY['biography'::text])))" };
+  drifted.constraints[0] = {
+    ...drifted.constraints[0],
+    definition: "CHECK ((book_code = ANY (ARRAY['biography'::text])))"
+  };
   const env = makeEnv({ sql: liveCatalogSql(drifted) });
   const res = await worker.fetch(req('/api/books/health'), env);
   assert.equal(res.status, 503);
@@ -854,17 +857,17 @@ test('compareLiveCatalog: column count, order, type, nullable, and default drift
   assert.equal(compareLiveCatalog(charLenDrift).match, false);
 });
 
-test('compareLiveCatalog: CHECK value-set/bounds drift, missing UNIQUE, and wrong index columns are detected', () => {
+test('compareLiveCatalog: exact constraint/index sets reject missing and altered definitions', () => {
   const checkDrift = liveCatalogFixture();
-  checkDrift.checks[3] = { name: 'book_eoi_quantity_check', definition: 'CHECK ((quantity >= 1) AND (quantity <= 99))' };
+  checkDrift.constraints[4] = { ...checkDrift.constraints[4], definition: 'CHECK (((quantity >= 1) AND (quantity <= 99)))' };
   assert.equal(compareLiveCatalog(checkDrift).match, false);
 
   const missingCheck = liveCatalogFixture();
-  missingCheck.checks = missingCheck.checks.slice(0, 3);
+  missingCheck.constraints = missingCheck.constraints.filter((constraint) => constraint.type !== 'c' || constraint.name !== 'book_eoi_status_check');
   assert.equal(compareLiveCatalog(missingCheck).match, false);
 
   const missingUnique = liveCatalogFixture();
-  missingUnique.unique = [];
+  missingUnique.constraints = missingUnique.constraints.filter((constraint) => constraint.type !== 'u');
   assert.equal(compareLiveCatalog(missingUnique).match, false);
 
   const wrongIndex = liveCatalogFixture();
@@ -872,18 +875,136 @@ test('compareLiveCatalog: CHECK value-set/bounds drift, missing UNIQUE, and wron
   assert.equal(compareLiveCatalog(wrongIndex).match, false);
 });
 
-test('probeLiveCatalogShape issues four catalog reads and assembles the live shape', async () => {
+test('compareLiveCatalog rejects extras and semantically changed CHECKs with the same literals', () => {
+  const extraCheck = liveCatalogFixture();
+  extraCheck.constraints.push({ name: 'extra_check', type: 'c', definition: 'CHECK ((quantity <> 5))' });
+  assert.equal(compareLiveCatalog(extraCheck).match, false);
+
+  const extraUnique = liveCatalogFixture();
+  extraUnique.constraints.push({ name: 'extra_unique', type: 'u', definition: 'UNIQUE (email_hash)' });
+  assert.equal(compareLiveCatalog(extraUnique).match, false);
+
+  const sameLiteralsDifferentLogic = liveCatalogFixture();
+  sameLiteralsDifferentLogic.constraints[0] = {
+    ...sameLiteralsDifferentLogic.constraints[0],
+    definition: "CHECK ((book_code <> ALL (ARRAY['biography'::text, 'childrens'::text])))"
+  };
+  assert.equal(compareLiveCatalog(sameLiteralsDifferentLogic).match, false);
+
+  const extraIndex = liveCatalogFixture();
+  extraIndex.indexes.push({
+    name: 'extra_idx', definition: 'CREATE INDEX extra_idx ON mj_eoi.book_eoi USING btree (status)',
+    unique: false, primary: false, valid: true, ready: true, nulls_not_distinct: false, options: null
+  });
+  assert.equal(compareLiveCatalog(extraIndex).match, false);
+});
+
+test('compareLiveCatalog rejects partial, non-btree, operator-class, option, and null-semantics index drift', () => {
+  for (const definition of [
+    'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING btree (book_code, status) WHERE (status = \'new\'::text)',
+    'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING hash (book_code, status)',
+    'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING btree (status, book_code)',
+    'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING btree (book_code text_ops, status)',
+    'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING btree (book_code, status NULLS LAST)',
+    'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING btree (book_code, status) INCLUDE (quantity)',
+    'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING btree (book_code, status) WITH (fillfactor=80)'
+  ]) {
+    const drifted = liveCatalogFixture();
+    drifted.indexes[2] = { ...drifted.indexes[2], definition };
+    assert.equal(compareLiveCatalog(drifted).match, false, definition);
+  }
+
+  const nullsDrift = liveCatalogFixture();
+  nullsDrift.indexes[1] = { ...nullsDrift.indexes[1], nulls_not_distinct: true };
+  assert.equal(compareLiveCatalog(nullsDrift).match, false);
+
+  const optionsDrift = liveCatalogFixture();
+  optionsDrift.indexes[2] = { ...optionsDrift.indexes[2], options: '{fillfactor=80}' };
+  assert.equal(compareLiveCatalog(optionsDrift).match, false);
+});
+
+test('probeLiveCatalogShape issues three catalog reads and assembles the live shape', async () => {
   const sql = makeSql((text) => {
     if (/information_schema\.columns/.test(text)) return liveColumnsFixture();
-    if (/contype = 'c'/.test(text)) return liveChecksFixture();
-    if (/contype = 'u'/.test(text)) return liveUniqueFixture();
-    if (/pg_indexes/.test(text)) return liveIndexesFixture();
+    if (/pg_constraint/.test(text)) return liveChecksFixture();
+    if (/pg_index/.test(text)) return liveIndexesFixture();
     throw new Error('unexpected: ' + text);
   });
   const shape = await probeLiveCatalogShape(sql);
-  assert.equal(sql.calls.length, 4);
+  assert.equal(sql.calls.length, 3);
   assert.equal(shape.columns.length, 10);
   assert.equal(compareLiveCatalog(shape).match, true);
+});
+
+function runtimePrivilegesFixture() {
+  return {
+    summary: {
+      database_name: 'neondb', superuser: false, inherit: true, create_role: false,
+      create_db: false, can_login: true, replication: false, bypass_rls: false,
+      has_connect: true, has_connect_grant: false, has_create: false, has_temporary: false
+    },
+    schemas: [
+      { name: 'mj_eoi', usage: true, usage_grant: false, create: false, create_grant: false },
+      { name: 'public', usage: false, usage_grant: false, create: false, create_grant: false }
+    ],
+    tables: [{
+      schema: 'mj_eoi', name: 'book_eoi', select: true, select_grant: false,
+      insert: true, insert_grant: false, update: true, update_grant: false,
+      delete: false, truncate: false, references: false, trigger: false
+    }],
+    executablePublicRoutines: [],
+    columnAcls: [],
+    ownedObjects: [],
+    settings: [
+      { database: 'neondb', setting: 'search_path=pg_catalog, mj_eoi' },
+      { database: 'neondb', setting: 'statement_timeout=5000' }
+    ],
+    memberships: []
+  };
+}
+
+test('compareRuntimePrivileges accepts only the canonical effective privilege fixture', () => {
+  assert.deepEqual(compareRuntimePrivileges(runtimePrivilegesFixture()), { match: true, mismatches: [] });
+});
+
+test('compareRuntimePrivileges rejects representative database, schema, table, routine, ownership, role, setting, and membership drift', () => {
+  const mutations = [
+    (fixture) => { fixture.summary.has_temporary = true; },
+    (fixture) => { fixture.schemas[1].usage = true; },
+    (fixture) => { fixture.schemas.push({ name: 'extra', usage: true, create: false }); },
+    (fixture) => { fixture.tables[0].delete = true; },
+    (fixture) => { fixture.tables[0].select_grant = true; },
+    (fixture) => { fixture.tables.push({ schema: 'public', name: 'extra', select: true, insert: false, update: false, delete: false, truncate: false, references: false, trigger: false }); },
+    (fixture) => { fixture.executablePublicRoutines.push({ routine: 'public.extra()' }); },
+    (fixture) => { fixture.columnAcls.push({ schema: 'mj_eoi', table: 'book_eoi', column: 'email_hash', privilege_type: 'SELECT' }); },
+    (fixture) => { fixture.ownedObjects.push({ kind: 'relation', name: 'mj_eoi.book_eoi' }); },
+    (fixture) => { fixture.summary.create_db = true; },
+    (fixture) => { fixture.settings.push({ database: 'neondb', setting: 'work_mem=1GB' }); },
+    (fixture) => { fixture.memberships.push({ role: 'neon_superuser' }); }
+  ];
+  for (const mutate of mutations) {
+    const fixture = structuredClone(runtimePrivilegesFixture());
+    mutate(fixture);
+    assert.equal(compareRuntimePrivileges(fixture).match, false);
+  }
+});
+
+test('probeRuntimePrivileges performs all eight read-only effective-privilege catalog queries', async () => {
+  const fixture = runtimePrivilegesFixture();
+  const sql = makeSql((text) => {
+    if (/FROM pg_roles r WHERE/.test(text)) return [fixture.summary];
+    if (/FROM pg_shdepend/.test(text)) return fixture.ownedObjects;
+    if (/FROM pg_namespace n/.test(text)) return fixture.schemas;
+    if (/FROM pg_class c JOIN pg_namespace/.test(text) && /has_table_privilege/.test(text)) return fixture.tables;
+    if (/FROM pg_proc p JOIN pg_namespace/.test(text) && /has_function_privilege/.test(text)) return fixture.executablePublicRoutines;
+    if (/FROM pg_attribute a/.test(text)) return fixture.columnAcls;
+    if (/FROM pg_db_role_setting/.test(text)) return fixture.settings;
+    if (/FROM pg_auth_members/.test(text)) return fixture.memberships;
+    throw new Error('unexpected privilege probe SQL: ' + text);
+  });
+  const result = await probeRuntimePrivileges(sql);
+  assert.equal(sql.calls.length, 8);
+  assert.equal(compareRuntimePrivileges(result).match, true);
 });
 
 // ===========================================================================
@@ -1244,14 +1365,14 @@ test('parseTableBody captures exact ordered types, nullability, and defaults', (
   }
 });
 
-test('parseChecks extracts CHECK value sets and quantity bounds', () => {
+test('parseChecks preserves complete CHECK expressions', () => {
   const sql = readFileSync(SQL_PATH, 'utf8');
   const { tableConstraints } = parseTableBody(extractCreateTableBody(sql).body);
   const byName = Object.fromEntries(parseChecks(tableConstraints).map((c) => [c.name, c]));
-  assert.deepEqual(byName.book_eoi_book_code_check.values, ['biography', 'childrens']);
-  assert.deepEqual(byName.book_eoi_format_code_check.values.sort(), ['ebook', 'hardcover', 'paperback', 'unsure']);
-  assert.deepEqual(byName.book_eoi_status_check.values, ['contacted', 'new', 'withdrawn']);
-  assert.deepEqual(byName.book_eoi_quantity_check.bounds, [1, 10]);
+  assert.equal(byName.book_eoi_book_code_check.definition, "CHECK (book_code IN ('biography', 'childrens'))");
+  assert.equal(byName.book_eoi_format_code_check.definition, "CHECK (format_code IN ('hardcover', 'paperback', 'ebook', 'unsure'))");
+  assert.equal(byName.book_eoi_status_check.definition, "CHECK (status IN ('new', 'contacted', 'withdrawn'))");
+  assert.equal(byName.book_eoi_quantity_check.definition, 'CHECK (quantity BETWEEN 1 AND 10)');
 });
 
 test('extractIndexes finds both required indexes', () => {
@@ -1260,6 +1381,36 @@ test('extractIndexes finds both required indexes', () => {
   const names = indexes.map((i) => i.name);
   assert.ok(names.includes('book_eoi_book_status_idx'));
   assert.ok(names.includes('book_eoi_book_created_idx'));
+});
+
+test('canonical DDL has the exact complete constraint and index contract', () => {
+  const sql = readFileSync(SQL_PATH, 'utf8');
+  const { tableConstraints } = parseTableBody(extractCreateTableBody(sql).body);
+  assert.deepEqual(compareCanonicalDefinitions(tableConstraints, extractIndexes(sql)), []);
+});
+
+test('canonical definition comparison rejects extra/altered constraints and full index drift', () => {
+  const sql = readFileSync(SQL_PATH, 'utf8');
+  const { tableConstraints } = parseTableBody(extractCreateTableBody(sql).body);
+  const indexes = extractIndexes(sql);
+  assert.notDeepEqual(compareCanonicalDefinitions([
+    ...tableConstraints,
+    'CONSTRAINT extra_check CHECK (quantity <> 5)'
+  ], indexes), []);
+  assert.notDeepEqual(compareCanonicalDefinitions(tableConstraints.map((constraint) =>
+    constraint.replace(
+      "CHECK (book_code IN ('biography', 'childrens'))",
+      "CHECK (book_code NOT IN ('biography', 'childrens'))"
+    )), indexes), []);
+  assert.notDeepEqual(compareCanonicalDefinitions(tableConstraints, [
+    ...indexes,
+    { name: 'extra_idx', table: 'mj_eoi.book_eoi', definition: 'CREATE INDEX extra_idx ON mj_eoi.book_eoi (status)' }
+  ]), []);
+  assert.notDeepEqual(compareCanonicalDefinitions(tableConstraints, indexes.map((index) =>
+    index.name === 'book_eoi_book_status_idx'
+      ? { ...index, definition: index.definition + " WHERE status = 'new'" }
+      : index
+  )), []);
 });
 
 test('stripSqlComments removes line and block comments', () => {
@@ -1273,11 +1424,15 @@ test('liveCatalogProbe emits information_schema + pg_catalog queries', () => {
   const probe = liveCatalogProbe();
   assert.ok(probe.includes('information_schema.columns'));
   assert.ok(probe.includes('pg_constraint'));
-  assert.ok(probe.includes('pg_indexes'));
-  assert.ok(probe.includes('role_table_grants'));
+  assert.ok(probe.includes('pg_index'));
+  assert.ok(probe.includes('DO $books_contract$'));
+  assert.ok(probe.includes('RAISE EXCEPTION'));
+  assert.ok(probe.includes("RAISE EXCEPTION 'Books constraints violate the contract'"));
+  assert.ok(probe.includes("RAISE EXCEPTION 'Books indexes violate the contract'"));
   assert.ok(probe.includes("has_database_privilege(current_user, current_database(), 'TEMPORARY')"));
   assert.ok(probe.includes("has_schema_privilege(current_user, 'public', 'USAGE')"));
   assert.ok(probe.includes("has_function_privilege(current_user, p.oid, 'EXECUTE')"));
+  assert.equal(probe.includes('postgres://'), false);
 });
 
 test('the SQL declares the UNIQUE(book_code, email_hash) constraint', () => {

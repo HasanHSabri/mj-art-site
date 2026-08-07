@@ -666,10 +666,14 @@ mj_eoi.book_eoi|book_code,created_at,email_hash,format_code,id,pii_ciphertext,pi
 
 This is recomputed from `information_schema` at runtime by `/api/books/health`
 and from `database/mj-eoi-schema.sql` by `scripts/check-book-eoi-schema.mjs`
-(offline drift guard). Initial provisioning was verified to match on both
-projects: 10 columns, 4 CHECK constraints, 1 `UNIQUE(book_code, email_hash)`,
-and 4 indexes (PK + UNIQUE + `book_eoi_book_status_idx` +
-`book_eoi_book_created_idx`). The `check:schema` guard passes.
+(offline drift guard). The runtime check also compares exact normalized, named
+PK/UNIQUE/CHECK/FK definitions and the exact full index set. Full index
+definitions include method, key order/direction, operator classes, null
+semantics, predicates, INCLUDE columns, validity/readiness, and options. Extra
+constraints or indexes are drift. Initial provisioning was verified to contain
+10 columns, 4 CHECK constraints, 1 primary key, 1
+`UNIQUE(book_code, email_hash)`, no foreign keys, and 4 indexes (PK + UNIQUE +
+`book_eoi_book_status_idx` + `book_eoi_book_created_idx`).
 
 ### 13.3 Runtime role contract (`mj_eoi_app`)
 
@@ -693,10 +697,16 @@ Each project has a dedicated SQL login role `mj_eoi_app`, least-privilege:
 **Pending infrastructure correction:** live role grants must be re-audited and
 corrected by a Neon owner for both projects to enforce the explicit no-TEMP,
 no-`public`-schema-USAGE, and no-extra-`public`-routine-EXECUTE contract above.
-This commit changes no database state. `node scripts/check-book-eoi-schema.mjs
---probe` now emits effective privilege checks capable of proving those absences;
-run it as `mj_eoi_app` after the operator revocations, and retain the result with
-the release evidence.
+Repository checks change no database state. `node
+scripts/check-book-eoi-schema.mjs --probe` emits fail-fast SQL (`ON_ERROR_STOP`
+plus contract exceptions) for manual execution as `mj_eoi_app`. `--live` uses
+the app-role `NEON_DATABASE_URL` to assert the same effective matrix and exits
+nonzero for any violation; it never prints the URL or secrets. Both modes check
+database TEMP/CREATE, exact schema and table privileges, public routine
+execution, ownership, role memberships/attributes, grant options and column
+ACLs, and the exact documented per-database settings. The generated SQL also
+asserts the exact column, constraint, and index contract. Run it after operator
+revocations and retain the result with release evidence.
 
 For each isolated `neondb`, the owner must apply the following correction (replace
 `<owner>` only; the app role is fixed), then reconnect as `mj_eoi_app` and run the

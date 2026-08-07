@@ -34,7 +34,7 @@
 CREATE SCHEMA IF NOT EXISTS mj_eoi;
 
 CREATE TABLE IF NOT EXISTS mj_eoi.book_eoi (
-  id             uuid        PRIMARY KEY,
+  id             uuid        NOT NULL,
   book_code      text        NOT NULL,
   email_hash     char(64)    NOT NULL,
   pii_ciphertext text        NOT NULL,
@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS mj_eoi.book_eoi (
   created_at     timestamptz NOT NULL DEFAULT now(),
   updated_at     timestamptz NOT NULL DEFAULT now(),
 
+  CONSTRAINT book_eoi_pkey              PRIMARY KEY (id),
   CONSTRAINT book_eoi_book_code_check   CHECK (book_code IN ('biography', 'childrens')),
   CONSTRAINT book_eoi_format_code_check CHECK (format_code IN ('hardcover', 'paperback', 'ebook', 'unsure')),
   CONSTRAINT book_eoi_status_check      CHECK (status IN ('new', 'contacted', 'withdrawn')),

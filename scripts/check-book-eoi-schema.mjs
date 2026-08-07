@@ -11,9 +11,8 @@
 //      expectation (the value used by /api/books/health).
 //   2. Asserts the SQL contains NO DELETE, DROP, or payment/order tables, and
 //      that the UNIQUE(book_code, email_hash) + required CHECKs + indexes exist.
-//   3. Emits a ready-to-run catalog probe (information_schema + pg_catalog) an
-//      operator can execute against Neon to compare the LIVE database to this
-//      canonical definition (the comparison query; not executed here).
+//   3. Emits ready-to-run, fail-fast catalog/privilege assertion SQL, or runs
+//      the equivalent read-only assertions directly with --live.
 //
 // This is NOT a migration runner and never writes to the database. Exit status
 // is nonzero on any assertion failure. Wire it into CI/release checks via:
@@ -31,9 +30,12 @@ import {
   SCHEMA_TABLE,
   bookEoiSecretsOk,
   compareLiveCatalog,
+  compareRuntimePrivileges,
   computeColumnSignature,
   createNeonSqlExecutor,
-  probeLiveCatalogShape
+  normalizePgDefinition,
+  probeLiveCatalogShape,
+  probeRuntimePrivileges
 } from '../apps/web/src/book-eoi.js';
 
 const ROOT = path.resolve(scriptDir(), '..');
@@ -106,19 +108,15 @@ export function parseTableBody(body) {
   return { columns, tableConstraints };
 }
 
-// Parse table-level CHECK constraints into { name, values[], bounds[] }.
-// `values` are the quoted string literals (for IN-style checks); `bounds` are
-// the integer literals (for BETWEEN-style checks). Both sorted.
+// Parse complete named CHECK definitions without reducing their expressions to
+// literal bags. Exact normalized definitions are compared by the contract.
 export function parseChecks(tableConstraints) {
   const out = [];
   for (const line of tableConstraints) {
     const m = line.match(/CONSTRAINT\s+([A-Za-z0-9_]+)\s+CHECK\s*\(([\s\S]*)\)\s*$/i);
     if (!m) continue;
     const name = m[1].toLowerCase();
-    const body = m[2];
-    const values = (body.match(/'([^']*)'/g) || []).map((s) => s.slice(1, -1)).sort();
-    const bounds = (body.match(/\b\d+\b/g) || []).map(Number).sort((a, b) => a - b);
-    out.push({ name, values, bounds });
+    out.push({ name, definition: `CHECK (${m[2]})` });
   }
   return out;
 }
@@ -142,21 +140,84 @@ function splitTopLevel(body) {
   return out;
 }
 
-// Extract CREATE INDEX statements as raw lines.
+// Extract complete CREATE INDEX statements through the terminating semicolon so
+// predicates, methods, operator classes, INCLUDE columns, and options survive.
 export function extractIndexes(sql) {
-  const re = /CREATE\s+INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+([A-Za-z0-9_]+)\s+ON\s+([A-Za-z0-9_.]+)\s*\(([^)]*)\)/gi;
+  const re = /CREATE\s+(UNIQUE\s+)?INDEX(?:\s+IF\s+NOT\s+EXISTS)?\s+([A-Za-z0-9_]+)\s+ON\s+([A-Za-z0-9_.]+)\s+([\s\S]*?);/gi;
   const out = [];
   let m;
   while ((m = re.exec(sql)) !== null) {
-    out.push({ name: m[1], table: m[2], columns: m[3].trim() });
+    out.push({
+      name: m[2].toLowerCase(),
+      table: m[3].toLowerCase(),
+      definition: `CREATE ${m[1] || ''}INDEX ${m[2]} ON ${m[3]} ${m[4]}`
+    });
   }
   return out;
+}
+
+const EXPECTED_OFFLINE_CONSTRAINTS = [
+  { name: 'book_eoi_book_code_check', definition: "CHECK (book_code IN ('biography', 'childrens'))" },
+  { name: 'book_eoi_book_email_unique', definition: 'UNIQUE (book_code, email_hash)' },
+  { name: 'book_eoi_format_code_check', definition: "CHECK (format_code IN ('hardcover', 'paperback', 'ebook', 'unsure'))" },
+  { name: 'book_eoi_pkey', definition: 'PRIMARY KEY (id)' },
+  { name: 'book_eoi_quantity_check', definition: 'CHECK (quantity BETWEEN 1 AND 10)' },
+  { name: 'book_eoi_status_check', definition: "CHECK (status IN ('new', 'contacted', 'withdrawn'))" }
+];
+
+const EXPECTED_OFFLINE_INDEXES = [
+  {
+    name: 'book_eoi_book_created_idx',
+    table: SCHEMA_TABLE,
+    definition: 'CREATE INDEX book_eoi_book_created_idx ON mj_eoi.book_eoi (book_code, created_at DESC)'
+  },
+  {
+    name: 'book_eoi_book_status_idx',
+    table: SCHEMA_TABLE,
+    definition: 'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi (book_code, status)'
+  }
+];
+
+function parseNamedConstraints(tableConstraints) {
+  return tableConstraints.map((line) => {
+    const match = line.match(/^CONSTRAINT\s+([A-Za-z0-9_]+)\s+([\s\S]+)$/i);
+    return match ? { name: match[1].toLowerCase(), definition: match[2] } : { name: '', definition: line };
+  });
+}
+
+export function compareCanonicalDefinitions(tableConstraints, indexes) {
+  const mismatches = [];
+  const exact = (kind, actualRows, expectedRows) => {
+    const actual = actualRows
+      .map((row) => ({
+        name: row.name,
+        ...(row.table ? { table: row.table } : {}),
+        definition: normalizePgDefinition(row.definition)
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    const expected = expectedRows
+      .map((row) => ({
+        name: row.name,
+        ...(row.table ? { table: row.table } : {}),
+        definition: normalizePgDefinition(row.definition)
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+    if (actual.length !== expected.length) {
+      mismatches.push(`${kind} count: expected ${expected.length}, got ${actual.length}`);
+    }
+    if (JSON.stringify(actual) !== JSON.stringify(expected)) mismatches.push(`${kind} definitions differ`);
+  };
+  exact('constraint', parseNamedConstraints(tableConstraints), EXPECTED_OFFLINE_CONSTRAINTS);
+  exact('index', indexes, EXPECTED_OFFLINE_INDEXES);
+  return mismatches;
 }
 
 // Build the catalog probe an operator runs against the live Neon database to
 // compare it to this canonical definition. Printed by --probe.
 export function liveCatalogProbe() {
   return [
+    "\\set ON_ERROR_STOP on",
+    "",
     "-- Columns (signature source)",
     "SELECT column_name, data_type, is_nullable",
     "FROM information_schema.columns",
@@ -166,27 +227,26 @@ export function liveCatalogProbe() {
     "-- Expected signature:",
     "-- " + EXPECTED_SCHEMA_SIGNATURE,
     "",
-    "-- Table-level CHECK constraints",
-    "SELECT con.conname, pg_get_constraintdef(con.oid)",
+    "-- Exact PK/UNIQUE/CHECK/FK constraint set",
+    "SELECT con.conname, con.contype, pg_get_constraintdef(con.oid)",
     "FROM pg_constraint con",
     "JOIN pg_class rel ON rel.oid = con.conrelid",
     "JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace",
-    "WHERE nsp.nspname = 'mj_eoi' AND rel.relname = 'book_eoi' AND con.contype = 'c';",
-    "",
-    "-- UNIQUE constraints",
-    "SELECT con.conname, pg_get_constraintdef(con.oid)",
-    "FROM pg_constraint con",
-    "JOIN pg_class rel ON rel.oid = con.conrelid",
-    "JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace",
-    "WHERE nsp.nspname = 'mj_eoi' AND rel.relname = 'book_eoi' AND con.contype = 'u';",
+    "WHERE nsp.nspname = 'mj_eoi' AND rel.relname = 'book_eoi' ORDER BY con.conname;",
     "",
     "-- Indexes",
-    "SELECT indexname, indexdef FROM pg_indexes",
-    "WHERE schemaname = 'mj_eoi' AND tablename = 'book_eoi';",
+    "SELECT idx.relname, pg_get_indexdef(idx.oid), ind.indisunique, ind.indisprimary,",
+    "  ind.indisvalid, ind.indisready, ind.indnullsnotdistinct, idx.reloptions",
+    "FROM pg_index ind",
+    "JOIN pg_class idx ON idx.oid = ind.indexrelid",
+    "JOIN pg_class rel ON rel.oid = ind.indrelid",
+    "JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace",
+    "WHERE nsp.nspname = 'mj_eoi' AND rel.relname = 'book_eoi' ORDER BY idx.relname;",
     "",
     "-- Effective runtime-role boundaries (run while connected as the app role)",
     "SELECT current_user AS role_name, current_database() AS database_name,",
     "  has_database_privilege(current_user, current_database(), 'CONNECT') AS has_connect,",
+    "  has_database_privilege(current_user, current_database(), 'CREATE') AS has_database_create,",
     "  has_database_privilege(current_user, current_database(), 'TEMPORARY') AS has_temp,",
     "  has_schema_privilege(current_user, 'mj_eoi', 'USAGE') AS has_mj_eoi_usage,",
     "  has_schema_privilege(current_user, 'mj_eoi', 'CREATE') AS has_mj_eoi_create,",
@@ -206,10 +266,172 @@ export function liveCatalogProbe() {
     "WHERE n.nspname = 'public' AND has_function_privilege(current_user, p.oid, 'EXECUTE')",
     "ORDER BY 1;",
     "",
-    "-- Explicit table grants (must be exactly SELECT, INSERT, UPDATE for the app role):",
-    "SELECT grantee, privilege_type FROM information_schema.role_table_grants",
-    "WHERE grantee = current_user AND table_schema = 'mj_eoi' AND table_name = 'book_eoi'",
-    "ORDER BY privilege_type;"
+    "-- Machine assertion: psql exits nonzero on schema or least-privilege drift.",
+    "DO $books_contract$",
+    "DECLARE",
+    "  attrs record;",
+    "  settings text[];",
+    "BEGIN",
+    "  IF EXISTS (",
+    "    (SELECT column_name, data_type, is_nullable, column_default, character_maximum_length",
+    "       FROM information_schema.columns WHERE table_schema = 'mj_eoi' AND table_name = 'book_eoi'",
+    "     EXCEPT VALUES",
+    "       ('id', 'uuid', 'NO', NULL::text, NULL::integer),",
+    "       ('book_code', 'text', 'NO', NULL::text, NULL::integer),",
+    "       ('email_hash', 'character', 'NO', NULL::text, 64),",
+    "       ('pii_ciphertext', 'text', 'NO', NULL::text, NULL::integer),",
+    "       ('pii_iv', 'text', 'NO', NULL::text, NULL::integer),",
+    "       ('quantity', 'integer', 'NO', NULL::text, NULL::integer),",
+    "       ('format_code', 'text', 'NO', NULL::text, NULL::integer),",
+    "       ('status', 'text', 'NO', '''new''::text', NULL::integer),",
+    "       ('created_at', 'timestamp with time zone', 'NO', 'now()', NULL::integer),",
+    "       ('updated_at', 'timestamp with time zone', 'NO', 'now()', NULL::integer))",
+    "    UNION ALL",
+    "    (VALUES",
+    "       ('id', 'uuid', 'NO', NULL::text, NULL::integer),",
+    "       ('book_code', 'text', 'NO', NULL::text, NULL::integer),",
+    "       ('email_hash', 'character', 'NO', NULL::text, 64),",
+    "       ('pii_ciphertext', 'text', 'NO', NULL::text, NULL::integer),",
+    "       ('pii_iv', 'text', 'NO', NULL::text, NULL::integer),",
+    "       ('quantity', 'integer', 'NO', NULL::text, NULL::integer),",
+    "       ('format_code', 'text', 'NO', NULL::text, NULL::integer),",
+    "       ('status', 'text', 'NO', '''new''::text', NULL::integer),",
+    "       ('created_at', 'timestamp with time zone', 'NO', 'now()', NULL::integer),",
+    "       ('updated_at', 'timestamp with time zone', 'NO', 'now()', NULL::integer)",
+    "     EXCEPT SELECT column_name, data_type, is_nullable, column_default, character_maximum_length",
+    "       FROM information_schema.columns WHERE table_schema = 'mj_eoi' AND table_name = 'book_eoi')",
+    "  ) THEN RAISE EXCEPTION 'Books columns violate the contract'; END IF;",
+    "  IF EXISTS (",
+    "    (SELECT con.conname, con.contype, pg_get_constraintdef(con.oid)",
+    "       FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid",
+    "       JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace",
+    "       WHERE nsp.nspname = 'mj_eoi' AND rel.relname = 'book_eoi'",
+    "     EXCEPT VALUES",
+    "       ('book_eoi_book_code_check', 'c'::\"char\", 'CHECK ((book_code = ANY (ARRAY[''biography''::text, ''childrens''::text])))'),",
+    "       ('book_eoi_book_email_unique', 'u'::\"char\", 'UNIQUE (book_code, email_hash)'),",
+    "       ('book_eoi_format_code_check', 'c'::\"char\", 'CHECK ((format_code = ANY (ARRAY[''hardcover''::text, ''paperback''::text, ''ebook''::text, ''unsure''::text])))'),",
+    "       ('book_eoi_pkey', 'p'::\"char\", 'PRIMARY KEY (id)'),",
+    "       ('book_eoi_quantity_check', 'c'::\"char\", 'CHECK (((quantity >= 1) AND (quantity <= 10)))'),",
+    "       ('book_eoi_status_check', 'c'::\"char\", 'CHECK ((status = ANY (ARRAY[''new''::text, ''contacted''::text, ''withdrawn''::text])))'))",
+    "    UNION ALL",
+    "    (VALUES",
+    "       ('book_eoi_book_code_check', 'c'::\"char\", 'CHECK ((book_code = ANY (ARRAY[''biography''::text, ''childrens''::text])))'),",
+    "       ('book_eoi_book_email_unique', 'u'::\"char\", 'UNIQUE (book_code, email_hash)'),",
+    "       ('book_eoi_format_code_check', 'c'::\"char\", 'CHECK ((format_code = ANY (ARRAY[''hardcover''::text, ''paperback''::text, ''ebook''::text, ''unsure''::text])))'),",
+    "       ('book_eoi_pkey', 'p'::\"char\", 'PRIMARY KEY (id)'),",
+    "       ('book_eoi_quantity_check', 'c'::\"char\", 'CHECK (((quantity >= 1) AND (quantity <= 10)))'),",
+    "       ('book_eoi_status_check', 'c'::\"char\", 'CHECK ((status = ANY (ARRAY[''new''::text, ''contacted''::text, ''withdrawn''::text])))')",
+    "     EXCEPT SELECT con.conname, con.contype, pg_get_constraintdef(con.oid)",
+    "       FROM pg_constraint con JOIN pg_class rel ON rel.oid = con.conrelid",
+    "       JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace",
+    "       WHERE nsp.nspname = 'mj_eoi' AND rel.relname = 'book_eoi')",
+    "  ) THEN RAISE EXCEPTION 'Books constraints violate the contract'; END IF;",
+    "  IF EXISTS (",
+    "    (SELECT idx.relname, pg_get_indexdef(idx.oid), ind.indisunique, ind.indisprimary,",
+    "       ind.indisvalid, ind.indisready, ind.indnullsnotdistinct, idx.reloptions::text",
+    "       FROM pg_index ind JOIN pg_class idx ON idx.oid = ind.indexrelid",
+    "       JOIN pg_class rel ON rel.oid = ind.indrelid JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace",
+    "       WHERE nsp.nspname = 'mj_eoi' AND rel.relname = 'book_eoi'",
+    "     EXCEPT VALUES",
+    "       ('book_eoi_book_created_idx', 'CREATE INDEX book_eoi_book_created_idx ON mj_eoi.book_eoi USING btree (book_code, created_at DESC)', false, false, true, true, false, NULL::text),",
+    "       ('book_eoi_book_email_unique', 'CREATE UNIQUE INDEX book_eoi_book_email_unique ON mj_eoi.book_eoi USING btree (book_code, email_hash)', true, false, true, true, false, NULL::text),",
+    "       ('book_eoi_book_status_idx', 'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING btree (book_code, status)', false, false, true, true, false, NULL::text),",
+    "       ('book_eoi_pkey', 'CREATE UNIQUE INDEX book_eoi_pkey ON mj_eoi.book_eoi USING btree (id)', true, true, true, true, false, NULL::text))",
+    "    UNION ALL",
+    "    (VALUES",
+    "       ('book_eoi_book_created_idx', 'CREATE INDEX book_eoi_book_created_idx ON mj_eoi.book_eoi USING btree (book_code, created_at DESC)', false, false, true, true, false, NULL::text),",
+    "       ('book_eoi_book_email_unique', 'CREATE UNIQUE INDEX book_eoi_book_email_unique ON mj_eoi.book_eoi USING btree (book_code, email_hash)', true, false, true, true, false, NULL::text),",
+    "       ('book_eoi_book_status_idx', 'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING btree (book_code, status)', false, false, true, true, false, NULL::text),",
+    "       ('book_eoi_pkey', 'CREATE UNIQUE INDEX book_eoi_pkey ON mj_eoi.book_eoi USING btree (id)', true, true, true, true, false, NULL::text)",
+    "     EXCEPT SELECT idx.relname, pg_get_indexdef(idx.oid), ind.indisunique, ind.indisprimary,",
+    "       ind.indisvalid, ind.indisready, ind.indnullsnotdistinct, idx.reloptions::text",
+    "       FROM pg_index ind JOIN pg_class idx ON idx.oid = ind.indexrelid",
+    "       JOIN pg_class rel ON rel.oid = ind.indrelid JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace",
+    "       WHERE nsp.nspname = 'mj_eoi' AND rel.relname = 'book_eoi')",
+    "  ) THEN RAISE EXCEPTION 'Books indexes violate the contract'; END IF;",
+    "  SELECT * INTO attrs FROM pg_roles WHERE rolname = current_user;",
+    "  IF attrs.rolsuper OR NOT attrs.rolinherit OR attrs.rolcreaterole OR attrs.rolcreatedb",
+    "     OR NOT attrs.rolcanlogin OR attrs.rolreplication OR attrs.rolbypassrls THEN",
+    "    RAISE EXCEPTION 'Books app role attributes violate the contract';",
+    "  END IF;",
+    "  IF NOT has_database_privilege(current_user, current_database(), 'CONNECT')",
+    "     OR has_database_privilege(current_user, current_database(), 'CONNECT WITH GRANT OPTION')",
+    "     OR has_database_privilege(current_user, current_database(), 'CREATE')",
+    "     OR has_database_privilege(current_user, current_database(), 'TEMPORARY') THEN",
+    "    RAISE EXCEPTION 'Books database privileges violate the contract';",
+    "  END IF;",
+    "  IF NOT has_schema_privilege(current_user, 'mj_eoi', 'USAGE')",
+    "     OR has_schema_privilege(current_user, 'mj_eoi', 'USAGE WITH GRANT OPTION')",
+    "     OR has_schema_privilege(current_user, 'mj_eoi', 'CREATE')",
+    "     OR has_schema_privilege(current_user, 'public', 'USAGE')",
+    "     OR has_schema_privilege(current_user, 'public', 'CREATE') THEN",
+    "    RAISE EXCEPTION 'Books schema privileges violate the contract';",
+    "  END IF;",
+    "  IF EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspname !~ '^pg_'",
+    "      AND n.nspname NOT IN ('information_schema', 'mj_eoi', 'public')",
+    "      AND (has_schema_privilege(current_user, n.oid, 'USAGE')",
+    "        OR has_schema_privilege(current_user, n.oid, 'CREATE'))) THEN",
+    "    RAISE EXCEPTION 'Books role has privileges on an extra schema';",
+    "  END IF;",
+    "  IF NOT has_table_privilege(current_user, 'mj_eoi.book_eoi', 'SELECT')",
+    "     OR has_table_privilege(current_user, 'mj_eoi.book_eoi', 'SELECT WITH GRANT OPTION')",
+    "     OR NOT has_table_privilege(current_user, 'mj_eoi.book_eoi', 'INSERT')",
+    "     OR has_table_privilege(current_user, 'mj_eoi.book_eoi', 'INSERT WITH GRANT OPTION')",
+    "     OR NOT has_table_privilege(current_user, 'mj_eoi.book_eoi', 'UPDATE')",
+    "     OR has_table_privilege(current_user, 'mj_eoi.book_eoi', 'UPDATE WITH GRANT OPTION')",
+    "     OR has_table_privilege(current_user, 'mj_eoi.book_eoi', 'DELETE')",
+    "     OR has_table_privilege(current_user, 'mj_eoi.book_eoi', 'TRUNCATE')",
+    "     OR has_table_privilege(current_user, 'mj_eoi.book_eoi', 'REFERENCES')",
+    "     OR has_any_column_privilege(current_user, 'mj_eoi.book_eoi', 'REFERENCES')",
+    "     OR has_table_privilege(current_user, 'mj_eoi.book_eoi', 'TRIGGER') THEN",
+    "    RAISE EXCEPTION 'Books table privileges violate the contract';",
+    "  END IF;",
+    "  IF EXISTS (SELECT 1 FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) acl",
+    "      JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace",
+    "      WHERE a.attnum > 0 AND NOT a.attisdropped",
+    "      AND acl.grantee IN (0, attrs.oid) AND n.nspname !~ '^pg_'",
+    "      AND n.nspname <> 'information_schema') THEN",
+    "    RAISE EXCEPTION 'Books role database contains column ACLs';",
+    "  END IF;",
+    "  IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace",
+    "      WHERE c.relkind IN ('r','p','v','m','f') AND n.nspname !~ '^pg_'",
+    "      AND n.nspname <> 'information_schema'",
+    "      AND NOT (n.nspname = 'mj_eoi' AND c.relname = 'book_eoi')",
+    "      AND (has_table_privilege(current_user, c.oid, 'SELECT')",
+    "        OR has_any_column_privilege(current_user, c.oid, 'SELECT')",
+    "        OR has_table_privilege(current_user, c.oid, 'INSERT')",
+    "        OR has_any_column_privilege(current_user, c.oid, 'INSERT')",
+    "        OR has_table_privilege(current_user, c.oid, 'UPDATE')",
+    "        OR has_any_column_privilege(current_user, c.oid, 'UPDATE')",
+    "        OR has_table_privilege(current_user, c.oid, 'DELETE')",
+    "        OR has_table_privilege(current_user, c.oid, 'TRUNCATE')",
+    "        OR has_table_privilege(current_user, c.oid, 'REFERENCES')",
+    "        OR has_any_column_privilege(current_user, c.oid, 'REFERENCES')",
+    "        OR has_table_privilege(current_user, c.oid, 'TRIGGER'))) THEN",
+    "    RAISE EXCEPTION 'Books role has privileges on an extra table';",
+    "  END IF;",
+    "  IF EXISTS (SELECT 1 FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace",
+    "      WHERE n.nspname = 'public' AND has_function_privilege(current_user, p.oid, 'EXECUTE')) THEN",
+    "    RAISE EXCEPTION 'Books role can execute a public routine';",
+    "  END IF;",
+    "  IF EXISTS (SELECT 1 FROM pg_auth_members m",
+    "      WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = current_user)) THEN",
+    "    RAISE EXCEPTION 'Books role has a role membership';",
+    "  END IF;",
+    "  IF EXISTS (SELECT 1 FROM pg_shdepend dep",
+    "      WHERE dep.refclassid = 'pg_authid'::regclass AND dep.refobjid = attrs.oid AND dep.deptype = 'o') THEN",
+    "    RAISE EXCEPTION 'Books role owns database objects';",
+    "  END IF;",
+    "  SELECT array_agg(setting ORDER BY setting) INTO settings",
+    "  FROM pg_db_role_setting s CROSS JOIN LATERAL unnest(s.setconfig) AS setting",
+    "  WHERE s.setrole = attrs.oid AND s.setdatabase = (SELECT oid FROM pg_database WHERE datname = current_database());",
+    "  IF settings IS DISTINCT FROM ARRAY['search_path=pg_catalog, mj_eoi', 'statement_timeout=5000']",
+    "     OR EXISTS (SELECT 1 FROM pg_db_role_setting s",
+    "       WHERE s.setrole = attrs.oid AND s.setdatabase <> (SELECT oid FROM pg_database WHERE datname = current_database())) THEN",
+    "    RAISE EXCEPTION 'Books role settings violate the contract';",
+    "  END IF;",
+    "END",
+    "$books_contract$;"
   ].join('\n');
 }
 
@@ -233,9 +455,17 @@ async function runLiveCheck(env = process.env) {
   const webRequire = createRequire(path.join(ROOT, 'apps', 'web', 'package.json'));
   const { neon } = await import(webRequire.resolve('@neondatabase/serverless'));
   const sql = createNeonSqlExecutor(neon(env.NEON_DATABASE_URL));
-  const result = compareLiveCatalog(await probeLiveCatalogShape(sql));
-  if (!result.match) throw new Error('live Books EOI catalog does not match the canonical shape');
-  console.log('check-book-eoi-schema: OK - live catalog matches canonical shape (read-only)');
+  const [catalog, privileges] = await Promise.all([
+    probeLiveCatalogShape(sql),
+    probeRuntimePrivileges(sql)
+  ]);
+  if (!compareLiveCatalog(catalog).match) {
+    throw new Error('live Books EOI catalog does not match the canonical shape');
+  }
+  if (!compareRuntimePrivileges(privileges).match) {
+    throw new Error('live Books EOI role does not match the least-privilege contract');
+  }
+  console.log('check-book-eoi-schema: OK - live catalog and least-privilege role match canonical contracts (read-only)');
 }
 
 async function main() {
@@ -248,9 +478,9 @@ async function main() {
         'Usage: node scripts/check-book-eoi-schema.mjs [--probe|--live|--help]',
         '',
         'Exits nonzero if the canonical SQL signature drifts from the app expectation,',
-        'or if required constraints/indexes are missing. No database writes.',
-        '  --probe  print the live-catalog and privilege comparison SQL and exit.',
-        '  --live   compare the live catalog read-only using environment credentials.'
+        'or if exact constraints/indexes differ. No database writes.',
+        '  --probe  print fail-fast live catalog/privilege assertion SQL and exit.',
+        '  --live   assert the live catalog and app-role privileges read-only.'
       ].join('\n') + '\n'
     );
     return;
@@ -333,42 +563,10 @@ async function main() {
     fail('column signature drift:\n  expected: ' + EXPECTED_SCHEMA_SIGNATURE + '\n  got:      ' + signature);
   }
 
-  // Exact CHECK value sets / numeric bounds.
-  const checks = parseChecks(tableConstraints);
-  const checkByName = new Map(checks.map((c) => [c.name, c]));
-  const EXPECTED_CHECKS = {
-    book_eoi_book_code_check: { values: ['biography', 'childrens'] },
-    book_eoi_format_code_check: { values: ['ebook', 'hardcover', 'paperback', 'unsure'] },
-    book_eoi_status_check: { values: ['contacted', 'new', 'withdrawn'] },
-    book_eoi_quantity_check: { bounds: [1, 10] }
-  };
-  for (const [name, want] of Object.entries(EXPECTED_CHECKS)) {
-    const got = checkByName.get(name);
-    if (!got) { fail('missing CHECK constraint: ' + name); continue; }
-    if (want.values && got.values.join(',') !== want.values.join(',')) {
-      fail(`CHECK ${name} values: expected ${want.values.join(',')}, got ${got.values.join(',')}`);
-    }
-    if (want.bounds && (got.bounds.length !== 2 || got.bounds[0] !== want.bounds[0] || got.bounds[1] !== want.bounds[1])) {
-      fail(`CHECK ${name} bounds: expected ${want.bounds.join(',')}, got ${got.bounds.join(',')}`);
-    }
-  }
-
-  if (!/UNIQUE\s*\(\s*book_code\s*,\s*email_hash\s*\)/i.test(tableConstraints.join(' '))) {
-    fail('UNIQUE(book_code, email_hash) constraint not found');
-  }
-
-  // Exact indexes (name + exact column list/direction).
+  // Exact complete named constraint and explicit-index sets. Comparison keeps
+  // full expressions/definitions; extras are drift, not harmless additions.
   const indexes = extractIndexes(sql);
-  const indexByName = new Map(indexes.map((i) => [i.name.toLowerCase(), i.columns.toLowerCase().replace(/\s+/g, ' ').trim()]));
-  const EXPECTED_INDEXES = {
-    book_eoi_book_status_idx: 'book_code, status',
-    book_eoi_book_created_idx: 'book_code, created_at desc'
-  };
-  for (const [name, cols] of Object.entries(EXPECTED_INDEXES)) {
-    const got = indexByName.get(name);
-    if (got === undefined) fail('index ' + name + ' not found');
-    else if (got !== cols) fail(`index ${name} columns: expected "${cols}", got "${got}"`);
-  }
+  for (const mismatch of compareCanonicalDefinitions(tableConstraints, indexes)) fail(mismatch);
 
   // Forbidden content (scanned over executable SQL only): no destructive
   // statements, and exactly one CREATE TABLE named mj_eoi.book_eoi (this also

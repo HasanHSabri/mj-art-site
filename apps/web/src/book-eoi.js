@@ -551,9 +551,8 @@ export async function probeBookEoiSchemaColumns(sql) {
 // ---------------------------------------------------------------------------
 //
 // /api/books/health compares the LIVE database catalog (information_schema +
-// pg_catalog) to EXPECTED_LIVE_CATALOG. The comparison is MEANINGFUL: ordered
-// column names, data types, nullability, defaults, CHECK value sets / numeric
-// bounds, the UNIQUE(book_code, email_hash) constraint, and the exact indexes.
+// pg_catalog) to EXPECTED_LIVE_CATALOG. The comparison is exact: ordered column
+// definitions plus the complete normalized PK/UNIQUE/CHECK/FK and index sets.
 // It is deliberately NOT a column-name-only check. The PUBLIC health response
 // reveals only an outcome (healthy | mismatch | unavailable) -- never the
 // differences, never column data, never credentials/PII.
@@ -574,16 +573,93 @@ export const EXPECTED_LIVE_CATALOG = {
     { name: 'created_at', dataType: 'timestamp with time zone', nullable: false, default: 'now()' },
     { name: 'updated_at', dataType: 'timestamp with time zone', nullable: false, default: 'now()' }
   ],
-  checks: [
-    { name: 'book_eoi_book_code_check', values: ['biography', 'childrens'] },
-    { name: 'book_eoi_format_code_check', values: ['hardcover', 'paperback', 'ebook', 'unsure'] },
-    { name: 'book_eoi_status_check', values: ['new', 'contacted', 'withdrawn'] },
-    { name: 'book_eoi_quantity_check', bounds: [1, 10] }
+  constraints: [
+    {
+      name: 'book_eoi_book_code_check',
+      type: 'c',
+      definition: "CHECK ((book_code = ANY (ARRAY['biography'::text, 'childrens'::text])))"
+    },
+    {
+      name: 'book_eoi_book_email_unique',
+      type: 'u',
+      definition: 'UNIQUE (book_code, email_hash)'
+    },
+    {
+      name: 'book_eoi_format_code_check',
+      type: 'c',
+      definition: "CHECK ((format_code = ANY (ARRAY['hardcover'::text, 'paperback'::text, 'ebook'::text, 'unsure'::text])))"
+    },
+    { name: 'book_eoi_pkey', type: 'p', definition: 'PRIMARY KEY (id)' },
+    {
+      name: 'book_eoi_quantity_check',
+      type: 'c',
+      definition: 'CHECK (((quantity >= 1) AND (quantity <= 10)))'
+    },
+    {
+      name: 'book_eoi_status_check',
+      type: 'c',
+      definition: "CHECK ((status = ANY (ARRAY['new'::text, 'contacted'::text, 'withdrawn'::text])))"
+    }
   ],
-  unique: { name: 'book_eoi_book_email_unique', columns: ['book_code', 'email_hash'] },
   indexes: [
-    { name: 'book_eoi_book_status_idx', columns: 'book_code, status' },
-    { name: 'book_eoi_book_created_idx', columns: 'book_code, created_at desc' }
+    {
+      name: 'book_eoi_book_created_idx',
+      definition: 'CREATE INDEX book_eoi_book_created_idx ON mj_eoi.book_eoi USING btree (book_code, created_at DESC)',
+      unique: false,
+      primary: false
+    },
+    {
+      name: 'book_eoi_book_email_unique',
+      definition: 'CREATE UNIQUE INDEX book_eoi_book_email_unique ON mj_eoi.book_eoi USING btree (book_code, email_hash)',
+      unique: true,
+      primary: false
+    },
+    {
+      name: 'book_eoi_book_status_idx',
+      definition: 'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING btree (book_code, status)',
+      unique: false,
+      primary: false
+    },
+    {
+      name: 'book_eoi_pkey',
+      definition: 'CREATE UNIQUE INDEX book_eoi_pkey ON mj_eoi.book_eoi USING btree (id)',
+      unique: true,
+      primary: true
+    }
+  ]
+};
+
+export const EXPECTED_RUNTIME_PRIVILEGES = {
+  role: {
+    superuser: false,
+    inherit: true,
+    createRole: false,
+    createDb: false,
+    canLogin: true,
+    replication: false,
+    bypassRls: false
+  },
+  database: { connect: true, connectGrant: false, create: false, temporary: false },
+  schemas: [
+    { name: 'mj_eoi', usage: true, usageGrant: false, create: false, createGrant: false },
+    { name: 'public', usage: false, usageGrant: false, create: false, createGrant: false }
+  ],
+  tables: [
+    {
+      schema: 'mj_eoi',
+      name: 'book_eoi',
+      select: true, selectGrant: false,
+      insert: true, insertGrant: false,
+      update: true, updateGrant: false,
+      delete: false,
+      truncate: false,
+      references: false,
+      trigger: false
+    }
+  ],
+  settings: [
+    { database: 'CURRENT', setting: 'search_path=pg_catalog, mj_eoi' },
+    { database: 'CURRENT', setting: 'statement_timeout=5000' }
   ]
 };
 
@@ -591,29 +667,95 @@ function normText(value) {
   return String(value == null ? '' : value).trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
-// For comma-separated column lists (index/unique definitions), whitespace and
-// casing are insignificant: collapse to a canonical lowercase, spaceless form.
-function normCols(value) {
-  return String(value == null ? '' : value).trim().toLowerCase().replace(/\s+/g, '');
+// Normalize catalog definitions without changing quoted identifiers or string
+// literals. This makes insignificant keyword/whitespace differences stable but
+// preserves expression structure, literal order/case, predicates, methods,
+// operator classes, sort/null semantics, INCLUDE columns, and index options.
+export function normalizePgDefinition(value) {
+  const source = String(value == null ? '' : value).trim().replace(/;$/, '');
+  let out = '';
+  let quote = null;
+  let pendingSpace = false;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (quote) {
+      out += ch;
+      if (ch === quote) {
+        if (source[i + 1] === quote) out += source[++i];
+        else quote = null;
+      }
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      if (pendingSpace && out && !out.endsWith('(') && !out.endsWith(',')) out += ' ';
+      pendingSpace = false;
+      quote = ch;
+      out += ch;
+      continue;
+    }
+    if (/\s/.test(ch)) {
+      pendingSpace = true;
+      continue;
+    }
+    if (ch === '(' || ch === ')' || ch === ',') {
+      out = out.replace(/ $/, '');
+      out += ch;
+      pendingSpace = false;
+      continue;
+    }
+    if (pendingSpace && out && !out.endsWith('(') && !out.endsWith(',')) out += ' ';
+    pendingSpace = false;
+    out += ch.toLowerCase();
+  }
+  return out.trim();
 }
 
-// Quoted string literals from a CHECK definition -> sorted array.
-function extractStringLiterals(def) {
-  return (String(def).match(/'([^']*)'/g) || [])
-    .map((s) => s.slice(1, -1))
-    .filter((s) => s.length > 0)
-    .sort();
-}
+function exactNamedDefinitions(kind, liveRows, expectedRows, mismatches) {
+  const live = [...liveRows]
+    .map((row) => ({
+      name: normText(row.name),
+      type: row.type == null ? undefined : normText(row.type),
+      definition: normalizePgDefinition(row.definition),
+      unique: row.unique == null ? undefined : bool(row.unique),
+      primary: row.primary == null ? undefined : bool(row.primary),
+      valid: row.valid == null ? undefined : bool(row.valid),
+      ready: row.ready == null ? undefined : bool(row.ready),
+      nullsNotDistinct: row.nulls_not_distinct == null ? undefined : bool(row.nulls_not_distinct),
+      options: row.options == null ? null : normText(row.options)
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  const expected = [...expectedRows]
+    .map((row) => ({
+      name: normText(row.name),
+      type: row.type == null ? undefined : normText(row.type),
+      definition: normalizePgDefinition(row.definition),
+      unique: row.unique,
+      primary: row.primary,
+      valid: row.valid,
+      ready: row.ready,
+      nullsNotDistinct: row.nullsNotDistinct,
+      options: row.options == null ? null : normText(row.options)
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 
-// Integer literals from a CHECK definition -> sorted ascending array.
-function extractIntBounds(def) {
-  return (String(def).match(/-?\d+/g) || []).map(Number).sort((a, b) => a - b);
-}
-
-// First parenthesized column list from a definition (lowercased, spaceless).
-function extractParenColumns(def) {
-  const m = String(def).match(/\(([^()]*)\)/);
-  return m ? normCols(m[1]) : '';
+  if (live.length !== expected.length) {
+    mismatches.push(`${kind} count: expected ${expected.length}, got ${live.length}`);
+  }
+  for (let i = 0; i < Math.max(live.length, expected.length); i++) {
+    const got = live[i];
+    const want = expected[i];
+    if (!want) {
+      mismatches.push(`unexpected ${kind}: ${got.name}`);
+      continue;
+    }
+    if (!got) {
+      mismatches.push(`missing ${kind}: ${want.name}`);
+      continue;
+    }
+    if (JSON.stringify(got) !== JSON.stringify(want)) {
+      mismatches.push(`${kind} ${want.name} definition mismatch`);
+    }
+  }
 }
 
 // PURE comparison of a live catalog shape to the canonical model. Returns
@@ -653,85 +795,206 @@ export function compareLiveCatalog(live, expected = EXPECTED_LIVE_CATALOG) {
     }
   }
 
-  const liveChecks = live && Array.isArray(live.checks) ? live.checks : [];
-  const checkByName = new Map(liveChecks.map((c) => [normText(c.name), c.definition || '']));
-  for (const want of expected.checks) {
-    const def = checkByName.get(normText(want.name));
-    if (def === undefined) {
-      mismatches.push(`missing CHECK constraint: ${want.name}`);
-      continue;
-    }
-    if (want.values) {
-      const gotVals = extractStringLiterals(def);
-      if (gotVals.join(',') !== [...want.values].sort().join(',')) {
-        mismatches.push(`CHECK ${want.name} values: expected ${want.values.join(',')}, got ${gotVals.join(',')}`);
-      }
-    }
-    if (want.bounds) {
-      const gotBounds = extractIntBounds(def);
-      if (gotBounds.length !== 2 || gotBounds[0] !== want.bounds[0] || gotBounds[1] !== want.bounds[1]) {
-        mismatches.push(`CHECK ${want.name} bounds: expected ${want.bounds.join(',')}, got ${gotBounds.join(',')}`);
-      }
-    }
-  }
-
-  const liveUnique = live && Array.isArray(live.unique) ? live.unique : [];
-  const wantUniqueCols = normCols(expected.unique.columns.join(','));
-  const uniqueOk = liveUnique.some(
-    (u) => normText(u.name) === normText(expected.unique.name) && extractParenColumns(u.definition) === wantUniqueCols
+  exactNamedDefinitions(
+    'constraint',
+    live && Array.isArray(live.constraints) ? live.constraints : [],
+    expected.constraints,
+    mismatches
   );
-  if (!uniqueOk) {
-    mismatches.push(`UNIQUE constraint ${expected.unique.name}(${expected.unique.columns.join(', ')}) not found`);
-  }
-
-  const liveIndexes = live && Array.isArray(live.indexes) ? live.indexes : [];
-  for (const wantIdx of expected.indexes) {
-    const found = liveIndexes.some(
-      (idx) => normText(idx.name) === normText(wantIdx.name) && extractParenColumns(idx.definition) === normCols(wantIdx.columns)
-    );
-    if (!found) mismatches.push(`index ${wantIdx.name}(${wantIdx.columns}) not found`);
-  }
+  exactNamedDefinitions(
+    'index',
+    live && Array.isArray(live.indexes) ? live.indexes : [],
+    expected.indexes.map((index) => ({
+      ...index,
+      valid: true,
+      ready: true,
+      nullsNotDistinct: false,
+      options: null
+    })),
+    mismatches
+  );
 
   return { match: mismatches.length === 0, mismatches };
 }
 
-// Probe the LIVE database catalog (columns, CHECKs, UNIQUE, indexes) for the
-// runtime schema-drift health check. No PII, no credentials. Four cheap catalog
+// Probe the LIVE database catalog (columns, all constraints, all indexes) for the
+// runtime schema-drift health check. No PII, no credentials. Three cheap catalog
 // reads against information_schema/pg_catalog, run in parallel (each is an
 // independent HTTP query via the executor).
 export async function probeLiveCatalogShape(sql) {
-  const [columns, checks, unique, indexes] = await Promise.all([
+  const [columns, constraints, indexes] = await Promise.all([
     sql(
       'SELECT column_name, data_type, is_nullable, column_default, character_maximum_length ' +
         'FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position',
       [SCHEMA_NAME, TABLE_NAME]
     ),
     sql(
-      'SELECT con.conname AS name, pg_get_constraintdef(con.oid) AS definition ' +
+      'SELECT con.conname AS name, con.contype AS type, pg_get_constraintdef(con.oid) AS definition ' +
         'FROM pg_constraint con ' +
         'JOIN pg_class rel ON rel.oid = con.conrelid ' +
         'JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace ' +
-        "WHERE nsp.nspname = $1 AND rel.relname = $2 AND con.contype = 'c'",
+        'WHERE nsp.nspname = $1 AND rel.relname = $2 ORDER BY con.conname',
       [SCHEMA_NAME, TABLE_NAME]
     ),
     sql(
-      'SELECT con.conname AS name, pg_get_constraintdef(con.oid) AS definition ' +
-        'FROM pg_constraint con ' +
-        'JOIN pg_class rel ON rel.oid = con.conrelid ' +
-        'JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace ' +
-        "WHERE nsp.nspname = $1 AND rel.relname = $2 AND con.contype = 'u'",
-      [SCHEMA_NAME, TABLE_NAME]
-    ),
-    sql(
-      'SELECT indexname AS name, indexdef AS definition FROM pg_indexes WHERE schemaname = $1 AND tablename = $2',
+      'SELECT idx.relname AS name, pg_get_indexdef(idx.oid) AS definition, ind.indisunique AS unique, ' +
+        'ind.indisprimary AS primary, ind.indisvalid AS valid, ind.indisready AS ready, ' +
+        'ind.indnullsnotdistinct AS nulls_not_distinct, idx.reloptions::text AS options ' +
+        'FROM pg_index ind JOIN pg_class idx ON idx.oid = ind.indexrelid ' +
+        'JOIN pg_class rel ON rel.oid = ind.indrelid JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace ' +
+        'WHERE nsp.nspname = $1 AND rel.relname = $2 ORDER BY idx.relname',
       [SCHEMA_NAME, TABLE_NAME]
     )
   ]);
   return {
     columns: Array.isArray(columns) ? columns : [],
-    checks: Array.isArray(checks) ? checks : [],
-    unique: Array.isArray(unique) ? unique : [],
+    constraints: Array.isArray(constraints) ? constraints : [],
     indexes: Array.isArray(indexes) ? indexes : []
+  };
+}
+
+function bool(value) {
+  return value === true || value === 't' || value === 'true';
+}
+
+function exactRows(kind, liveRows, expectedRows, fields, mismatches) {
+  const normalize = (row) => Object.fromEntries(fields.map((field) => [field, row[field]]));
+  const live = liveRows.map(normalize).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const expected = expectedRows.map(normalize).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  if (JSON.stringify(live) !== JSON.stringify(expected)) mismatches.push(`${kind} matrix mismatch`);
+}
+
+export function compareRuntimePrivileges(live, expected = EXPECTED_RUNTIME_PRIVILEGES) {
+  const mismatches = [];
+  const summary = live && live.summary ? live.summary : {};
+  const role = expected.role;
+  const database = expected.database;
+  for (const [field, want] of Object.entries({
+    superuser: role.superuser,
+    inherit: role.inherit,
+    create_role: role.createRole,
+    create_db: role.createDb,
+    can_login: role.canLogin,
+    replication: role.replication,
+    bypass_rls: role.bypassRls,
+    has_connect: database.connect,
+    has_connect_grant: database.connectGrant,
+    has_create: database.create,
+    has_temporary: database.temporary
+  })) {
+    if (bool(summary[field]) !== want) mismatches.push(`role/database ${field}: expected ${want}`);
+  }
+
+  const schemas = (live?.schemas || []).map((row) => ({
+    name: normText(row.name), usage: bool(row.usage), usageGrant: bool(row.usage_grant),
+    create: bool(row.create), createGrant: bool(row.create_grant)
+  }));
+  exactRows(
+    'schema privilege', schemas, expected.schemas,
+    ['name', 'usage', 'usageGrant', 'create', 'createGrant'], mismatches
+  );
+
+  const tables = (live?.tables || []).map((row) => ({
+    schema: normText(row.schema), name: normText(row.name), select: bool(row.select),
+    selectGrant: bool(row.select_grant), insert: bool(row.insert), insertGrant: bool(row.insert_grant),
+    update: bool(row.update), updateGrant: bool(row.update_grant), delete: bool(row.delete),
+    truncate: bool(row.truncate), references: bool(row.references), trigger: bool(row.trigger)
+  }));
+  exactRows(
+    'table privilege', tables, expected.tables,
+    ['schema', 'name', 'select', 'selectGrant', 'insert', 'insertGrant', 'update', 'updateGrant', 'delete', 'truncate', 'references', 'trigger'],
+    mismatches
+  );
+
+  const currentDatabase = normText(summary.database_name);
+  const settings = (live?.settings || []).map((row) => ({
+    database: normText(row.database) === currentDatabase ? 'CURRENT' : normText(row.database),
+    setting: String(row.setting)
+  }));
+  exactRows('role setting', settings, expected.settings, ['database', 'setting'], mismatches);
+  if ((live?.executablePublicRoutines || []).length) mismatches.push('executable public routines found');
+  if ((live?.columnAcls || []).length) mismatches.push('column ACLs found');
+  if ((live?.ownedObjects || []).length) mismatches.push('owned database objects found');
+  if ((live?.memberships || []).length) mismatches.push('role memberships found');
+  return { match: mismatches.length === 0, mismatches };
+}
+
+export async function probeRuntimePrivileges(sql) {
+  const [summaryRows, schemas, tables, executablePublicRoutines, columnAcls, ownedObjects, settings, memberships] = await Promise.all([
+    sql(
+      'SELECT current_database() AS database_name, r.rolsuper AS superuser, r.rolinherit AS inherit, ' +
+        'r.rolcreaterole AS create_role, r.rolcreatedb AS create_db, r.rolcanlogin AS can_login, ' +
+        'r.rolreplication AS replication, r.rolbypassrls AS bypass_rls, ' +
+        "has_database_privilege(current_user, current_database(), 'CONNECT') AS has_connect, " +
+        "has_database_privilege(current_user, current_database(), 'CONNECT WITH GRANT OPTION') AS has_connect_grant, " +
+        "has_database_privilege(current_user, current_database(), 'CREATE') AS has_create, " +
+        "has_database_privilege(current_user, current_database(), 'TEMPORARY') AS has_temporary " +
+        'FROM pg_roles r WHERE r.rolname = current_user'
+    ),
+    sql(
+      "SELECT n.nspname AS name, has_schema_privilege(current_user, n.oid, 'USAGE') AS usage, " +
+        "has_schema_privilege(current_user, n.oid, 'USAGE WITH GRANT OPTION') AS usage_grant, " +
+        "has_schema_privilege(current_user, n.oid, 'CREATE') AS create, " +
+        "has_schema_privilege(current_user, n.oid, 'CREATE WITH GRANT OPTION') AS create_grant FROM pg_namespace n " +
+        "WHERE n.nspname IN ('mj_eoi', 'public') OR (n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND " +
+        "(has_schema_privilege(current_user, n.oid, 'USAGE') OR has_schema_privilege(current_user, n.oid, 'CREATE'))) " +
+        'ORDER BY n.nspname'
+    ),
+    sql(
+      "SELECT n.nspname AS schema, c.relname AS name, (has_table_privilege(current_user, c.oid, 'SELECT') OR has_any_column_privilege(current_user, c.oid, 'SELECT')) AS select, " +
+        "has_table_privilege(current_user, c.oid, 'SELECT WITH GRANT OPTION') AS select_grant, " +
+        "(has_table_privilege(current_user, c.oid, 'INSERT') OR has_any_column_privilege(current_user, c.oid, 'INSERT')) AS insert, " +
+        "has_table_privilege(current_user, c.oid, 'INSERT WITH GRANT OPTION') AS insert_grant, " +
+        "(has_table_privilege(current_user, c.oid, 'UPDATE') OR has_any_column_privilege(current_user, c.oid, 'UPDATE')) AS update, " +
+        "has_table_privilege(current_user, c.oid, 'UPDATE WITH GRANT OPTION') AS update_grant, " +
+        "has_table_privilege(current_user, c.oid, 'DELETE') AS delete, has_table_privilege(current_user, c.oid, 'TRUNCATE') AS truncate, " +
+        "(has_table_privilege(current_user, c.oid, 'REFERENCES') OR has_any_column_privilege(current_user, c.oid, 'REFERENCES')) AS references, " +
+        "has_table_privilege(current_user, c.oid, 'TRIGGER') AS trigger " +
+        'FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace ' +
+        "WHERE c.relkind IN ('r','p','v','m','f') AND n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND " +
+        "((n.nspname = 'mj_eoi' AND c.relname = 'book_eoi') OR has_table_privilege(current_user, c.oid, 'SELECT') OR has_any_column_privilege(current_user, c.oid, 'SELECT') " +
+        "OR has_table_privilege(current_user, c.oid, 'INSERT') OR has_any_column_privilege(current_user, c.oid, 'INSERT') " +
+        "OR has_table_privilege(current_user, c.oid, 'UPDATE') OR has_any_column_privilege(current_user, c.oid, 'UPDATE') " +
+        "OR has_table_privilege(current_user, c.oid, 'DELETE') OR has_table_privilege(current_user, c.oid, 'TRUNCATE') " +
+        "OR has_table_privilege(current_user, c.oid, 'REFERENCES') OR has_any_column_privilege(current_user, c.oid, 'REFERENCES') " +
+        "OR has_table_privilege(current_user, c.oid, 'TRIGGER')) " +
+        'ORDER BY n.nspname, c.relname'
+    ),
+    sql(
+      "SELECT p.oid::regprocedure::text AS routine FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace " +
+        "WHERE n.nspname = 'public' AND has_function_privilege(current_user, p.oid, 'EXECUTE') ORDER BY 1"
+    ),
+    sql(
+      "SELECT n.nspname AS schema, c.relname AS table, a.attname AS column, acl.privilege_type, acl.is_grantable " +
+        "FROM pg_attribute a CROSS JOIN LATERAL aclexplode(a.attacl) acl " +
+        "JOIN pg_class c ON c.oid = a.attrelid JOIN pg_namespace n ON n.oid = c.relnamespace " +
+        "WHERE a.attnum > 0 AND NOT a.attisdropped AND acl.grantee IN (0, (SELECT oid FROM pg_roles WHERE rolname = current_user)) AND n.nspname !~ '^pg_' " +
+        "AND n.nspname <> 'information_schema' ORDER BY n.nspname, c.relname, a.attname"
+    ),
+    sql(
+      "SELECT dep.classid::regclass::text AS kind, pg_describe_object(dep.classid, dep.objid, dep.objsubid) AS name " +
+        "FROM pg_shdepend dep WHERE dep.refclassid = 'pg_authid'::regclass " +
+        "AND dep.refobjid = (SELECT oid FROM pg_roles WHERE rolname = current_user) AND dep.deptype = 'o' ORDER BY kind, name"
+    ),
+    sql(
+      "SELECT COALESCE(d.datname, '*') AS database, setting FROM pg_db_role_setting s " +
+        'LEFT JOIN pg_database d ON d.oid = s.setdatabase CROSS JOIN LATERAL unnest(s.setconfig) AS setting ' +
+        'WHERE s.setrole = (SELECT oid FROM pg_roles WHERE rolname = current_user) ORDER BY database, setting'
+    ),
+    sql(
+      'SELECT r.rolname AS role FROM pg_auth_members m JOIN pg_roles r ON r.oid = m.roleid ' +
+        'WHERE m.member = (SELECT oid FROM pg_roles WHERE rolname = current_user) ORDER BY r.rolname'
+    )
+  ]);
+  return {
+    summary: Array.isArray(summaryRows) ? summaryRows[0] || {} : {},
+    schemas: Array.isArray(schemas) ? schemas : [],
+    tables: Array.isArray(tables) ? tables : [],
+    executablePublicRoutines: Array.isArray(executablePublicRoutines) ? executablePublicRoutines : [],
+    columnAcls: Array.isArray(columnAcls) ? columnAcls : [],
+    ownedObjects: Array.isArray(ownedObjects) ? ownedObjects : [],
+    settings: Array.isArray(settings) ? settings : [],
+    memberships: Array.isArray(memberships) ? memberships : []
   };
 }
 
