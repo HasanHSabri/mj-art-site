@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { pickActiveSection, createDisclosureController } from '../public/chapter-nav.js';
+import { pickActiveSection, reduceScrollSpy, createDisclosureController } from '../public/chapter-nav.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(__dirname, '..', 'public');
@@ -357,6 +357,124 @@ test('pickActiveSection: three visible, the latest crossed-above wins', () => {
     { id: 'testimonials', top: 195 }
   ];
   assert.equal(pickActiveSection(entries, 200), 'testimonials');
+});
+
+// --- JS: incremental scroll-spy state (partial-entry robustness) ---------
+// A minimal fake-observer harness: it feeds normalized { id, isIntersecting,
+// top } batches through reduceScrollSpy, threading the persistent state map
+// between callbacks exactly as the real IntersectionObserver callback does.
+// Each batch contains ONLY the entries whose state changed (the real API
+// contract), so these tests exercise the multi-callback guarantee that a
+// partial batch must never drop a still-active section.
+function fakeObserver(markerY = 200) {
+  let state = new Map();
+  return {
+    // Emit one change batch (only changed entries, like the real API).
+    emit(batch) {
+      const result = reduceScrollSpy(state, batch, markerY);
+      state = result.state;
+      return result.current;
+    },
+    snapshot() {
+      return new Map(state);
+    }
+  };
+}
+
+test('reduceScrollSpy: empty batch with no prior state clears (hero-none)', () => {
+  assert.equal(reduceScrollSpy(null, [], 200).current, null);
+  assert.equal(reduceScrollSpy(new Map(), [], 200).current, null);
+});
+
+test('reduceScrollSpy: a single entering section becomes current', () => {
+  const r = reduceScrollSpy(null, [{ id: 'story', isIntersecting: true, top: 150 }], 200);
+  assert.equal(r.current, 'story');
+  assert.equal(r.state.size, 1);
+});
+
+test('partial-entry: an unrelated exit batch keeps the still-active section current', () => {
+  // Story is active. A LATER callback fires for an UNRELATED section (gallery)
+  // leaving the band; Story is NOT in this batch because its state did not
+  // change. The complete state must still know Story is the active section.
+  const spy = fakeObserver(200);
+  assert.equal(spy.emit([{ id: 'story', isIntersecting: true, top: 80 }]), 'story');
+  // gallery exits (partial/unrelated batch). Story must remain current.
+  assert.equal(
+    spy.emit([{ id: 'gallery', isIntersecting: false, top: -500 }]),
+    'story',
+    'an unrelated exit batch must not clear the still-active Story'
+  );
+});
+
+test('partial-entry: a section entering while another stays keeps the later active', () => {
+  // Story active; Testimonials partially enters but has not crossed the marker
+  // (its top is below the marker line). The complete state now has both, so
+  // the latest crossed-above (Story) stays current until Testimonials crosses.
+  const spy = fakeObserver(200);
+  spy.emit([{ id: 'story', isIntersecting: true, top: 60 }]);
+  assert.equal(
+    spy.emit([{ id: 'testimonials', isIntersecting: true, top: 260 }]),
+    'story',
+    'Story stays current while Testimonials has not yet crossed the marker'
+  );
+});
+
+test('transition Story->Testimonials is deterministic across partial batches', () => {
+  // Full real-world transition driven by several small, partial callback
+  // batches (each batch reports only the section whose state changed):
+  const spy = fakeObserver(200);
+  assert.equal(spy.emit([{ id: 'gallery', isIntersecting: true, top: -400 }]), 'gallery');
+  assert.equal(spy.emit([{ id: 'story', isIntersecting: true, top: 60 }]), 'story');
+  // Testimonials crosses the marker in its own batch -> it must win immediately.
+  assert.equal(
+    spy.emit([{ id: 'testimonials', isIntersecting: true, top: 190 }]),
+    'testimonials',
+    'the later section wins the moment it crosses the marker (no document-first lag)'
+  );
+  // Story later fully leaves; Testimonials is NOT in this batch, so a naive
+  // single-batch reducer would have cleared it. The complete state keeps it.
+  assert.equal(
+    spy.emit([{ id: 'story', isIntersecting: false, top: -300 }]),
+    'testimonials',
+    'Testimonials stays current after Story leaves (no flicker during transition)'
+  );
+});
+
+test('all observed sections leaving clears the current marker', () => {
+  const spy = fakeObserver(200);
+  spy.emit([{ id: 'story', isIntersecting: true, top: 80 }]);
+  spy.emit([{ id: 'testimonials', isIntersecting: true, top: 190 }]);
+  // Every observed section leaves (could arrive as one combined batch or two):
+  assert.equal(
+    spy.emit([
+      { id: 'story', isIntersecting: false, top: -300 },
+      { id: 'testimonials', isIntersecting: false, top: -400 }
+    ]),
+    null,
+    'once every observed section has left, current must be null (hero-none)'
+  );
+  assert.equal(spy.snapshot().size, 0, 'the complete state is empty after all leave');
+});
+
+test('reduceScrollSpy: a re-entry batch refreshes a stored position without losing others', () => {
+  // A later change batch for an already-active section reports a new top; it
+  // must update the stored position while keeping the other section known.
+  let { state, current } = reduceScrollSpy(null, [{ id: 'story', isIntersecting: true, top: 60 }], 200);
+  ({ state, current } = reduceScrollSpy(state, [{ id: 'testimonials', isIntersecting: true, top: 190 }], 200));
+  assert.equal(current, 'testimonials');
+  ({ state, current } = reduceScrollSpy(state, [{ id: 'story', isIntersecting: true, top: 100 }], 200));
+  assert.equal(state.size, 2, 'both sections remain in the complete state');
+  assert.equal(current, 'testimonials', 'current is unaffected by a non-crossing re-entry');
+});
+
+test('reduceScrollSpy: books is never a key (books exclusion is upheld upstream)', () => {
+  // The observer only observes IN_PAGE_SECTIONS (which excludes /books), so a
+  // books-like id can never appear in a batch. This guard documents that the
+  // reducer itself stays generic but the caller's exclusion is what matters.
+  const spy = fakeObserver(200);
+  spy.emit([{ id: 'story', isIntersecting: true, top: 80 }]);
+  assert.equal(spy.snapshot().has('books'), false);
+  assert.equal(spy.snapshot().has('/books'), false);
 });
 
 // --- JS: pure disclosure controller (fake-DOM harness, no heavy dep) ---

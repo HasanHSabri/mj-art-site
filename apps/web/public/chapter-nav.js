@@ -22,9 +22,9 @@
 //      transitions. It is non-intrusive: no history, no focus move, no live
 //      region, and it never marks the /books page link.
 //
-// The pure helpers (pickActiveSection, createDisclosureController) are
-// exported so they can be unit-tested with real inputs and a tiny fake-DOM
-// harness, without a heavy dependency.
+// The pure helpers (pickActiveSection, reduceScrollSpy, createDisclosureController)
+// are exported so they can be unit-tested with real inputs and a tiny fake-DOM
+// / fake-observer harness, without a heavy dependency.
 
 // In-page section ids, in document order. "/books" is intentionally absent:
 // it is a route, not an in-page anchor, so it never receives aria-current.
@@ -56,6 +56,42 @@ export function pickActiveSection(entries, markerY) {
     if (entry.top < nearest.top) nearest = entry;
   }
   return nearest.id;
+}
+
+// --- Pure: incremental scroll-spy state -----------------------------------
+// IntersectionObserver invokes its callback once per change batch containing
+// ONLY the entries whose intersection state CHANGED since the last call;
+// sections that remain intersecting but did not change are NOT included.
+// Computing the current section from that partial batch alone drops
+// still-active sections during transitions: e.g. once Story is active, a later
+// batch reporting only Testimonials entering (or only an unrelated section
+// leaving) would make the reducer "forget" Story and clear the marker early.
+//
+// The MDN-correct pattern keeps a persistent map of EVERY observed section's
+// current state, merges each changed-entry batch into it, and derives the
+// current section from the COMPLETE active state. This helper is that pure
+// reducer, exported so the multi-batch contract can be exercised with a tiny
+// fake-observer harness (no real DOM/IntersectionObserver needed).
+//
+// state:   Map<id, { id, top }> of currently-intersecting sections, or null on
+//          the first call. Passed in (and returned) so the reducer stays pure.
+// batch:   Array of normalized entries { id, isIntersecting, top }.
+// markerY: px offset of the top of the active band from the viewport top.
+//
+// Returns { state: nextMap, current: id|null }. `current` is null when nothing
+// is intersecting (e.g. over the hero) so the caller clears the marker rather
+// than show a stale current.
+export function reduceScrollSpy(state, batch, markerY) {
+  const next = new Map(state || []);
+  for (const entry of batch || []) {
+    if (entry.isIntersecting) {
+      next.set(entry.id, { id: entry.id, top: entry.top });
+    } else {
+      next.delete(entry.id);
+    }
+  }
+  const visible = [...next.values()];
+  return { state: next, current: pickActiveSection(visible, markerY) };
 }
 
 // --- Pure: disclosure controller ------------------------------------------
@@ -171,18 +207,24 @@ function initChapterNav() {
     // Bias the active zone to a horizontal band near the top of the viewport.
     const rootMargin = '-20% 0px -60% 0px';
 
+    // Persistent state of every observed section across callbacks. Each
+    // IntersectionObserver batch reports only the entries whose intersection
+    // state CHANGED; reduceScrollSpy merges that partial batch into this map so
+    // a still-active section absent from a later batch can never be dropped.
+    let spyState = new Map();
+
     const observer = new IntersectionObserver((entries) => {
-      const visible = [];
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          visible.push({ id: entry.target.id, top: entry.boundingClientRect.top });
-        }
-      }
+      const batch = entries.map((entry) => ({
+        id: entry.target.id,
+        isIntersecting: entry.isIntersecting,
+        top: entry.boundingClientRect.top
+      }));
       // The marker line is the top of the active band: 20% down the viewport
       // (matches the rootMargin top inset).
       const markerY = (window.innerHeight || 0) * 0.2;
-      const chosen = pickActiveSection(visible, markerY);
-      if (chosen) setCurrentSection(chosen);
+      const next = reduceScrollSpy(spyState, batch, markerY);
+      spyState = next.state;
+      if (next.current) setCurrentSection(next.current);
       else clearCurrentSection();
     }, { rootMargin, threshold: [0, 1] });
 
