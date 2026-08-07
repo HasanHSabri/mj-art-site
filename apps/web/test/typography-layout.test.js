@@ -70,6 +70,16 @@ test('public body uses Hanken Grotesk at 1rem/400/1.65 with subtle tracking', ()
   );
 });
 
+test('public Hanken Grotesk stack carries a sans-serif fallback', () => {
+  const body = ruleBody(stylesCss, 'body');
+  assert.ok(body, 'body rule must exist');
+  assert.match(
+    body,
+    /font-family:\s*"Hanken Grotesk",\s*sans-serif/,
+    'the body font stack must fall back to a generic sans-serif when Hanken Grotesk is unavailable'
+  );
+});
+
 test('long-form paragraphs inherit the 16px floor (no sub-16px override)', () => {
   for (const sel of ['.hero-text', '.story-copy']) {
     const block = ruleBody(stylesCss, sel);
@@ -103,6 +113,16 @@ test('hero h1 uses a tighter responsive clamp with near-unit line-height', () =>
   assert.ok(mw);
   const ch = Number(mw[1]);
   assert.ok(ch >= 12 && ch <= 13, `max-width 12-13ch (got ${ch}ch)`);
+});
+
+test('small-screen h1 measure is unclamped (max-width: none)', () => {
+  const mq = stylesCss.match(/@media\s*\(\s*max-width:\s*640px\s*\)\s*\{([\s\S]*?)\}\s*(?=@media)/);
+  assert.ok(mq, 'a 640px media block must exist');
+  assert.match(
+    mq[1],
+    /h1\s*\{[^}]*max-width:\s*none/,
+    'at small screens the h1 max-width must be removed (none) so the heading is not artificially clipped'
+  );
 });
 
 // --- Type role hierarchy ---
@@ -179,6 +199,17 @@ test('gallery drops to a single column at and below 680px', () => {
     mq[1],
     /\.gallery-grid\s*\{[^}]*grid-template-columns:\s*1fr/,
     '680px block must collapse the gallery to one column'
+  );
+});
+
+test('gallery breakpoint source order: 960px precedes 680px (<=680px resolves to one column)', () => {
+  const at960 = stylesCss.search(/@media\s*\(\s*max-width:\s*960px\s*\)/);
+  const at680 = stylesCss.search(/@media\s*\(\s*max-width:\s*680px\s*\)/);
+  assert.notStrictEqual(at960, -1, 'a 960px media block must exist');
+  assert.notStrictEqual(at680, -1, 'a 680px media block must exist');
+  assert.ok(
+    at960 < at680,
+    'the 960px media block must precede the 680px block so the cascade collapses the gallery to one column at <=680px'
   );
 });
 
