@@ -26,6 +26,133 @@ const adminJs = readFileSync(join(__dirname, '..', 'public', 'admin.js'), 'utf8'
 const adminCss = readFileSync(join(__dirname, '..', 'public', 'admin.css'), 'utf8');
 const adminHtml = readFileSync(join(__dirname, '..', 'public', 'admin.html'), 'utf8');
 
+class FakeElement {
+  constructor(tagName = 'div') {
+    this.tagName = tagName.toUpperCase();
+    this.children = [];
+    this.parentNode = null;
+    this.dataset = {};
+    this.listeners = {};
+    this.attributes = new Map();
+    this.hidden = false;
+    this.disabled = false;
+    this.value = '';
+    this.className = '';
+    this._textContent = '';
+  }
+
+  set textContent(value) {
+    this._textContent = String(value);
+    this.children = [];
+  }
+
+  get textContent() {
+    return this._textContent + this.children.map((child) => child.textContent).join('');
+  }
+
+  appendChild(child) {
+    if (child.tagName === '#FRAGMENT') {
+      child.children.slice().forEach((item) => this.appendChild(item));
+      child.children = [];
+      return child;
+    }
+    child.parentNode = this;
+    this.children.push(child);
+    return child;
+  }
+
+  addEventListener(type, listener) {
+    this.listeners[type] = listener;
+  }
+
+  setAttribute(name, value) {
+    this.attributes.set(name, String(value));
+  }
+
+  removeAttribute(name) {
+    this.attributes.delete(name);
+  }
+
+  closest(selector) {
+    for (let node = this; node; node = node.parentNode) {
+      if (selector === 'tr' && node.tagName === 'TR') return node;
+    }
+    return null;
+  }
+
+  querySelectorAll(selector) {
+    const matches = [];
+    const tagName = selector.toUpperCase();
+    for (const child of this.children) {
+      if (child.tagName === tagName) matches.push(child);
+      matches.push(...child.querySelectorAll(selector));
+    }
+    return matches;
+  }
+}
+
+const okJson = (body) => ({ ok: true, status: 200, json: async () => body });
+const failedJson = (status = 500) => ({ ok: false, status, json: async () => ({}) });
+const piiRow = {
+  id: 'pii-1',
+  name: 'Jane Doe',
+  email: 'jane@example.com',
+  book: 'biography',
+  format: 'hardcover',
+  quantity: 1,
+  status: 'new',
+  createdAt: '2026-08-07T09:00:00Z'
+};
+
+function createBooksVm(responses) {
+  const elements = new Map();
+  const document = {
+    getElementById(id) {
+      if (!elements.has(id)) elements.set(id, new FakeElement());
+      return elements.get(id);
+    },
+    createElement: (tagName) => new FakeElement(tagName),
+    createDocumentFragment: () => new FakeElement('#fragment')
+  };
+  const fetch = async () => responses.shift();
+  const context = {
+    document,
+    fetch,
+    window: { confirm: () => true },
+    adminContent: new FakeElement(),
+    loginPanel: new FakeElement(),
+    loginStatus: new FakeElement(),
+    loadArtworks() {},
+    STATUS_ORDER,
+    formatBookLabel,
+    formatFormatLabel,
+    formatStatusLabel,
+    formatCreatedDate,
+    safeMailtoHref,
+    buildSummaryTiles,
+    filterRows,
+    console
+  };
+  runInNewContext(
+    adminJs.slice(adminJs.lastIndexOf('\n', booksSectionStart) + 1) + '\nglobalThis.booksTestApi = { loadBooksDashboard };',
+    context
+  );
+  return { context, document, elements };
+}
+
+function assertBooksFailureSurface(elements) {
+  const tbody = elements.get('books-tbody');
+  assert.equal(tbody.children.length, 1, 'the PII row is replaced by the empty state');
+  assert.equal(tbody.children[0].className, '', 'the rendered PII row is gone');
+  assert.equal(tbody.textContent.includes('jane@example.com'), false, 'email text is cleared');
+  assert.equal(tbody.querySelectorAll('a').length, 0, 'mailto links are cleared');
+  assert.equal(elements.get('books-status').textContent, '', 'stale update metadata is cleared');
+  assert.equal(elements.get('books-error').hidden, false, 'the persistent panel error is visible');
+  assert.match(elements.get('books-error').textContent, /Could not load book interest/);
+  const tileValues = elements.get('books-tiles').children.map((tile) => tile.children[1].textContent);
+  assert.deepEqual(tileValues, ['0 interested', '0 interested', '0 submissions', '0 submissions', '0', '0', '0', '0']);
+}
+
 // ---------------------------------------------------------------------------
 // Allowlist / label helpers
 // ---------------------------------------------------------------------------
@@ -307,111 +434,75 @@ test('logout resets the Books surface (clears PII from the DOM)', () => {
   assert.ok(after.includes('resetBooksSurface()'), 'logout must call resetBooksSurface()');
 });
 
-test('successful PATCH followed by a mismatched summary clears PII, shows an error, and resets tiles', async () => {
-  class FakeElement {
-    constructor(tagName = 'div') {
-      this.tagName = tagName.toUpperCase();
-      this.children = [];
-      this.parentNode = null;
-      this.dataset = {};
-      this.listeners = {};
-      this.attributes = new Map();
-      this.hidden = false;
-      this.disabled = false;
-      this.value = '';
-      this.className = '';
-      this._textContent = '';
-    }
+test('initial load summary invariant failure clears rows, PII, status, and tiles through the centralized handler', async () => {
+  const responses = [
+    okJson({ byStatus: { new: 1, contacted: 0, withdrawn: 0 }, total: 2 }),
+    okJson({ rows: [piiRow] })
+  ];
+  const { context, document, elements } = createBooksVm(responses);
+  const staleRow = document.createElement('tr');
+  const staleEmail = document.createElement('a');
+  staleEmail.href = 'mailto:jane%40example.com';
+  staleEmail.textContent = piiRow.email;
+  staleRow.appendChild(staleEmail);
+  elements.get('books-tbody').appendChild(staleRow);
+  elements.get('books-status').textContent = 'Last updated stale metadata.';
 
-    set textContent(value) {
-      this._textContent = String(value);
-      this.children = [];
-    }
+  await context.booksTestApi.loadBooksDashboard(false);
 
-    get textContent() {
-      return this._textContent + this.children.map((child) => child.textContent).join('');
-    }
+  assert.equal(responses.length, 0, 'the summary and list requests both completed');
+  assertBooksFailureSurface(elements);
+  assert.equal(elements.get('books-refresh').disabled, false, 'the refresh control is re-enabled');
+});
 
-    appendChild(child) {
-      if (child.tagName === '#FRAGMENT') {
-        child.children.slice().forEach((item) => this.appendChild(item));
-        child.children = [];
-        return child;
-      }
-      child.parentNode = this;
-      this.children.push(child);
-      return child;
-    }
-
-    addEventListener(type, listener) {
-      this.listeners[type] = listener;
-    }
-
-    setAttribute(name, value) {
-      this.attributes.set(name, String(value));
-    }
-
-    removeAttribute(name) {
-      this.attributes.delete(name);
-    }
-
-    closest(selector) {
-      for (let node = this; node; node = node.parentNode) {
-        if (selector === 'tr' && node.tagName === 'TR') return node;
-      }
-      return null;
-    }
-
-    querySelectorAll(selector) {
-      const matches = [];
-      const tagName = selector.toUpperCase();
-      for (const child of this.children) {
-        if (child.tagName === tagName) matches.push(child);
-        matches.push(...child.querySelectorAll(selector));
-      }
-      return matches;
-    }
-  }
-
-  const elements = new Map();
-  const document = {
-    getElementById(id) {
-      if (!elements.has(id)) elements.set(id, new FakeElement());
-      return elements.get(id);
-    },
-    createElement: (tagName) => new FakeElement(tagName),
-    createDocumentFragment: () => new FakeElement('#fragment')
-  };
-  const okJson = (body) => ({ ok: true, status: 200, json: async () => body });
+test('manual Refresh summary invariant failure clears rows, PII, status, and tiles through the centralized handler', async () => {
   const responses = [
     okJson({ byStatus: { new: 1, contacted: 0, withdrawn: 0 }, total: 1 }),
-    okJson({ rows: [{ id: 'pii-1', name: 'Jane Doe', email: 'jane@example.com', book: 'biography', format: 'hardcover', quantity: 1, status: 'new', createdAt: '2026-08-07T09:00:00Z' }] }),
+    okJson({ rows: [piiRow] }),
+    okJson({ byStatus: { new: 0, contacted: 1, withdrawn: 0 }, total: 2 }),
+    okJson({ rows: [{ ...piiRow, status: 'contacted' }] })
+  ];
+  const { context, elements } = createBooksVm(responses);
+
+  await context.booksTestApi.loadBooksDashboard(false);
+  assert.equal(elements.get('books-tbody').textContent.includes(piiRow.email), true, 'precondition: PII is rendered');
+  assert.match(elements.get('books-status').textContent, /Last updated/);
+
+  await elements.get('books-refresh').listeners.click();
+
+  assert.equal(responses.length, 0, 'the manual refresh summary and list requests both completed');
+  assertBooksFailureSurface(elements);
+  assert.equal(elements.get('books-refresh').disabled, false, 'the refresh control is re-enabled');
+});
+
+test('manual Refresh fetch failure clears rows, PII, status, and tiles through the centralized handler', async () => {
+  const responses = [
+    okJson({ byStatus: { new: 1, contacted: 0, withdrawn: 0 }, total: 1 }),
+    okJson({ rows: [piiRow] }),
+    failedJson(),
+    okJson({ rows: [piiRow] })
+  ];
+  const { context, elements } = createBooksVm(responses);
+
+  await context.booksTestApi.loadBooksDashboard(false);
+  assert.equal(elements.get('books-tbody').textContent.includes(piiRow.email), true, 'precondition: PII is rendered');
+  assert.match(elements.get('books-status').textContent, /Last updated/);
+
+  await elements.get('books-refresh').listeners.click();
+
+  assert.equal(responses.length, 0, 'the manual refresh summary and list requests both completed');
+  assertBooksFailureSurface(elements);
+  assert.equal(elements.get('books-refresh').disabled, false, 'the refresh control is re-enabled');
+});
+
+test('successful PATCH followed by a mismatched summary clears PII, shows an error, and resets tiles', async () => {
+  const responses = [
+    okJson({ byStatus: { new: 1, contacted: 0, withdrawn: 0 }, total: 1 }),
+    okJson({ rows: [piiRow] }),
     okJson({ row: { id: 'pii-1', status: 'contacted' } }),
     okJson({ byStatus: { new: 0, contacted: 1, withdrawn: 0 }, total: 2 })
   ];
-  const fetch = async () => responses.shift();
-  const context = {
-    document,
-    fetch,
-    window: { confirm: () => true },
-    adminContent: new FakeElement(),
-    loginPanel: new FakeElement(),
-    loginStatus: new FakeElement(),
-    loadArtworks() {},
-    STATUS_ORDER,
-    formatBookLabel,
-    formatFormatLabel,
-    formatStatusLabel,
-    formatCreatedDate,
-    safeMailtoHref,
-    buildSummaryTiles,
-    filterRows,
-    console
-  };
-  runInNewContext(
-    adminJs.slice(adminJs.lastIndexOf('\n', booksSectionStart) + 1) + '\nglobalThis.booksTestApi = { loadBooksDashboard };',
-    context
-  );
+  const { context, elements } = createBooksVm(responses);
 
   await context.booksTestApi.loadBooksDashboard(false);
   const tbody = elements.get('books-tbody');
@@ -424,15 +515,7 @@ test('successful PATCH followed by a mismatched summary clears PII, shows an err
   await new Promise((resolve) => setImmediate(resolve));
 
   assert.equal(responses.length, 0, 'PATCH and follow-up summary were both requested');
-  assert.equal(tbody.children.length, 1, 'the PII row is replaced by the empty state');
-  assert.equal(tbody.children[0].className, '', 'the rendered PII row is gone');
-  assert.equal(tbody.textContent.includes('jane@example.com'), false, 'email text is cleared');
-  assert.equal(tbody.querySelectorAll('a').length, 0, 'mailto links are cleared');
-  assert.equal(elements.get('books-status').textContent, '', 'stale update metadata is cleared');
-  assert.equal(elements.get('books-error').hidden, false, 'the persistent panel error is visible');
-  assert.match(elements.get('books-error').textContent, /Could not load book interest/);
-  const tileValues = elements.get('books-tiles').children.map((tile) => tile.children[1].textContent);
-  assert.deepEqual(tileValues, ['0 interested', '0 interested', '0 submissions', '0 submissions', '0', '0', '0', '0']);
+  assertBooksFailureSurface(elements);
 });
 
 test('admin.html exposes nav anchors for Artwork Catalogue and Book Interest Dashboard', () => {
