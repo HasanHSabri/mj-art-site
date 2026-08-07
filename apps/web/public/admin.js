@@ -619,32 +619,35 @@ function loadBooksDashboard(isRefresh) {
       renderBooksList();
       booksStatus.textContent = 'Last updated ' + formatCreatedDate(booksLoadedAt) + '.';
     })
-    .catch(() => {
-      // Contained failure: show a panel error, clear stale PII, leave the
-      // artwork admin untouched.
-      bookRows = [];
-      booksLoadedAt = null;
-      renderBooksTiles(null);
-      renderBooksList();
-      booksStatus.textContent = '';
-      booksError.hidden = false;
-      booksError.textContent = 'Could not load book interest. The artwork admin is unaffected.';
-    })
+    .catch(showBooksDashboardError)
     .finally(() => {
       booksRefresh.disabled = false;
     });
 }
 
-// Best-effort, non-blocking summary refresh used after a status PATCH so the
-// tiles reflect the new counts without a full reload. Failures are swallowed so
-// a tile refresh glitch never disturbs an in-progress status update.
+// Non-blocking summary refresh used after a status PATCH so the tiles reflect
+// the new counts without a full reload. A failed refresh invalidates the whole
+// Books surface rather than leaving stale PII or summary values visible.
 function refreshBooksSummary() {
-  fetch('/api/admin/books/eoi/summary', { cache: 'no-store' })
-    .then((res) => (res.ok ? res.json() : null))
-    .then((summary) => {
-      if (summary) renderBooksTiles(summary);
+  return fetch('/api/admin/books/eoi/summary', { cache: 'no-store' })
+    .then((res) => {
+      if (!res.ok) throw new Error('Book interest summary request failed.');
+      return res.json();
     })
-    .catch(() => {});
+    .then(renderBooksTiles)
+    .catch(showBooksDashboardError);
+}
+
+function showBooksDashboardError() {
+  // Clear row state before rendering so a summary invariant/render failure can
+  // never leave decrypted contact details or stale update metadata in the DOM.
+  bookRows = [];
+  booksLoadedAt = null;
+  renderBooksList();
+  booksStatus.textContent = '';
+  booksError.hidden = false;
+  booksError.textContent = 'Could not load book interest. The artwork admin is unaffected.';
+  renderBooksTiles(null);
 }
 
 // Render the summary tiles. Built entirely with DOM APIs (no innerHTML).

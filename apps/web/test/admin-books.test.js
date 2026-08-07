@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { runInNewContext } from 'node:vm';
 
 import {
   BOOK_LABELS,
@@ -306,19 +307,132 @@ test('logout resets the Books surface (clears PII from the DOM)', () => {
   assert.ok(after.includes('resetBooksSurface()'), 'logout must call resetBooksSurface()');
 });
 
-test('Books summary mismatches reach the load catch, which shows an error and clears rendered sensitive data', () => {
-  const catchBlock = booksCode.match(/\.catch\(\(\) => \{([\s\S]*?)\n\s*\}\)\n\s*\.finally/);
-  assert.ok(catchBlock, 'loadBooksDashboard must contain a catch before finally');
-  assert.ok(
-    booksCode.indexOf('renderBooksTiles(summary)') < booksCode.indexOf('.catch(() => {'),
-    'a summary invariant error must reject into the load catch'
+test('successful PATCH followed by a mismatched summary clears PII, shows an error, and resets tiles', async () => {
+  class FakeElement {
+    constructor(tagName = 'div') {
+      this.tagName = tagName.toUpperCase();
+      this.children = [];
+      this.parentNode = null;
+      this.dataset = {};
+      this.listeners = {};
+      this.attributes = new Map();
+      this.hidden = false;
+      this.disabled = false;
+      this.value = '';
+      this.className = '';
+      this._textContent = '';
+    }
+
+    set textContent(value) {
+      this._textContent = String(value);
+      this.children = [];
+    }
+
+    get textContent() {
+      return this._textContent + this.children.map((child) => child.textContent).join('');
+    }
+
+    appendChild(child) {
+      if (child.tagName === '#FRAGMENT') {
+        child.children.slice().forEach((item) => this.appendChild(item));
+        child.children = [];
+        return child;
+      }
+      child.parentNode = this;
+      this.children.push(child);
+      return child;
+    }
+
+    addEventListener(type, listener) {
+      this.listeners[type] = listener;
+    }
+
+    setAttribute(name, value) {
+      this.attributes.set(name, String(value));
+    }
+
+    removeAttribute(name) {
+      this.attributes.delete(name);
+    }
+
+    closest(selector) {
+      for (let node = this; node; node = node.parentNode) {
+        if (selector === 'tr' && node.tagName === 'TR') return node;
+      }
+      return null;
+    }
+
+    querySelectorAll(selector) {
+      const matches = [];
+      const tagName = selector.toUpperCase();
+      for (const child of this.children) {
+        if (child.tagName === tagName) matches.push(child);
+        matches.push(...child.querySelectorAll(selector));
+      }
+      return matches;
+    }
+  }
+
+  const elements = new Map();
+  const document = {
+    getElementById(id) {
+      if (!elements.has(id)) elements.set(id, new FakeElement());
+      return elements.get(id);
+    },
+    createElement: (tagName) => new FakeElement(tagName),
+    createDocumentFragment: () => new FakeElement('#fragment')
+  };
+  const okJson = (body) => ({ ok: true, status: 200, json: async () => body });
+  const responses = [
+    okJson({ byStatus: { new: 1, contacted: 0, withdrawn: 0 }, total: 1 }),
+    okJson({ rows: [{ id: 'pii-1', name: 'Jane Doe', email: 'jane@example.com', book: 'biography', format: 'hardcover', quantity: 1, status: 'new', createdAt: '2026-08-07T09:00:00Z' }] }),
+    okJson({ row: { id: 'pii-1', status: 'contacted' } }),
+    okJson({ byStatus: { new: 0, contacted: 1, withdrawn: 0 }, total: 2 })
+  ];
+  const fetch = async () => responses.shift();
+  const context = {
+    document,
+    fetch,
+    window: { confirm: () => true },
+    adminContent: new FakeElement(),
+    loginPanel: new FakeElement(),
+    loginStatus: new FakeElement(),
+    loadArtworks() {},
+    STATUS_ORDER,
+    formatBookLabel,
+    formatFormatLabel,
+    formatStatusLabel,
+    formatCreatedDate,
+    safeMailtoHref,
+    buildSummaryTiles,
+    filterRows,
+    console
+  };
+  runInNewContext(
+    adminJs.slice(adminJs.lastIndexOf('\n', booksSectionStart) + 1) + '\nglobalThis.booksTestApi = { loadBooksDashboard };',
+    context
   );
-  assert.match(catchBlock[1], /bookRows\s*=\s*\[\]/, 'stale row data is discarded');
-  assert.match(catchBlock[1], /booksLoadedAt\s*=\s*null/, 'stale update metadata is discarded');
-  assert.match(catchBlock[1], /renderBooksTiles\(null\)/, 'stale summary values are replaced with zero tiles');
-  assert.match(catchBlock[1], /renderBooksList\(\)/, 'the rendered row list is cleared');
-  assert.match(catchBlock[1], /booksError\.hidden\s*=\s*false/, 'the panel error is shown');
-  assert.match(catchBlock[1], /booksError\.textContent\s*=\s*['"][^'"]+['"]/, 'the panel error explains the failure');
+
+  await context.booksTestApi.loadBooksDashboard(false);
+  const tbody = elements.get('books-tbody');
+  const row = tbody.children[0];
+  const mailto = row.children[2].children[0];
+  assert.equal(mailto.href, 'mailto:jane%40example.com', 'precondition: decrypted email is rendered as a mailto link');
+
+  const contactedButton = row.querySelectorAll('button').find((button) => button.dataset.action === 'contacted');
+  await contactedButton.listeners.click();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(responses.length, 0, 'PATCH and follow-up summary were both requested');
+  assert.equal(tbody.children.length, 1, 'the PII row is replaced by the empty state');
+  assert.equal(tbody.children[0].className, '', 'the rendered PII row is gone');
+  assert.equal(tbody.textContent.includes('jane@example.com'), false, 'email text is cleared');
+  assert.equal(tbody.querySelectorAll('a').length, 0, 'mailto links are cleared');
+  assert.equal(elements.get('books-status').textContent, '', 'stale update metadata is cleared');
+  assert.equal(elements.get('books-error').hidden, false, 'the persistent panel error is visible');
+  assert.match(elements.get('books-error').textContent, /Could not load book interest/);
+  const tileValues = elements.get('books-tiles').children.map((tile) => tile.children[1].textContent);
+  assert.deepEqual(tileValues, ['0 interested', '0 interested', '0 submissions', '0 submissions', '0', '0', '0', '0']);
 });
 
 test('admin.html exposes nav anchors for Artwork Catalogue and Book Interest Dashboard', () => {
