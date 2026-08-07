@@ -9,6 +9,7 @@
   --accent: #9a5c4b;
   --accent-deep: #6f3f35;
   --danger: #9f382d;
+  --focus-ring: #145b73;
   --shadow: 0 24px 60px rgba(81, 50, 37, 0.12);
 }
 
@@ -191,6 +192,17 @@ textarea {
 
 .button:hover {
   transform: translateY(-2px);
+}
+
+.section-anchor:focus-visible,
+button:focus-visible,
+.button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+.books-table a:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+  box-shadow: 0 0 0 2px var(--surface-strong);
 }
 
 .primary-button {
@@ -457,7 +469,7 @@ input[readonly] {
 .section-anchor {
   display: inline-flex;
   align-items: center;
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 16px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -547,6 +559,14 @@ input[readonly] {
   border-color: rgba(154, 92, 75, 0.32);
 }
 
+.books-summary-note {
+  max-width: 72ch;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
 /* Filters row */
 .books-filters {
   margin-top: 26px;
@@ -564,9 +584,9 @@ input[readonly] {
   font-size: 0.8rem;
 }
 
-.filter-label input,
-.filter-label select {
-  min-height: 40px;
+.books-filter-controls input,
+.books-filter-controls select {
+  min-height: 44px;
 }
 
 /* Recent list table */
@@ -659,7 +679,7 @@ input[readonly] {
 }
 
 .books-actions .book-action {
-  min-height: 38px;
+  min-height: 44px;
   padding: 0 12px;
   font-size: 0.86rem;
 }

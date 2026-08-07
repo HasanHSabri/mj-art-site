@@ -660,27 +660,32 @@ function renderBooksTiles(summary) {
     label.textContent = tile.label;
     card.appendChild(label);
 
-    if (tile.kind === 'status') {
-      const value = document.createElement('p');
-      value.className = 'tile-value';
-      value.textContent = String(tile.value);
-      card.appendChild(value);
-      const sub = document.createElement('p');
-      sub.className = 'tile-sub';
-      sub.textContent = 'interests';
-      card.appendChild(sub);
-    } else {
-      const interest = document.createElement('p');
-      interest.className = 'tile-value';
-      interest.textContent = String(tile.interest) + ' interested';
-      card.appendChild(interest);
-      const sub = document.createElement('p');
-      sub.className = 'tile-sub';
-      sub.textContent = tile.kind === 'book'
-        ? String(tile.copies) + ' copies requested'
-        : String(tile.submissions) + ' submissions · ' + String(tile.copies) + ' copies';
-      card.appendChild(sub);
+    const value = document.createElement('p');
+    value.className = 'tile-value';
+    const sub = document.createElement('p');
+    sub.className = 'tile-sub';
+    switch (tile.kind) {
+      case 'book':
+        value.textContent = String(tile.value) + ' interested';
+        sub.textContent = String(tile.secondary) + ' copies requested';
+        break;
+      case 'window':
+        value.textContent = String(tile.value) + ' submissions';
+        sub.textContent = String(tile.secondary) + ' copies requested';
+        break;
+      case 'status':
+        value.textContent = String(tile.value);
+        sub.textContent = 'records';
+        break;
+      case 'total':
+        value.textContent = String(tile.value);
+        sub.textContent = 'all records';
+        break;
+      default:
+        throw new Error('Unknown summary tile kind: ' + tile.kind);
     }
+    card.appendChild(value);
+    card.appendChild(sub);
 
     booksTiles.appendChild(card);
   });

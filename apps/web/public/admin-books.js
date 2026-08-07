@@ -57,39 +57,52 @@ export function safeMailtoHref(email) {
 
 // Normalize the summary API response into the ordered tile model the UI renders.
 // Tolerant of a missing/partial response (e.g. a load failure passes null) so
-// the grid always renders a stable set of tiles with zeros.
+// the grid always renders a stable set of tiles with zeros. Book values are
+// active interest (withdrawn excluded); window values are raw submissions by
+// created_at and still include records later withdrawn. Last 7 days is the
+// trailing 168 hours in UTC.
 export function buildSummaryTiles(summary) {
   const s = summary || {};
   const books = s.books || {};
   const byStatus = s.byStatus || {};
+  const numeric = (value) => {
+    const number = Number(value);
+    return Number.isFinite(number) && number >= 0 ? number : 0;
+  };
   const bookTile = (code) => ({
     kind: 'book',
     key: code,
     label: BOOK_LABELS[code] || code,
-    interest: Number((books[code] && books[code].interestCount) || 0),
-    copies: Number((books[code] && books[code].requestedCopies) || 0)
+    value: numeric(books[code] && books[code].interestCount),
+    secondary: numeric(books[code] && books[code].requestedCopies)
   });
   const windowTile = (key, label) => ({
     kind: 'window',
     key,
     label,
-    submissions: Number((s[key] && s[key].submissions) || 0),
-    copies: Number((s[key] && s[key].copies) || 0)
+    value: numeric(s[key] && s[key].submissions),
+    secondary: numeric(s[key] && s[key].copies)
   });
   const statusTile = (code) => ({
     kind: 'status',
     key: code,
     label: STATUS_LABELS[code] || code,
-    value: Number(byStatus[code] || 0)
+    value: numeric(byStatus[code])
   });
   return [
     bookTile('biography'),
     bookTile('childrens'),
-    windowTile('today', 'Today'),
-    windowTile('last7Days', 'Last 7 days'),
+    windowTile('today', 'Submissions received — Today'),
+    windowTile('last7Days', 'Submissions received — Last 7 days'),
     statusTile('new'),
     statusTile('contacted'),
-    statusTile('withdrawn')
+    statusTile('withdrawn'),
+    {
+      kind: 'total',
+      key: 'total',
+      label: 'Total',
+      value: numeric(s.total)
+    }
   ];
 }
 

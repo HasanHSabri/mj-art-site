@@ -115,34 +115,35 @@ test('buildSummaryTiles returns the canonical ordered tile set from a full summa
     byStatus: { new: 4, contacted: 2, withdrawn: 1 },
     total: 7
   });
-  assert.equal(tiles.length, 7);
-  assert.deepEqual(tiles.map((t) => t.key), ['biography', 'childrens', 'today', 'last7Days', 'new', 'contacted', 'withdrawn']);
-  const bio = tiles[0];
-  assert.equal(bio.kind, 'book');
-  assert.equal(bio.label, 'Biography');
-  assert.equal(bio.interest, 3);
-  assert.equal(bio.copies, 7);
-  const today = tiles[2];
-  assert.equal(today.kind, 'window');
-  assert.equal(today.submissions, 2);
-  assert.equal(today.copies, 4);
-  const withdrawn = tiles[6];
-  assert.equal(withdrawn.kind, 'status');
-  assert.equal(withdrawn.value, 1);
+  assert.deepEqual(tiles, [
+    { kind: 'book', key: 'biography', label: 'Biography', value: 3, secondary: 7 },
+    { kind: 'book', key: 'childrens', label: "Children's Book", value: 1, secondary: 2 },
+    { kind: 'window', key: 'today', label: 'Submissions received — Today', value: 2, secondary: 4 },
+    { kind: 'window', key: 'last7Days', label: 'Submissions received — Last 7 days', value: 5, secondary: 9 },
+    { kind: 'status', key: 'new', label: 'New', value: 4 },
+    { kind: 'status', key: 'contacted', label: 'Contacted', value: 2 },
+    { kind: 'status', key: 'withdrawn', label: 'Withdrawn', value: 1 },
+    { kind: 'total', key: 'total', label: 'Total', value: 7 }
+  ]);
 });
 
-test('buildSummaryTiles is tolerant of null/partial input (zeros, never throws)', () => {
+test('buildSummaryTiles is tolerant of null input and returns eight numeric zero tiles', () => {
   const tiles = buildSummaryTiles(null);
-  assert.equal(tiles.length, 7);
-  for (const t of tiles) {
-    if (t.kind === 'status') assert.equal(t.value, 0);
-    else if (t.kind === 'book') { assert.equal(t.interest, 0); assert.equal(t.copies, 0); }
-    else { assert.equal(t.submissions, 0); assert.equal(t.copies, 0); }
-  }
-  const partial = buildSummaryTiles({ books: { biography: { interestCount: 5 } } });
-  assert.equal(partial[0].interest, 5);
-  assert.equal(partial[0].copies, 0);
-  assert.equal(partial[1].interest, 0); // childrens missing
+  assert.equal(tiles.length, 8);
+  assert.deepEqual(tiles.map((t) => t.key), ['biography', 'childrens', 'today', 'last7Days', 'new', 'contacted', 'withdrawn', 'total']);
+  assert.deepEqual(tiles.map((t) => t.value), Array(8).fill(0));
+  assert.deepEqual(tiles.filter((t) => 'secondary' in t).map((t) => t.secondary), [0, 0, 0, 0]);
+});
+
+test('buildSummaryTiles normalizes partial and malformed numeric fields', () => {
+  const tiles = buildSummaryTiles({
+    books: { biography: { interestCount: '5', requestedCopies: 'not-a-number' } },
+    today: { submissions: Infinity, copies: -2 },
+    byStatus: { new: '3' },
+    total: '8'
+  });
+  assert.deepEqual(tiles.map((t) => t.value), [5, 0, 0, 0, 3, 0, 0, 8]);
+  assert.deepEqual(tiles.filter((t) => 'secondary' in t).map((t) => t.secondary), [0, 0, 0, 0]);
 });
 
 // ---------------------------------------------------------------------------
@@ -249,6 +250,26 @@ test('Books dashboard uses textContent for cell text and property assignment for
   assert.ok(/anchor\.href\s*=\s*href/.test(booksCode), 'the mailto href is assigned via a property, not interpolated HTML');
 });
 
+test('Books summary renderer exhaustively handles all four tile kinds without legacy undefined fields', () => {
+  const renderer = booksCode.match(/function renderBooksTiles\(summary\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(renderer, 'renderBooksTiles must exist');
+  for (const kind of ['book', 'window', 'status', 'total']) {
+    assert.match(renderer[1], new RegExp(`case ['"]${kind}['"]:`), `${kind} has an explicit renderer case`);
+  }
+  assert.match(renderer[1], /default:\s*throw new Error/, 'unknown kinds fail loudly');
+  assert.doesNotMatch(renderer[1], /tile\.(interest|copies|submissions)/, 'renderer uses the normalized value/secondary model only');
+  assert.match(renderer[1], /' interested'/);
+  assert.match(renderer[1], /' submissions'/);
+  assert.match(renderer[1], /'records'/);
+  assert.match(renderer[1], /'all records'/);
+});
+
+test('Books summary explains raw submission windows and active interest semantics', () => {
+  assert.match(adminHtml, /Submission windows count raw records by received time, including records later withdrawn\./);
+  assert.match(adminHtml, /Last 7 days is the trailing 168 hours in UTC\./);
+  assert.match(readFileSync(join(__dirname, '..', 'public', 'admin-books.js'), 'utf8'), /Book values are\s*\/\/ active interest \(withdrawn excluded\)/);
+});
+
 test('Books status updates use PATCH only; there is no DELETE path or button', () => {
   assert.ok(/method:\s*'PATCH'/.test(booksCode), 'status updates issue a PATCH');
   assert.equal(/method:\s*'DELETE'/.test(booksCode), false, 'no DELETE method in the books code');
@@ -304,6 +325,27 @@ test('summary tiles use auto-fit with minmax so columns never leave gaps', () =>
   assert.match(tiles[1], /grid-template-columns:\s*repeat\(auto-fit,\s*minmax\(\s*\d+px,\s*1fr\s*\)\)/);
   const min = Number(tiles[1].match(/minmax\(\s*(\d+)px/)[1]);
   assert.ok(min >= 140 && min <= 200, `auto-fit minmax between 140-200px (got ${min})`);
+});
+
+test('admin keyboard focus rings cover controls, section anchors, and Books email links', () => {
+  for (const selector of ['.section-anchor:focus-visible', 'button:focus-visible', '.button:focus-visible', 'input:focus-visible', 'select:focus-visible', '.books-table a:focus-visible']) {
+    assert.ok(adminCss.includes(selector), `${selector} has an explicit focus-visible style`);
+  }
+  const focusRule = adminCss.match(/\.section-anchor:focus-visible,[\s\S]*?\.books-table a:focus-visible\s*\{([^}]*)\}/);
+  assert.ok(focusRule, 'shared focus-visible rule must exist');
+  assert.match(focusRule[1], /outline:\s*3px\s+solid/);
+  assert.match(focusRule[1], /outline-offset:\s*3px/);
+  assert.match(focusRule[1], /box-shadow:/, 'focus ring retains contrast against varied surfaces');
+});
+
+test('Books actions, filters, search, and section navigation meet the 44px target floor', () => {
+  const sectionAnchor = adminCss.match(/\.section-anchor\s*\{([^}]*)\}/);
+  const filters = adminCss.match(/\.books-filter-controls input,[\s\S]*?\.books-filter-controls select\s*\{([^}]*)\}/);
+  const actions = adminCss.match(/\.books-actions \.book-action\s*\{([^}]*)\}/);
+  assert.match(sectionAnchor[1], /min-height:\s*44px/);
+  assert.match(filters[1], /min-height:\s*44px/);
+  assert.match(actions[1], /min-height:\s*44px/);
+  assert.match(adminCss.match(/\.search-label input\s*\{([^}]*)\}/)[1], /min-height:\s*40px/, 'artwork search sizing is unchanged');
 });
 
 test('the recent list table reflows to stacked cards at <=640px (covers 320/393 and 200% zoom)', () => {
