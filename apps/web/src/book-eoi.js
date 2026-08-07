@@ -766,6 +766,7 @@ function exactNamedDefinitions(kind, liveRows, expectedRows, mismatches) {
 // only -- the public health endpoint never exposes them.
 export function compareLiveCatalog(live, expected = EXPECTED_LIVE_CATALOG) {
   const mismatches = [];
+  const groups = {};
   const liveCols = live && Array.isArray(live.columns) ? live.columns : [];
 
   if (liveCols.length !== expected.columns.length) {
@@ -797,13 +798,17 @@ export function compareLiveCatalog(live, expected = EXPECTED_LIVE_CATALOG) {
       mismatches.push(`column ${want.name} default: expected ${want.default}, got ${got.column_default}`);
     }
   }
+  groups.columns = mismatches.length === 0;
 
+  let before = mismatches.length;
   exactNamedDefinitions(
     'constraint',
     live && Array.isArray(live.constraints) ? live.constraints : [],
     expected.constraints,
     mismatches
   );
+  groups.constraints = mismatches.length === before;
+  before = mismatches.length;
   exactNamedDefinitions(
     'index',
     live && Array.isArray(live.indexes) ? live.indexes : [],
@@ -816,16 +821,24 @@ export function compareLiveCatalog(live, expected = EXPECTED_LIVE_CATALOG) {
     })),
     mismatches
   );
+  groups.indexes = mismatches.length === before;
 
-  return { match: mismatches.length === 0, mismatches };
+  return { match: mismatches.length === 0, mismatches, groups };
 }
 
 // Probe the LIVE database catalog (columns, all constraints, all indexes) for the
 // runtime schema-drift health check. No PII, no credentials. Three cheap catalog
 // reads against information_schema/pg_catalog, run in parallel (each is an
 // independent HTTP query via the executor).
+async function settleProbeQueries(promises) {
+  const settled = await Promise.allSettled(promises);
+  const errors = settled.filter((result) => result.status === 'rejected').map((result) => result.reason);
+  if (errors.length) throw new AggregateError(errors);
+  return settled.map((result) => result.value);
+}
+
 export async function probeLiveCatalogShape(sql) {
-  const [columns, constraints, indexes] = await Promise.all([
+  const [columns, constraints, indexes] = await settleProbeQueries([
     sql(
       'SELECT column_name, data_type, is_nullable, column_default, character_maximum_length ' +
         'FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position',
@@ -869,6 +882,7 @@ function exactRows(kind, liveRows, expectedRows, fields, mismatches) {
 
 export function compareRuntimePrivileges(live, expected = EXPECTED_RUNTIME_PRIVILEGES) {
   const mismatches = [];
+  const groups = {};
   const summary = live && live.summary ? live.summary : {};
   const role = expected.role;
   const database = expected.database;
@@ -879,15 +893,24 @@ export function compareRuntimePrivileges(live, expected = EXPECTED_RUNTIME_PRIVI
     create_db: role.createDb,
     can_login: role.canLogin,
     replication: role.replication,
-    bypass_rls: role.bypassRls,
+    bypass_rls: role.bypassRls
+  })) {
+    if (bool(summary[field]) !== want) mismatches.push(`role ${field}: expected ${want}`);
+  }
+  groups.role = mismatches.length === 0;
+
+  let before = mismatches.length;
+  for (const [field, want] of Object.entries({
     has_connect: database.connect,
     has_connect_grant: database.connectGrant,
     has_create: database.create,
     has_temporary: database.temporary
   })) {
-    if (bool(summary[field]) !== want) mismatches.push(`role/database ${field}: expected ${want}`);
+    if (bool(summary[field]) !== want) mismatches.push(`database ${field}: expected ${want}`);
   }
+  groups.database = mismatches.length === before;
 
+  before = mismatches.length;
   const schemas = (live?.schemas || []).map((row) => ({
     name: normText(row.name), usage: bool(row.usage), usageGrant: bool(row.usage_grant),
     create: bool(row.create), createGrant: bool(row.create_grant)
@@ -896,7 +919,9 @@ export function compareRuntimePrivileges(live, expected = EXPECTED_RUNTIME_PRIVI
     'schema privilege', schemas, expected.schemas,
     ['name', 'usage', 'usageGrant', 'create', 'createGrant'], mismatches
   );
+  groups.schema = mismatches.length === before;
 
+  before = mismatches.length;
   const tables = (live?.tables || []).map((row) => ({
     schema: normText(row.schema), name: normText(row.name), select: bool(row.select),
     selectGrant: bool(row.select_grant), insert: bool(row.insert), insertGrant: bool(row.insert_grant),
@@ -908,7 +933,9 @@ export function compareRuntimePrivileges(live, expected = EXPECTED_RUNTIME_PRIVI
     ['schema', 'name', 'select', 'selectGrant', 'insert', 'insertGrant', 'update', 'updateGrant', 'delete', 'truncate', 'references', 'trigger'],
     mismatches
   );
+  groups.table = mismatches.length === before;
 
+  before = mismatches.length;
   const defaultFunctionAcls = (live?.defaultFunctionAcls || []).map((row) => ({
     owner: normText(row.owner), isGlobal: bool(row.is_global),
     objectType: normText(row.object_type), publicExecute: bool(row.public_execute)
@@ -917,22 +944,29 @@ export function compareRuntimePrivileges(live, expected = EXPECTED_RUNTIME_PRIVI
     'default function ACL', defaultFunctionAcls, expected.defaultFunctionAcls,
     ['owner', 'isGlobal', 'objectType', 'publicExecute'], mismatches
   );
+  groups.defaultFunctionAcl = mismatches.length === before;
 
+  before = mismatches.length;
   const currentDatabase = normText(summary.database_name);
   const settings = (live?.settings || []).map((row) => ({
     database: normText(row.database) === currentDatabase ? 'CURRENT' : normText(row.database),
     setting: String(row.setting)
   }));
   exactRows('role setting', settings, expected.settings, ['database', 'setting'], mismatches);
-  if ((live?.executablePublicRoutines || []).length) mismatches.push('executable public routines found');
-  if ((live?.columnAcls || []).length) mismatches.push('column ACLs found');
-  if ((live?.ownedObjects || []).length) mismatches.push('owned database objects found');
-  if ((live?.memberships || []).length) mismatches.push('role memberships found');
-  return { match: mismatches.length === 0, mismatches };
+  groups.settings = mismatches.length === before;
+  groups.publicRoutines = !(live?.executablePublicRoutines || []).length;
+  if (!groups.publicRoutines) mismatches.push('executable public routines found');
+  groups.columnAcl = !(live?.columnAcls || []).length;
+  if (!groups.columnAcl) mismatches.push('column ACLs found');
+  groups.ownership = !(live?.ownedObjects || []).length;
+  if (!groups.ownership) mismatches.push('owned database objects found');
+  groups.memberships = !(live?.memberships || []).length;
+  if (!groups.memberships) mismatches.push('role memberships found');
+  return { match: mismatches.length === 0, mismatches, groups };
 }
 
 export async function probeRuntimePrivileges(sql) {
-  const [summaryRows, schemas, tables, defaultFunctionAcls, executablePublicRoutines, columnAcls, ownedObjects, settings, memberships] = await Promise.all([
+  const [summaryRows, schemas, tables, defaultFunctionAcls, executablePublicRoutines, columnAcls, ownedObjects, settings, memberships] = await settleProbeQueries([
     sql(
       'SELECT current_database() AS database_name, r.rolsuper AS superuser, r.rolinherit AS inherit, ' +
         'r.rolcreaterole AS create_role, r.rolcreatedb AS create_db, r.rolcanlogin AS can_login, ' +

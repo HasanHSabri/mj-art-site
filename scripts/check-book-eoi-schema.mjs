@@ -22,8 +22,8 @@
 // =============================================================================
 
 import { readFileSync, existsSync } from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import {
   EXPECTED_SCHEMA_SIGNATURE,
@@ -42,6 +42,51 @@ const ROOT = path.resolve(scriptDir(), '..');
 const SQL_PATH = path.join(ROOT, 'database', 'mj-eoi-schema.sql');
 export const DEFAULT_FUNCTION_PRIVILEGE_CORRECTION =
   'ALTER DEFAULT PRIVILEGES FOR ROLE neondb_owner REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;';
+export const LIVE_CHECK_IDS = Object.freeze({
+  config: 'BEOI-LIVE-001',
+  dependencyImport: 'BEOI-LIVE-002',
+  unexpected: 'BEOI-LIVE-003',
+  catalogQueries: Object.freeze({
+    columns: 'BEOI-LIVE-101',
+    constraints: 'BEOI-LIVE-102',
+    indexes: 'BEOI-LIVE-103'
+  }),
+  catalogGroups: Object.freeze({
+    columns: 'BEOI-LIVE-111',
+    constraints: 'BEOI-LIVE-112',
+    indexes: 'BEOI-LIVE-113'
+  }),
+  privilegeQueries: Object.freeze({
+    roleDatabase: 'BEOI-LIVE-201',
+    schema: 'BEOI-LIVE-202',
+    table: 'BEOI-LIVE-203',
+    defaultFunctionAcl: 'BEOI-LIVE-204',
+    publicRoutines: 'BEOI-LIVE-205',
+    columnAcl: 'BEOI-LIVE-206',
+    ownership: 'BEOI-LIVE-207',
+    settings: 'BEOI-LIVE-208',
+    memberships: 'BEOI-LIVE-209'
+  }),
+  privilegeGroups: Object.freeze({
+    role: 'BEOI-LIVE-211',
+    database: 'BEOI-LIVE-212',
+    schema: 'BEOI-LIVE-213',
+    table: 'BEOI-LIVE-214',
+    defaultFunctionAcl: 'BEOI-LIVE-215',
+    publicRoutines: 'BEOI-LIVE-216',
+    columnAcl: 'BEOI-LIVE-217',
+    ownership: 'BEOI-LIVE-218',
+    settings: 'BEOI-LIVE-219',
+    memberships: 'BEOI-LIVE-220'
+  })
+});
+
+class LiveCheckFailure extends Error {
+  constructor(ids) {
+    super('Books EOI live check failed');
+    this.ids = [...new Set(ids)];
+  }
+}
 
 function scriptDir() {
   return new URL('.', import.meta.url).pathname.replace(/\/$/, '');
@@ -464,26 +509,88 @@ export function stripSqlComments(sql) {
     .replace(/--[^\n]*/g, '');
 }
 
-async function runLiveCheck(env = process.env) {
-  if (typeof env.NEON_DATABASE_URL !== 'string' || env.NEON_DATABASE_URL.length === 0) {
-    throw new Error('NEON_DATABASE_URL is missing or empty');
+function collectFailureIds(error) {
+  if (error instanceof LiveCheckFailure) return error.ids;
+  if (error instanceof AggregateError) return error.errors.flatMap(collectFailureIds);
+  return [LIVE_CHECK_IDS.unexpected];
+}
+
+function labeledSql(sql, labels) {
+  let index = 0;
+  return async (...args) => {
+    const ids = labels[index++] || [LIVE_CHECK_IDS.unexpected];
+    try {
+      return await sql(...args);
+    } catch {
+      throw new LiveCheckFailure(ids);
+    }
+  };
+}
+
+export function reportLiveCheckFailure(error) {
+  for (const id of [...new Set(collectFailureIds(error))]) fail(id);
+}
+
+export async function runLiveCheck(env = process.env, loadDriver = () => import('@neondatabase/serverless')) {
+  try {
+    if (typeof env.NEON_DATABASE_URL !== 'string' || env.NEON_DATABASE_URL.length === 0 || !bookEoiSecretsOk(env)) {
+      throw new LiveCheckFailure([LIVE_CHECK_IDS.config]);
+    }
+  } catch {
+    throw new LiveCheckFailure([LIVE_CHECK_IDS.config]);
   }
-  if (!bookEoiSecretsOk(env)) {
-    throw new Error('Books EOI crypto secrets are missing or below minimum strength');
+
+  let sql;
+  try {
+    const { neon } = await loadDriver();
+    if (typeof neon !== 'function') throw new Error();
+    sql = createNeonSqlExecutor(neon(env.NEON_DATABASE_URL));
+  } catch {
+    throw new LiveCheckFailure([LIVE_CHECK_IDS.dependencyImport]);
   }
-  const webRequire = createRequire(path.join(ROOT, 'apps', 'web', 'package.json'));
-  const { neon } = await import(webRequire.resolve('@neondatabase/serverless'));
-  const sql = createNeonSqlExecutor(neon(env.NEON_DATABASE_URL));
-  const [catalog, privileges] = await Promise.all([
-    probeLiveCatalogShape(sql),
-    probeRuntimePrivileges(sql)
+
+  const catalogLabels = [
+    [LIVE_CHECK_IDS.catalogQueries.columns, LIVE_CHECK_IDS.catalogGroups.columns],
+    [LIVE_CHECK_IDS.catalogQueries.constraints, LIVE_CHECK_IDS.catalogGroups.constraints],
+    [LIVE_CHECK_IDS.catalogQueries.indexes, LIVE_CHECK_IDS.catalogGroups.indexes]
+  ];
+  const privilegeLabels = [
+    [LIVE_CHECK_IDS.privilegeQueries.roleDatabase, LIVE_CHECK_IDS.privilegeGroups.role, LIVE_CHECK_IDS.privilegeGroups.database],
+    [LIVE_CHECK_IDS.privilegeQueries.schema, LIVE_CHECK_IDS.privilegeGroups.schema],
+    [LIVE_CHECK_IDS.privilegeQueries.table, LIVE_CHECK_IDS.privilegeGroups.table],
+    [LIVE_CHECK_IDS.privilegeQueries.defaultFunctionAcl, LIVE_CHECK_IDS.privilegeGroups.defaultFunctionAcl],
+    [LIVE_CHECK_IDS.privilegeQueries.publicRoutines, LIVE_CHECK_IDS.privilegeGroups.publicRoutines],
+    [LIVE_CHECK_IDS.privilegeQueries.columnAcl, LIVE_CHECK_IDS.privilegeGroups.columnAcl],
+    [LIVE_CHECK_IDS.privilegeQueries.ownership, LIVE_CHECK_IDS.privilegeGroups.ownership],
+    [LIVE_CHECK_IDS.privilegeQueries.settings, LIVE_CHECK_IDS.privilegeGroups.settings],
+    [LIVE_CHECK_IDS.privilegeQueries.memberships, LIVE_CHECK_IDS.privilegeGroups.memberships]
+  ];
+  const [catalogResult, privilegeResult] = await Promise.allSettled([
+    probeLiveCatalogShape(labeledSql(sql, catalogLabels)),
+    probeRuntimePrivileges(labeledSql(sql, privilegeLabels))
   ]);
-  if (!compareLiveCatalog(catalog).match) {
-    throw new Error('live Books EOI catalog does not match the canonical shape');
+  const queryFailureIds = [catalogResult, privilegeResult]
+    .filter((result) => result.status === 'rejected')
+    .flatMap((result) => collectFailureIds(result.reason));
+  if (queryFailureIds.length) throw new LiveCheckFailure(queryFailureIds);
+
+  let catalogComparison;
+  let privilegeComparison;
+  try {
+    catalogComparison = compareLiveCatalog(catalogResult.value);
+    privilegeComparison = compareRuntimePrivileges(privilegeResult.value);
+  } catch {
+    throw new LiveCheckFailure([LIVE_CHECK_IDS.unexpected]);
   }
-  if (!compareRuntimePrivileges(privileges).match) {
-    throw new Error('live Books EOI role does not match the least-privilege contract');
-  }
+  const driftIds = [
+    ...Object.entries(catalogComparison.groups)
+      .filter(([, match]) => !match)
+      .map(([group]) => LIVE_CHECK_IDS.catalogGroups[group]),
+    ...Object.entries(privilegeComparison.groups)
+      .filter(([, match]) => !match)
+      .map(([group]) => LIVE_CHECK_IDS.privilegeGroups[group])
+  ];
+  if (driftIds.length) throw new LiveCheckFailure(driftIds);
   console.log('check-book-eoi-schema: OK - live catalog and least-privilege role match canonical contracts (read-only)');
 }
 
@@ -508,8 +615,8 @@ async function main() {
   if (args.includes('--live')) {
     try {
       await runLiveCheck();
-    } catch {
-      fail('live read-only Books EOI catalog/config check failed');
+    } catch (error) {
+      reportLiveCheckFailure(error);
     }
     return;
   }
@@ -616,4 +723,4 @@ async function main() {
   console.log('check-book-eoi-schema: OK - signature ' + signature);
 }
 
-await main();
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) await main();

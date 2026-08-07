@@ -12,11 +12,13 @@
     "test": "pnpm --filter @mj-art/web test",
     "check:catalog": "node scripts/validate-catalog.mjs",
     "check:operations": "node scripts/check-operations-rules.mjs && node scripts/r2-readonly-backup.mjs --self-test",
+    "check:release-imports": "node --input-type=module --eval \"const driver = await import('@neondatabase/serverless'); if (typeof driver.neon !== 'function') process.exit(1)\"",
     "check:schema": "node scripts/check-book-eoi-schema.mjs",
-    "type-check": "pnpm check:operations && pnpm check:catalog && pnpm check:schema && pnpm --filter @mj-art/web type-check",
+    "type-check": "pnpm check:release-imports && pnpm check:operations && pnpm check:catalog && pnpm check:schema && pnpm --filter @mj-art/web type-check",
     "validate:release": "pnpm type-check && pnpm lint && pnpm test && pnpm build"
   },
   "devDependencies": {
+    "@neondatabase/serverless": "1.1.0",
     "wrangler": "^4.61.0"
   },
   "engines": {

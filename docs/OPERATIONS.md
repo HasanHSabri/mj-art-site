@@ -714,6 +714,39 @@ schema-specific default ACL is required. The generated SQL also asserts the
 exact column, constraint, and index contract. Run it after operator revocations
 and retain the result with release evidence.
 
+The live preflight reports only the stable check IDs below. It never reports a
+driver message, connection detail, query text, result value, or stack. Use the
+ID's remediation category to choose the next diagnostic step; inspect protected
+CI configuration or perform an authorized read-only catalog review separately.
+
+| Check ID | Remediation category |
+| --- | --- |
+| `BEOI-LIVE-001` | Required live-check configuration |
+| `BEOI-LIVE-002` | Root Neon driver dependency/import and adapter setup |
+| `BEOI-LIVE-003` | Unexpected internal preflight failure |
+| `BEOI-LIVE-101` / `BEOI-LIVE-111` | Columns catalog query / columns contract |
+| `BEOI-LIVE-102` / `BEOI-LIVE-112` | Constraints catalog query / constraints contract |
+| `BEOI-LIVE-103` / `BEOI-LIVE-113` | Indexes catalog query / indexes contract |
+| `BEOI-LIVE-201` | Combined role/database privilege query |
+| `BEOI-LIVE-202` | Schema privilege query |
+| `BEOI-LIVE-203` | Table privilege query |
+| `BEOI-LIVE-204` | Default-function-ACL query |
+| `BEOI-LIVE-205` | Public-routines query |
+| `BEOI-LIVE-206` | Column-ACL query |
+| `BEOI-LIVE-207` | Ownership query |
+| `BEOI-LIVE-208` | Settings query |
+| `BEOI-LIVE-209` | Memberships query |
+| `BEOI-LIVE-211` | Role contract |
+| `BEOI-LIVE-212` | Database contract |
+| `BEOI-LIVE-213` | Schema contract |
+| `BEOI-LIVE-214` | Table contract |
+| `BEOI-LIVE-215` | Default-function-ACL contract |
+| `BEOI-LIVE-216` | Public-routines contract |
+| `BEOI-LIVE-217` | Column-ACL contract |
+| `BEOI-LIVE-218` | Ownership contract |
+| `BEOI-LIVE-219` | Settings contract |
+| `BEOI-LIVE-220` | Memberships contract |
+
 For each isolated `neondb`, `neondb_owner` must apply the remaining applicable
 statements below, then reconnect as `mj_eoi_app` and run the generated probe.
 Revoking from `PUBLIC` is required because PostgreSQL has no `DENY`; a direct

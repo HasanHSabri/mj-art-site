@@ -968,7 +968,22 @@ function runtimePrivilegesFixture() {
 }
 
 test('compareRuntimePrivileges accepts only the canonical effective privilege fixture', () => {
-  assert.deepEqual(compareRuntimePrivileges(runtimePrivilegesFixture()), { match: true, mismatches: [] });
+  assert.deepEqual(compareRuntimePrivileges(runtimePrivilegesFixture()), {
+    match: true,
+    mismatches: [],
+    groups: {
+      role: true,
+      database: true,
+      schema: true,
+      table: true,
+      defaultFunctionAcl: true,
+      settings: true,
+      publicRoutines: true,
+      columnAcl: true,
+      ownership: true,
+      memberships: true
+    }
+  });
 });
 
 test('compareRuntimePrivileges rejects representative database, schema, table, default ACL, routine, ownership, role, setting, and membership drift', () => {
