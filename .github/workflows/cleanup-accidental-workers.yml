@@ -1,0 +1,60 @@
+# TEMPORARY: remove immediately after both allowlisted accidental Workers are deleted.
+name: Cleanup Accidental Workers
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Exact accidental Worker to delete.'
+        required: true
+        type: choice
+        options:
+          - mj-art-preview-preview
+          - mj-art-production
+      confirmation_phrase:
+        description: 'Must be exactly I-CONFIRM-WORKER-DELETE-<target>.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: accidental-worker-cleanup
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      target: ${{ steps.gate.outputs.target }}
+    steps:
+      - name: Checkout code without credentials
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Validate exact target and confirmation without credentials
+        id: gate
+        env:
+          TARGET_INPUT: ${{ inputs.target }}
+          CONFIRMATION_INPUT: ${{ inputs.confirmation_phrase }}
+        run: |
+          set -euo pipefail
+          node scripts/cleanup-accidental-worker.mjs --gate
+
+  cleanup:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Verify, delete exact target, and verify protections
+        env:
+          CLEANUP_TARGET: ${{ needs.gate.outputs.target }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/cleanup-accidental-worker.mjs --execute

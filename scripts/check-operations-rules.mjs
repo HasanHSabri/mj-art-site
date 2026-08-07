@@ -1021,6 +1021,81 @@ function main() {
     }
   }
 
+  // 10) Temporary exact-name cleanup for the two accidental Workers created by
+  //     the prior Turnstile mis-targeting. This is deliberately manual-only,
+  //     strongly confirmed, credential-isolated, and incapable of targeting the
+  //     two intended Workers.
+  const cleanupWfPath = '.github/workflows/cleanup-accidental-workers.yml';
+  const cleanupScriptPath = 'scripts/cleanup-accidental-worker.mjs';
+  const cleanupWf = readText(cleanupWfPath);
+  const cleanupScript = readText(cleanupScriptPath);
+  if (cleanupWf === null) fail(cleanupWfPath + ' is missing');
+  if (cleanupScript === null) fail(cleanupScriptPath + ' is missing');
+  if (cleanupWf !== null) {
+    const cleanupTriggers = extractOnTriggers(cleanupWf);
+    if (!(cleanupTriggers?.length === 1 && cleanupTriggers[0] === 'workflow_dispatch')) {
+      fail(cleanupWfPath + ' must be workflow_dispatch only');
+    }
+    if (!hasWorkflowLevelContentsRead(cleanupWf)) {
+      fail(cleanupWfPath + ' must declare workflow-level contents: read');
+    }
+    assertThirdPartyActionsPinned(cleanupWfPath, cleanupWf);
+    if (!/^# TEMPORARY: remove immediately/m.test(cleanupWf)) {
+      fail(cleanupWfPath + ' must be labelled temporary and removal-bound');
+    }
+    const cleanupTargetInput = cleanupWf.slice(
+      cleanupWf.indexOf('      target:'),
+      cleanupWf.indexOf('      confirmation_phrase:')
+    );
+    const cleanupOptions = [...cleanupTargetInput.matchAll(/^\s+- (\S+)\s*$/gm)].map((match) => match[1]);
+    if (cleanupOptions.join(',') !== 'mj-art-preview-preview,mj-art-production' ||
+        (cleanupWf.match(/type:\s*choice/g) || []).length !== 1) {
+      fail(cleanupWfPath + ' must expose one choice containing only the two accidental Workers');
+    }
+    for (const phrase of [
+      'I-CONFIRM-WORKER-DELETE-<target>',
+      'confirmation_phrase'
+    ]) {
+      if (!cleanupWf.includes(phrase)) fail(cleanupWfPath + ' is missing required confirmation policy ' + phrase);
+    }
+    if (!/group:\s*accidental-worker-cleanup\s*$/m.test(cleanupWf) ||
+        !/cancel-in-progress:\s*false/.test(cleanupWf)) {
+      fail(cleanupWfPath + ' must globally serialize cleanup without cancellation');
+    }
+    const cleanupJob = cleanupWf.slice(cleanupWf.indexOf('\n  cleanup:'));
+    const gateJob = cleanupWf.slice(cleanupWf.indexOf('\n  gate:'), cleanupWf.indexOf('\n  cleanup:'));
+    if (/inputs\./.test(cleanupJob) || !/needs\.gate\.outputs\.target/.test(cleanupJob)) {
+      fail(cleanupWfPath + ' credentialed job must consume only the validated gate target output');
+    }
+    if (/secrets\.|CLOUDFLARE_API_TOKEN|CLOUDFLARE_ACCOUNT_ID/.test(gateJob)) {
+      fail(cleanupWfPath + ' credential-free gate must not expose Cloudflare credentials');
+    }
+    if ((cleanupWf.match(/secrets\.CLOUDFLARE_API_TOKEN/g) || []).length !== 1 ||
+        (cleanupWf.match(/secrets\.CLOUDFLARE_ACCOUNT_ID/g) || []).length !== 1) {
+      fail(cleanupWfPath + ' credentials must appear exactly once in the credentialed cleanup step');
+    }
+    if (findInputsInRunBlocks(cleanupWf).length || findSecretsInRunBlocks(cleanupWf).length) {
+      fail(cleanupWfPath + ' must not interpolate raw inputs or secrets in run blocks');
+    }
+  }
+  if (cleanupScript !== null) {
+    for (const required of [
+      'mj-art-preview-preview',
+      'mj-art-production',
+      "INTENDED_WORKERS = Object.freeze(['mj-art-preview', 'mj-art'])",
+      'I-CONFIRM-WORKER-DELETE-${target}',
+      'api.cloudflare.com/client/v4',
+      "'DELETE'",
+      'response.body.cancel()',
+      'post-delete cleanup target'
+    ]) {
+      if (!cleanupScript.includes(required)) fail(cleanupScriptPath + ' is missing required guard ' + required);
+    }
+    for (const forbidden of [/\bwrangler\b/i, /[?&]force=/i, /\bretr(?:y|ies)\b/i, /setTimeout\s*\(/]) {
+      if (forbidden.test(cleanupScript)) fail(cleanupScriptPath + ' contains forbidden ambiguity ' + forbidden);
+    }
+  }
+
   if (process.exitCode) {
     console.error('check-operations-rules: one or more assertions failed.');
     return;
