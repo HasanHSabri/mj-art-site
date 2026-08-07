@@ -2,9 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   chmodSync,
+  existsSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
+  openSync,
   readFileSync,
   rmSync,
   symlinkSync,
@@ -30,7 +32,10 @@ function jsonResponse(status, body) {
 }
 
 function success(result, resultInfo) {
-  return { success: true, result, ...(resultInfo ? { result_info: resultInfo } : {}) };
+  const pagination = resultInfo ?? (Array.isArray(result)
+    ? { total_count: result.length, page: 1, per_page: 1000 }
+    : undefined);
+  return { success: true, result, ...(pagination ? { result_info: pagination } : {}) };
 }
 
 function capture() {
@@ -188,6 +193,90 @@ test('provision fails closed on existing widget mode or domain mismatch before s
   }
 });
 
+test('widget listing fails closed on malformed or inconsistent pagination metadata', async () => {
+  const malformed = [
+    undefined,
+    { page: 1, per_page: 1000 },
+    { total_count: 0, per_page: 1000 },
+    { total_count: 0, page: 1 },
+    { total_count: '0', page: 1, per_page: 1000 },
+    { total_count: 0, page: '1', per_page: 1000 },
+    { total_count: 0, page: 1, per_page: '1000' },
+    { total_count: 0.5, page: 1, per_page: 1000 },
+    { total_count: 0, page: 1.5, per_page: 1000 },
+    { total_count: 0, page: 1, per_page: 1000.5 },
+    { total_count: -1, page: 1, per_page: 1000 },
+    { total_count: 0, page: -1, per_page: 1000 },
+    { total_count: 0, page: 1, per_page: -1 },
+    { total_count: 0, page: 2, per_page: 1000 },
+    { total_count: 0, page: 1, per_page: 50 },
+    { total_count: 1, page: 1, per_page: 1000 }
+  ];
+
+  for (const resultInfo of malformed) {
+    let calls = 0;
+    await assert.rejects(
+      runTurnstileProvisioner({
+        argv: ['--mode', 'provision', '--environment', 'preview', '--output-dir', '/unused'],
+        env: { CLOUDFLARE_API_TOKEN: TOKEN },
+        fetchImpl: async () => {
+          calls++;
+          return jsonResponse(200, {
+            success: true,
+            result: [],
+            ...(resultInfo === undefined ? {} : { result_info: resultInfo })
+          });
+        },
+        stdout: capture().stream
+      }),
+      /pagination/
+    );
+    assert.equal(calls, 1);
+  }
+});
+
+test('widget listing follows a full page and requires consistent metadata on the next page', async () => {
+  const target = TURNSTILE_TARGETS.preview;
+  const firstPage = Array.from({ length: 1000 }, (_, index) => ({
+    name: `other-widget-${index}`,
+    sitekey: `other-sitekey-${index}`
+  }));
+  const listed = {
+    name: target.widgetName,
+    mode: 'managed',
+    domains: [target.hostname],
+    sitekey: SITEKEY
+  };
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url: String(url), init });
+    if (calls.length === 1) {
+      return jsonResponse(200, success(firstPage, { total_count: 1001, page: 1, per_page: 1000 }));
+    }
+    if (calls.length === 2) {
+      return jsonResponse(200, success([listed], { total_count: 1001, page: 2, per_page: 1000 }));
+    }
+    return jsonResponse(200, success({ ...listed, secret: SECRET }));
+  };
+  const outputDir = mkdtempSync(path.join(os.tmpdir(), 'mj-turnstile-test-'));
+  chmodSync(outputDir, 0o700);
+
+  try {
+    const result = await runTurnstileProvisioner({
+      argv: ['--mode', 'provision', '--environment', 'preview', '--output-dir', outputDir],
+      env: { CLOUDFLARE_API_TOKEN: TOKEN },
+      fetchImpl,
+      stdout: capture().stream
+    });
+    assert.equal(result.created, false);
+    assert.match(calls[0].url, /page=1&per_page=1000$/);
+    assert.match(calls[1].url, /page=2&per_page=1000$/);
+    assert.equal(calls[2].init.method, 'GET');
+  } finally {
+    rmSync(outputDir, { recursive: true, force: true });
+  }
+});
+
 test('secure output rejects relative, permissive, symlinked, and existing-file targets', (t) => {
   assert.throws(() => writeCredentialFiles('relative/path', SITEKEY, SECRET), /absolute path/);
 
@@ -205,6 +294,25 @@ test('secure output rejects relative, permissive, symlinked, and existing-file t
   writeFileSync(path.join(real, 'TURNSTILE_SITE_KEY'), 'existing', { mode: 0o600 });
   assert.throws(() => writeCredentialFiles(real, SITEKEY, SECRET), /Refusing to overwrite/);
   assert.throws(() => writeCredentialFiles(real, 'unsafe\nsitekey', SECRET), /unsafe shape/);
+});
+
+test('exclusive-create failure cleans up only files created by this invocation', (t) => {
+  const outputDir = secureTempDir(t);
+  const sitekeyPath = path.join(outputDir, 'TURNSTILE_SITE_KEY');
+  const secretPath = path.join(outputDir, 'TURNSTILE_SECRET_KEY');
+  let opens = 0;
+  const racingOpen = (outputPath, flags, mode) => {
+    opens++;
+    if (opens === 2) writeFileSync(outputPath, 'race-created', { flag: 'wx', mode: 0o600 });
+    return openSync(outputPath, flags, mode);
+  };
+
+  assert.throws(
+    () => writeCredentialFiles(outputDir, SITEKEY, SECRET, { openFile: racingOpen }),
+    /EEXIST/
+  );
+  assert.equal(existsSync(sitekeyPath), false);
+  assert.equal(readFileSync(secretPath, 'utf8'), 'race-created');
 });
 
 test('invalid environment and arbitrary arguments fail before networking', async () => {

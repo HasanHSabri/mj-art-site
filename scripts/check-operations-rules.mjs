@@ -913,8 +913,16 @@ function main() {
     if (!/I-CONFIRM-TURNSTILE-PROVISION/.test(turnstileWf)) {
       fail(turnstileWfPath + ' must require the exact provision confirmation phrase');
     }
-    if (!/group:\s*turnstile-provision-\$\{\{ inputs\.environment \}\}/.test(turnstileWf)) {
-      fail(turnstileWfPath + ' must serialize runs per exact environment');
+    if (!/group:\s*turnstile-provision\s*$/m.test(turnstileWf)) {
+      fail(turnstileWfPath + ' must serialize all provisioning runs with a fixed concurrency group');
+    }
+    const gateIndex = turnstileWf.indexOf('Fail closed unless dispatch inputs are exact');
+    const jobsIndex = turnstileWf.indexOf('jobs:');
+    if (jobsIndex < 0 || gateIndex < 0 || /\$\{\{\s*inputs\.environment\s*\}\}/.test(turnstileWf.slice(jobsIndex, gateIndex))) {
+      fail(turnstileWfPath + ' must not bind raw environment input in the pre-gate job context');
+    }
+    if (/^\s+environment:\s*\$\{\{\s*inputs\.environment\s*\}\}\s*$/m.test(turnstileWf)) {
+      fail(turnstileWfPath + ' must not bind the job environment to raw dispatch input');
     }
     if (!/options:\s*\n\s+- probe\s*\n\s+- provision/.test(turnstileWf) ||
         !/options:\s*\n\s+- preview\s*\n\s+- production/.test(turnstileWf)) {
@@ -923,7 +931,6 @@ function main() {
     if (findInputsInRunBlocks(turnstileWf).length || findSecretsInRunBlocks(turnstileWf).length) {
       fail(turnstileWfPath + ' must not interpolate raw inputs or secrets in run blocks');
     }
-    const gateIndex = turnstileWf.indexOf('Fail closed unless dispatch inputs are exact');
     const credentialIndex = turnstileWf.indexOf('secrets.CLOUDFLARE_API_TOKEN');
     if (gateIndex < 0 || credentialIndex < 0 || gateIndex >= credentialIndex) {
       fail(turnstileWfPath + ' must run the provision gate before exposing credentials');

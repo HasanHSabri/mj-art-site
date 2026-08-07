@@ -93,18 +93,41 @@ async function apiRequest(fetchImpl, token, url, { method = 'GET', body } = {}) 
 
 async function listWidgets(fetchImpl, token, target) {
   const widgets = [];
+  const perPage = 1000;
+  let expectedTotal;
   let page = 1;
   for (;;) {
     const url = new URL(`${API_ROOT}/accounts/${target.accountId}/challenges/widgets`);
     url.searchParams.set('page', String(page));
-    url.searchParams.set('per_page', '1000');
+    url.searchParams.set('per_page', String(perPage));
     const payload = await apiRequest(fetchImpl, token, url, { method: 'GET' });
     if (!Array.isArray(payload.result)) {
       throw new Error('Cloudflare widget list response is missing its result array');
     }
+
+    const info = payload.result_info;
+    if (
+      !Number.isInteger(info?.total_count) || info.total_count < 0 ||
+      !Number.isInteger(info?.page) || info.page < 1 ||
+      !Number.isInteger(info?.per_page) || info.per_page < 1
+    ) {
+      throw new Error('Cloudflare widget list response has invalid pagination metadata');
+    }
+    if (info.page !== page || info.per_page !== perPage) {
+      throw new Error('Cloudflare widget list response has inconsistent pagination metadata');
+    }
+    if (expectedTotal === undefined) expectedTotal = info.total_count;
+    if (info.total_count !== expectedTotal) {
+      throw new Error('Cloudflare widget list response changed total_count between pages');
+    }
+
+    const offset = (page - 1) * perPage;
+    const expectedLength = Math.min(perPage, Math.max(expectedTotal - offset, 0));
+    if (payload.result.length !== expectedLength) {
+      throw new Error('Cloudflare widget list response is inconsistent with its pagination metadata');
+    }
     widgets.push(...payload.result);
-    const total = payload.result_info?.total_count;
-    if (!Number.isInteger(total) || widgets.length >= total || payload.result.length === 0) {
+    if (widgets.length === expectedTotal) {
       return widgets;
     }
     page++;
@@ -162,7 +185,7 @@ function assertSecureOutputDirectory(outputDir) {
   return resolved;
 }
 
-export function writeCredentialFiles(outputDir, sitekey, secret) {
+export function writeCredentialFiles(outputDir, sitekey, secret, { openFile = openSync } = {}) {
   if (typeof sitekey !== 'string' || sitekey.length === 0 || typeof secret !== 'string' || secret.length === 0) {
     throw new Error('Cloudflare did not return both required Turnstile credentials');
   }
@@ -182,15 +205,17 @@ export function writeCredentialFiles(outputDir, sitekey, secret) {
   }
 
   const fds = [];
+  const createdPaths = [];
   try {
     for (const outputPath of paths) {
-      const fd = openSync(
+      const fd = openFile(
         outputPath,
         constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
         0o600
       );
-      fchmodSync(fd, 0o600);
       fds.push(fd);
+      createdPaths.push(outputPath);
+      fchmodSync(fd, 0o600);
     }
     writeSync(fds[0], sitekey, null, 'utf8');
     writeSync(fds[1], secret, null, 'utf8');
@@ -199,7 +224,7 @@ export function writeCredentialFiles(outputDir, sitekey, secret) {
     for (const fd of fds) {
       try { closeSync(fd); } catch {}
     }
-    for (const outputPath of paths) {
+    for (const outputPath of createdPaths) {
       try { unlinkSync(outputPath); } catch {}
     }
     throw error;

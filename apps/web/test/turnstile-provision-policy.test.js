@@ -9,11 +9,11 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const workflow = readFileSync(path.join(root, '.github/workflows/turnstile-provision.yml'), 'utf8');
 const script = readFileSync(path.join(root, 'scripts/provision-turnstile.mjs'), 'utf8');
 
-test('Turnstile workflow is manual-only with minimal permissions and per-environment concurrency', () => {
+test('Turnstile workflow is manual-only with minimal permissions and fixed concurrency', () => {
   assert.match(workflow, /^on:\s*\n  workflow_dispatch:/m);
   assert.doesNotMatch(workflow, /^  (push|pull_request|schedule|workflow_call|workflow_run):/m);
   assert.match(workflow, /^permissions:\s*\n  contents: read$/m);
-  assert.match(workflow, /group: turnstile-provision-\$\{\{ inputs\.environment \}\}/);
+  assert.match(workflow, /group: turnstile-provision\s*$/m);
   assert.match(workflow, /cancel-in-progress: false/);
 });
 
@@ -26,6 +26,10 @@ test('Turnstile workflow exposes only exact probe/provision and preview/producti
 });
 
 test('Turnstile workflow gates before credentials and never injects raw inputs or secrets into run blocks', () => {
+  const gateStart = workflow.indexOf('- name: Fail closed unless dispatch inputs are exact');
+  const jobsStart = workflow.indexOf('jobs:');
+  assert.doesNotMatch(workflow.slice(jobsStart, gateStart), /\$\{\{\s*inputs\.environment\s*\}\}/);
+  assert.doesNotMatch(workflow, /^\s+environment:\s*\$\{\{\s*inputs\.environment\s*\}\}\s*$/m);
   assert.ok(workflow.indexOf('Fail closed unless dispatch inputs are exact') < workflow.indexOf('secrets.CLOUDFLARE_API_TOKEN'));
   assert.deepEqual(findInputsInRunBlocks(workflow), []);
   assert.deepEqual(findSecretsInRunBlocks(workflow), []);

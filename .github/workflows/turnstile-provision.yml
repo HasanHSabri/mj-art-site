@@ -31,7 +31,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: turnstile-provision-${{ inputs.environment }}
+  group: turnstile-provision
   cancel-in-progress: false
 
 env:
@@ -42,7 +42,6 @@ jobs:
   turnstile-provision:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: ${{ inputs.environment }}
 
     steps:
       - name: Fail closed unless dispatch inputs are exact
