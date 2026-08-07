@@ -9,6 +9,8 @@ const publicDir = join(__dirname, '..', 'public');
 const indexHtml = readFileSync(join(publicDir, 'index.html'), 'utf8');
 const stylesCss = readFileSync(join(publicDir, 'styles.css'), 'utf8');
 const scriptJs = readFileSync(join(publicDir, 'script.js'), 'utf8');
+const booksJs = readFileSync(join(publicDir, 'books.js'), 'utf8');
+const backToTopJs = readFileSync(join(publicDir, 'back-to-top.js'), 'utf8');
 
 function ruleBody(css, selector) {
   const re = new RegExp(
@@ -115,45 +117,67 @@ test('global CSS reduced-motion override disables smooth scrolling', () => {
   assert.match(block, /scroll-behavior:\s*auto/, 'html smooth scroll must become auto under reduced motion');
 });
 
-test('JS reveals the control only past the scroll threshold and hides it for the dialog', () => {
-  assert.match(scriptJs, /BACK_TO_TOP_THRESHOLD\s*=\s*400/, 'threshold must be ~400px');
+test('shared module reveals the control past the threshold and hides it for the dialog', () => {
+  // The behaviour lives once in back-to-top.js. It reveals past the threshold,
+  // hides while the optional dialog is open, and re-syncs on dialog toggle.
+  assert.match(backToTopJs, /BACK_TO_TOP_THRESHOLD\s*=\s*400/, 'threshold must be ~400px');
   assert.match(
-    scriptJs,
-    /addEventListener\(\s*['"]scroll['"]\s*,\s*\w+\s*,\s*\{\s*passive:\s*true\s*\}\s*\)/,
+    backToTopJs,
+    /addEventListener\(\s*['"]scroll['"]\s*,\s*sync\s*,\s*\{\s*passive:\s*true\s*\}\s*\)/,
     'scroll listener must be passive'
   );
   assert.match(
-    scriptJs,
-    /\.hidden\s*=\s*[^;]*dialog\.open/,
-    'visibility must factor dialog.open (hide while painting dialog is open)'
+    backToTopJs,
+    /\(\s*dialog\s*&&\s*dialog\.open\s*\)\s*\|\|\s*window\.scrollY\s*<\s*BACK_TO_TOP_THRESHOLD/,
+    'visibility must factor dialog.open AND scrollY vs threshold'
   );
   assert.match(
-    scriptJs,
-    /window\.scrollY\s*<\s*BACK_TO_TOP_THRESHOLD/,
-    'visibility must factor scrollY vs threshold'
-  );
-  assert.match(
-    scriptJs,
+    backToTopJs,
     /dialog\.addEventListener\(\s*['"]toggle['"]/,
     'dialog toggle event must re-sync visibility on open/close'
   );
 });
 
-test('JS click respects prefers-reduced-motion and targets #top', () => {
+test('shared module click respects prefers-reduced-motion and targets #top', () => {
   assert.match(
-    scriptJs,
+    backToTopJs,
     /matchMedia\(\s*['"]\(prefers-reduced-motion:\s*reduce\)['"]\)/,
     'must query prefers-reduced-motion'
   );
-  assert.match(scriptJs, /getElementById\(\s*['"]top['"]\)/, 'click must scroll to #top');
+  assert.match(backToTopJs, /getElementById\(\s*['"]top['"]\)/, 'click must scroll to #top');
   assert.match(
-    scriptJs,
+    backToTopJs,
     /behavior\s*=\s*reducedMotion\(\)\s*\?\s*['"]auto['"]\s*:\s*['"]smooth['"]/,
     'behavior must be auto under reduced motion, smooth otherwise'
   );
   assert.match(
-    scriptJs,
+    backToTopJs,
     /scrollIntoView\(\s*\{\s*behavior\s*,\s*block:\s*['"]start['"]\s*\}\s*\)/,
     'must scrollIntoView #top with the chosen behavior'
   );
+});
+
+test('home script.js imports the shared module and passes its painting dialog', () => {
+  assert.match(
+    scriptJs,
+    /import\s*\{\s*initBackToTop\s*\}\s*from\s*['"]\.\/back-to-top\.js['"]/,
+    'script.js must import initBackToTop from the shared module'
+  );
+  assert.match(
+    scriptJs,
+    /initBackToTop\(\s*\{\s*dialog\s*\}\s*\)/,
+    'script.js must pass its dialog so the control hides while it is open'
+  );
+  // script.js must no longer carry the duplicated page-local logic.
+  assert.doesNotMatch(scriptJs, /BACK_TO_TOP_THRESHOLD/, 'script.js must not redefine the threshold');
+  assert.doesNotMatch(scriptJs, /syncBackToTop/, 'script.js must not keep its old syncBackToTop logic');
+});
+
+test('books.js imports the shared module with no dialog (simpler variant)', () => {
+  assert.match(
+    booksJs,
+    /import\s*\{\s*initBackToTop\s*\}\s*from\s*['"]\.\/back-to-top\.js['"]/,
+    'books.js must import initBackToTop from the shared module'
+  );
+  assert.match(booksJs, /initBackToTop\(\)/, 'books.js must call initBackToTop with no dialog');
 });

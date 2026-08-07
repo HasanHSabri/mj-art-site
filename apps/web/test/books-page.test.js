@@ -9,6 +9,7 @@ import {
   messageForStatus,
   findBookEntry,
   counterValue,
+  counterText,
   pluralize,
   BOOK_VALUES,
   FORMAT_VALUES,
@@ -21,6 +22,7 @@ const publicDir = join(__dirname, '..', 'public');
 const booksHtml = readFileSync(join(publicDir, 'books.html'), 'utf8');
 const booksCss = readFileSync(join(publicDir, 'books.css'), 'utf8');
 const booksJs = readFileSync(join(publicDir, 'books.js'), 'utf8');
+const backToTopJs = readFileSync(join(publicDir, 'back-to-top.js'), 'utf8');
 const rootPkg = readFileSync(join(__dirname, '..', 'package.json'), 'utf8');
 
 function ruleBody(css, selector) {
@@ -68,11 +70,15 @@ test('each book panel exposes interest and copies counter hooks', () => {
 });
 
 test('counters start with a non-numeric placeholder (no fake counts)', () => {
-  // The placeholder is an em dash entity, never a fabricated number.
+  // Both the interest and copies hooks start as an em dash entity, never a
+  // fabricated number (and never an apparent 0 while data loads).
   for (const book of ['biography', 'childrens']) {
-    const m = booksHtml.match(new RegExp(`data-book-interest="${book}"[^>]*>([^<]*)<`));
-    assert.ok(m);
-    assert.equal(m[1].trim(), '&mdash;', `${book} interest placeholder must be an em dash, not a number`);
+    const interest = booksHtml.match(new RegExp(`data-book-interest="${book}"[^>]*>([^<]*)<`));
+    assert.ok(interest, `${book} interest hook must exist`);
+    assert.equal(interest[1].trim(), '&mdash;', `${book} interest placeholder must be an em dash, not a number`);
+    const copies = booksHtml.match(new RegExp(`data-book-copies="${book}"[^>]*>([^<]*)<`));
+    assert.ok(copies, `${book} copies hook must exist`);
+    assert.equal(copies[1].trim(), '&mdash;', `${book} copies placeholder must be an em dash, not a number`);
   }
 });
 
@@ -234,6 +240,23 @@ test('counters collapse to one column on very narrow viewports (no 320px overflo
   assert.match(very, /\.books-counters\s*\{[^}]*grid-template-columns:\s*1fr/);
 });
 
+test('EOI form and its grid children/controls can shrink (min-width:0) to avoid 320px overflow', () => {
+  // The form is a grid item (of .books-form-section) and itself a grid
+  // container; without min-width:0 the form and its fields default to
+  // min-width:auto and force horizontal overflow at 320px. The standalone form
+  // rule (uniquely identified by max-width:620px, which the grouped surface
+  // rule does not carry) must set min-width:0; fieldset/label children carry
+  // min-width:0; inputs/selects are capped to their cell.
+  assert.match(
+    booksCss,
+    /\.books-eoi-form\s*\{[^}]*max-width:\s*620px[^}]*min-width:\s*0/,
+    'the standalone .books-eoi-form rule must set min-width:0'
+  );
+  assert.match(booksCss, /\.books-eoi-form\s+fieldset[\s\S]*?min-width:\s*0/, 'fieldset children must set min-width:0');
+  assert.match(booksCss, /\.books-eoi-form\s+label[\s\S]*?min-width:\s*0/, 'label children must set min-width:0');
+  assert.match(booksCss, /\.books-eoi-form\s+input[\s\S]*?max-width:\s*100%/, 'inputs must be capped to their cell');
+});
+
 test('the honeypot is fully removed from layout (off-screen + 1px)', () => {
   const hp = ruleBody(booksCss, '.books-honeypot');
   assert.ok(hp);
@@ -325,6 +348,23 @@ test('findBookEntry and counterValue read the /api/books/interest shape safely',
   assert.equal(counterValue(null, 'interestCount'), '');
 });
 
+test('counterText keeps the em dash sentinel while loading (never an apparent 0)', () => {
+  // While loading (no data object yet) the placeholder must be retained: the
+  // helper returns the empty sentinel so the caller leaves the em dash alone.
+  assert.equal(counterText(null, 'biography', 'interestCount'), '', 'null data -> empty sentinel');
+  assert.equal(counterText(undefined, 'biography', 'interestCount'), '', 'undefined data -> empty sentinel');
+  assert.equal(counterText('', 'biography', 'interestCount'), '', 'string data (loading call) -> empty sentinel');
+  assert.equal(counterText('loading', 'biography', 'interestCount'), '', 'non-object data -> empty sentinel');
+  // Once data is present, a missing entry is a genuine 0 (backend returns both).
+  assert.equal(counterText({ books: [] }, 'biography', 'interestCount'), '0', 'data present, missing entry -> real 0');
+  assert.equal(counterText({ books: [] }, 'biography', 'requestedCopies'), '0', 'data present, missing entry -> real 0');
+  // Real data renders the actual number.
+  const data = { books: [{ book: 'biography', interestCount: 3, requestedCopies: 7 }] };
+  assert.equal(counterText(data, 'biography', 'interestCount'), '3');
+  assert.equal(counterText(data, 'biography', 'requestedCopies'), '7');
+  assert.equal(counterText(data, 'childrens', 'interestCount'), '0', 'other book missing -> real 0');
+});
+
 test('pluralize picks singular vs plural by count', () => {
   assert.equal(pluralize(1, 'person', 'people'), 'person');
   assert.equal(pluralize(0, 'person', 'people'), 'people');
@@ -367,21 +407,49 @@ test('books.js prevents duplicate submits, resets Turnstile, and refreshes count
   assert.match(booksJs, /await loadCounters/);
 });
 
-test('books.js Back to Top targets the page #top and is passive on scroll', () => {
-  assert.match(booksJs, /getElementById\('back-to-top'\)/);
-  assert.match(booksJs, /getElementById\('top'\)/);
-  assert.match(booksJs, /addEventListener\('scroll',\s*sync,\s*\{\s*passive:\s*true\s*\}\)/);
+test('books.js never overwrites the placeholder during loading (no apparent 0)', () => {
+  // setCounters must early-return while there is no data object so the em dash
+  // placeholder in the markup is preserved, then route through counterText.
+  assert.match(
+    booksJs,
+    /function setCounters[\s\S]*?if\s*\(\s*!data\s*\|\|\s*typeof data\s*!==\s*'object'\s*\)\s*return/,
+    'setCounters must skip writing until a data object is present'
+  );
+  assert.match(booksJs, /counterText\(data,\s*book,\s*'interestCount'\)/);
+  assert.match(booksJs, /counterText\(data,\s*book,\s*'requestedCopies'\)/);
+  // The old loading bug (counterValue(...) || '0' inside setCounters) is gone.
+  assert.doesNotMatch(
+    booksJs,
+    /function setCounters[\s\S]*?\}\s*function[\s\S]*?counterValue\([^)]*\)\s*\|\|\s*'0'/,
+    'setCounters must not fall back to a literal 0 from counterValue'
+  );
+});
+
+test('books.js Back to Top uses the shared module (no duplicated logic)', () => {
+  // The behaviour lives once in ./back-to-top.js; books.js imports and calls it
+  // (with no dialog -> the simpler scroll-only variant).
+  assert.match(booksJs, /import\s*\{\s*initBackToTop\s*\}\s*from\s*['"]\.\/back-to-top\.js['"]/);
+  assert.match(booksJs, /initBackToTop\(\)/, 'books.js must call initBackToTop with no dialog');
+  // The page-local scroll/threshold logic must NOT be duplicated in books.js.
+  assert.doesNotMatch(booksJs, /BACK_TO_TOP_THRESHOLD/, 'books.js must not redefine the threshold');
+  assert.doesNotMatch(booksJs, /function\s+initBackToTop\s*\(/, 'books.js must not redefine initBackToTop');
+  // The shared module owns the behaviour and targets the page #top.
+  assert.match(backToTopJs, /getElementById\('back-to-top'\)/);
+  assert.match(backToTopJs, /getElementById\('top'\)/);
+  assert.match(backToTopJs, /addEventListener\('scroll',\s*sync,\s*\{\s*passive:\s*true\s*\}\)/);
 });
 
 // ===========================================================================
 // 8. Build integration
 // ===========================================================================
 
-test('books.js is syntax-checked by build/lint/type-check', () => {
-  for (const script of ['build', 'lint', 'type-check']) {
-    assert.ok(
-      rootPkg.includes(`node --check public/books.js`),
-      `books.js must be in the ${script} check list`
-    );
+test('books.js and back-to-top.js are syntax-checked by build/lint/type-check', () => {
+  for (const file of ['public/books.js', 'public/back-to-top.js']) {
+    for (const script of ['build', 'lint', 'type-check']) {
+      assert.ok(
+        rootPkg.includes(`node --check ${file}`),
+        `${file} must be in the ${script} check list`
+      );
+    }
   }
 });

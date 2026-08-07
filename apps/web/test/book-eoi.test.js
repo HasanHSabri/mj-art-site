@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import worker from '../src/worker.js';
+import { isBooksPage } from '../src/worker.js';
 import * as bookEoi from '../src/book-eoi.js';
 import {
   extractCreateTableBody,
@@ -287,14 +288,24 @@ test('validateBookEoiPayload enforces book/format allowlists', () => {
 });
 
 test('validateBookEoiPayload requires consent to be exactly the boolean true', () => {
-  // Missing consent -> rejected.
+  // Missing consent -> silent trap (generic ok, no stored fields), NOT a 400.
   const { book, format, quantity, name, email, turnstileToken } = validPayload();
-  assert.equal(validateBookEoiPayload({ book, format, quantity, name, email, turnstileToken }).ok, false);
-  // Truthy-but-not-true values are rejected (a checkbox must be actively set).
-  for (const bad of [false, 'true', 'yes', 1, 'on', null]) {
+  const missing = validateBookEoiPayload({ book, format, quantity, name, email, turnstileToken });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.silent, true, 'missing consent is a silent trap');
+
+  // Missing/false/null consent all collapse to the same silent trap.
+  for (const bad of [false, null, undefined]) {
+    const r = validateBookEoiPayload({ ...validPayload(), consent: bad });
+    assert.equal(r.ok, false, `consent ${JSON.stringify(bad)} must not be accepted`);
+    assert.equal(r.silent, true, `consent ${JSON.stringify(bad)} must be a silent trap`);
+    assert.equal('status' in r, false, 'silent must not carry a 400 status');
+  }
+  // A truthy-but-non-boolean value is a malformed request -> 400 (not silent).
+  for (const bad of ['true', 'yes', 1, 'on']) {
     const r = validateBookEoiPayload({ ...validPayload(), consent: bad });
     assert.equal(r.ok, false, `consent ${JSON.stringify(bad)} must be rejected`);
-    assert.equal(r.status, 400);
+    assert.equal(r.status, 400, `consent ${JSON.stringify(bad)} must be a 400`);
   }
   // Exactly boolean true is accepted.
   assert.equal(validateBookEoiPayload(validPayload()).ok, true);
@@ -527,6 +538,32 @@ test('honeypot submission returns generic ok without DB/Turnstile/limit work', a
   assert.deepEqual(await body(res), { ok: true });
   assert.equal(limited, false);
   assert.equal(sql.calls.length, 0);
+});
+
+test('missing/false consent returns the same generic ok before limiter/Turnstile/DB', async () => {
+  // A real submitter must actively check consent (the client enforces it too),
+  // so a missing/false consent is a probe/bot -> identical generic ok, with no
+  // rate-limit/Turnstile/DB work and no way to tell it apart from a real save.
+  for (const consent of [undefined, false, null]) {
+    let limited = false;
+    let verified = false;
+    const sql = makeSql(insertResponder());
+    const env = makeEnv({
+      sql,
+      rateLimiter: { async limit() { limited = true; return { success: true }; } },
+      turnstile: async () => { verified = true; return okTurnstile()(); }
+    });
+    const { book, format, quantity, name, email, turnstileToken } = validPayload();
+    const res = await worker.fetch(
+      jsonPost('/api/books/eoi', { book, format, quantity, name, email, turnstileToken, consent }),
+      env
+    );
+    assert.equal(res.status, 200, `consent ${consent} -> 200`);
+    assert.deepEqual(await body(res), { ok: true }, `consent ${consent} -> generic ok`);
+    assert.equal(limited, false, 'rate limiter must not run');
+    assert.equal(verified, false, 'Turnstile must not run');
+    assert.equal(sql.calls.length, 0, 'DB must not be touched');
+  }
 });
 
 test('duplicate (existing email+book) and new both return identical generic ok', async () => {
@@ -1496,7 +1533,7 @@ test('GET /books returns 404 when the books.html asset is missing', async () => 
   assert.equal(res.status, 404);
 });
 
-test('/books route is registered in run_worker_first so it is handled by the Worker', () => {
+test('/books routes are registered in run_worker_first so they are handled by the Worker', () => {
   // Parse the run_worker_first array text directly: the .jsonc file contains
   // https:// URLs, so a naive // comment-strip would corrupt those strings.
   const wrangler = readFileSync(path.resolve(import.meta.dirname, '..', 'wrangler.jsonc'), 'utf8');
@@ -1504,6 +1541,74 @@ test('/books route is registered in run_worker_first so it is handled by the Wor
   assert.ok(rwf, 'an assets.run_worker_first array must exist');
   assert.match(rwf[1], /"\/books"/, 'run_worker_first must include "/books"');
   assert.match(rwf[1], /"\/books\/"/, 'run_worker_first must include "/books/"');
+  // The raw .html asset must be Worker-first so it is redirected (never served
+  // with an unreplaced Turnstile site-key marker).
+  assert.match(rwf[1], /"\/books\.html"/, 'run_worker_first must include "/books.html"');
+});
+
+// --- isBooksPage route contract ---
+
+test('isBooksPage matches the canonical page and every alias', () => {
+  assert.equal(isBooksPage('/books'), true);
+  assert.equal(isBooksPage('/books.html'), true);
+  assert.equal(isBooksPage('/books/'), true);
+  assert.equal(isBooksPage('/books//'), true, 'repeated trailing slashes are the books page');
+  assert.equal(isBooksPage('/books///'), true, 'repeated trailing slashes are the books page');
+});
+
+test('isBooksPage does not match unrelated paths', () => {
+  for (const p of ['/', '/book', '/bookstore', '/books-x', '/books.htmlx', '/api/books/eoi', '/api/books/health', '/index.html']) {
+    assert.equal(isBooksPage(p), false, `${p} must not be the books page`);
+  }
+});
+
+// --- Canonical redirect of /books.html and trailing-slash variants ---
+
+test('GET /books.html is permanently redirected to the canonical /books', async () => {
+  const env = booksHtmlEnv(BOOKS_HTML_WITH_MARKER);
+  const res = await worker.fetch(req('/books.html'), env);
+  assert.equal(res.status, 301);
+  assert.equal(new URL(res.headers.get('location')).pathname, '/books');
+});
+
+test('GET /books// (repeated trailing slashes) is permanently redirected to /books', async () => {
+  const env = booksHtmlEnv(BOOKS_HTML_WITH_MARKER);
+  for (const path of ['/books//', '/books///']) {
+    const res = await worker.fetch(req(path), env);
+    assert.equal(res.status, 301, `${path} -> 301`);
+    assert.equal(new URL(res.headers.get('location')).pathname, '/books', `${path} -> /books`);
+  }
+});
+
+test('GET /books.html never serves the raw asset / unreplaced marker', async () => {
+  // Even if ASSETS could serve books.html, the Worker intercepts it first and
+  // redirects, so the marker never reaches a client.
+  const env = booksHtmlEnv(BOOKS_HTML_WITH_MARKER);
+  const res = await worker.fetch(req('/books.html'), env);
+  assert.equal(res.status, 301);
+  const text = await res.text();
+  assert.equal(text.includes('__BOOKS_TURNSTILE_SITE_KEY__'), false, 'marker must not leak');
+});
+
+// --- Explicit 405 for unsupported methods on Books URLs (never assets) ---
+
+test('unsupported methods on /books return a JSON 405, never an asset', async () => {
+  const env = booksHtmlEnv(BOOKS_HTML_WITH_MARKER);
+  for (const method of ['POST', 'PUT', 'DELETE', 'PATCH']) {
+    const res = await worker.fetch(req('/books', { method }), env);
+    assert.equal(res.status, 405, `${method} /books -> 405`);
+    assert.equal(res.headers.get('content-type'), 'application/json', `${method} /books -> JSON`);
+    assert.deepEqual(await body(res), { error: 'Method not allowed.' });
+  }
+});
+
+test('unsupported methods on /books.html and /books/ return a JSON 405', async () => {
+  const env = booksHtmlEnv(BOOKS_HTML_WITH_MARKER);
+  for (const path of ['/books.html', '/books/', '/books//']) {
+    const res = await worker.fetch(req(path, { method: 'POST' }), env);
+    assert.equal(res.status, 405, `POST ${path} -> 405`);
+    assert.equal(res.headers.get('content-type'), 'application/json', `POST ${path} -> JSON`);
+  }
 });
 
 

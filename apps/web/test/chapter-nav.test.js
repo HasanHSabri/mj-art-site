@@ -671,11 +671,22 @@ test('chapter-nav.js keeps the native dialog as the top layer (no manual stackin
 test('/books link is retained and the route is now implemented and served by the Worker', () => {
   // The link stays in the home nav as a route (not an in-page anchor).
   assert.match(indexHtml, /href="\/books"/, 'the /books link is retained');
-  // The worker now wires the GET /books route (the page is implemented).
+  // The worker owns every Books URL (canonical /books plus its aliases) through
+  // the isBooksPage route contract, and serves GET /books from there.
   assert.match(
     workerJs,
-    /url\.pathname === '\/books'/,
-    'the worker must handle GET /books'
+    /export function isBooksPage/,
+    'the worker must define the isBooksPage route contract'
+  );
+  assert.match(
+    workerJs,
+    /isBooksPage\(url\.pathname\)/,
+    'the worker must route Books URLs through isBooksPage'
+  );
+  assert.match(
+    workerJs,
+    /return serveBooksPage\(request, env\)/,
+    'GET /books must serve the Books page'
   );
 });
 

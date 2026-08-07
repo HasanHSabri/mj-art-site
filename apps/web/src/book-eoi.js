@@ -135,6 +135,7 @@ export function canonicalizeName(raw) {
 // Returns one of:
 //   { ok: true, fields: { book, format, quantity, name, email, turnstileToken } }
 //   { ok: false, honeypot: true }                         // silent accept (bot)
+//   { ok: false, silent: true }                           // silent accept (missing/false consent)
 //   { ok: false, status: <number>, error: <message> }     // real client error
 export function validateBookEoiPayload(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -160,6 +161,15 @@ export function validateBookEoiPayload(body) {
   // Explicit, required consent. It must be exactly the boolean true (not a
   // truthy string/number): a checkbox the submitter actively checked. Consent
   // is validated here and intentionally NOT carried into the persisted fields.
+  //
+  // A MISSING or FALSE consent is treated as a silent trap (the same generic ok
+  // as a honeypot, before any limiter/Turnstile/DB work): a real submitter must
+  // actively check the box (the client enforces this too), and returning a
+  // generic ok avoids revealing the reason and avoids wasting downstream work.
+  // A truthy-but-non-boolean value is a malformed request -> 400.
+  if (body.consent === undefined || body.consent === null || body.consent === false) {
+    return { ok: false, silent: true };
+  }
   if (body.consent !== true) {
     return { ok: false, status: 400, error: 'Consent is required to continue.' };
   }

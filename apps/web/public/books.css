@@ -114,7 +114,24 @@
   gap: 16px;
   width: 100%;
   max-width: 620px;
+  min-width: 0;
   padding: 28px;
+}
+
+/* Prevent a 320px horizontal overflow: grid items default to min-width: auto,
+   so neither the form nor its fields can shrink below intrinsic control widths.
+   min-width: 0 lets every level shrink; max-width: 100% keeps selects/inputs
+   within their cell. Padding stays as-is (260px of content room at 320px). */
+.books-eoi-form fieldset,
+.books-eoi-form label {
+  min-width: 0;
+}
+
+.books-eoi-form input,
+.books-eoi-form select,
+.books-eoi-form textarea {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .books-fieldset {

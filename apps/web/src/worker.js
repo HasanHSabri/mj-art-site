@@ -38,6 +38,19 @@ const ARTWORKS_KEY = 'artworks.json';
 const SESSION_COOKIE = 'mj_art_admin';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
 
+// The Worker owns every Books page URL. The canonical page is /books; the raw
+// .html alias and any trailing-slash variant (single or repeated) all
+// canonicalize to /books. Anything that is NOT one of these is left alone
+// (e.g. /api/books/*, /bookstore). Pure + exported so the route contract is
+// unit-tested directly.
+export function isBooksPage(pathname) {
+  return (
+    pathname === '/books' ||
+    pathname === '/books.html' ||
+    /^\/books\/+$/.test(pathname)
+  );
+}
+
 // Canonical upload pipeline constants. The admin produces two JPEG derivatives
 // (full ~2000px, thumb ~640px); these caps bound the uploaded multipart parts.
 const UPLOAD_CATALOG_RE = /^(MJ|MISC)-\d{3}$/i;
@@ -74,13 +87,23 @@ export default {
       return servePublicIndex(request, env);
     }
 
-    // Books public page. GET /books serves the SSR-injected page; GET /books/
-    // is permanently redirected to the canonical /books (single URL). The site
-    // key is injected server-side from a pre-provisioned Worker secret; a
-    // missing key fails closed 503 (no static/fallback page is ever served).
-    if (request.method === 'GET' && (url.pathname === '/books' || url.pathname === '/books/')) {
-      if (url.pathname === '/books/') {
-        return Response.redirect(new URL('/books', request.url).toString(), 301);
+    // Books public page. The Worker owns every Books URL so the raw books.html
+    // asset is never served with an unreplaced Turnstile site-key marker, and so
+    // every alias canonicalizes to a single URL. GET /books serves the
+    // SSR-injected page (site key from a pre-provisioned Worker secret; a
+    // missing key fails closed 503, no static/fallback page is ever served).
+    // GET /books.html, /books/, and repeated trailing slashes (/books//, ...)
+    // are permanently redirected to /books. Any other method on a Books URL is
+    // an explicit JSON 405 and NEVER falls through to static assets.
+    if (isBooksPage(url.pathname)) {
+      if (url.pathname !== '/books') {
+        if (request.method === 'GET') {
+          return Response.redirect(new URL('/books', request.url).toString(), 301);
+        }
+        return methodNotAllowed();
+      }
+      if (request.method !== 'GET') {
+        return methodNotAllowed();
       }
       return serveBooksPage(request, env);
     }
@@ -559,6 +582,13 @@ function jsonResponse(body, status = 200) {
   });
 }
 
+// Consistent JSON 405 for any supported path hit with an unsupported method.
+// Used by the Books page routes so unsupported methods never fall through to
+// static assets. Mirrors the /api/books/* 405 shape.
+function methodNotAllowed() {
+  return jsonResponse({ error: 'Method not allowed.' }, 405);
+}
+
 function base64UrlEncode(value) {
   return btoa(value).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
 }
@@ -760,8 +790,10 @@ async function handleCreateBookEoi(request, env) {
 
   const validation = validateBookEoiPayload(body);
   if (!validation.ok) {
-    // Honeypot: accept silently with the same generic response as success.
-    if (validation.honeypot) return jsonResponse({ ok: true });
+    // Honeypot OR missing/false consent: accept silently with the same generic
+    // response as success, before any rate-limit/Turnstile/DB work (anti-
+    // enumeration + no wasted downstream work).
+    if (validation.honeypot || validation.silent) return jsonResponse({ ok: true });
     return jsonResponse({ error: validation.error }, validation.status || 400);
   }
   const { book, format, quantity, name, email, turnstileToken } = validation.fields;

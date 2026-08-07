@@ -7,10 +7,13 @@
 //   - robustly submit the EOI to POST /api/books/eoi, handling 400/413/429/503
 //     and generic errors WITHOUT leaking server detail, preventing duplicate
 //     submits, and resetting Turnstile + refreshing counters after success
-//   - power the page's "Back to Top" control (targets the Books page top)
+//   - power the page's "Back to Top" control (shared implementation; targets
+//     the Books page top)
 //
 // No mail fallback, no localStorage, no R2 fallback. The pure helpers below are
 // exported so the mapping/validation logic is unit-testable without a DOM.
+
+import { initBackToTop } from './back-to-top.js';
 
 // ---------------------------------------------------------------------------
 // Pure helpers (no DOM, no network)
@@ -91,6 +94,18 @@ export function counterValue(entry, field) {
   return String(entry[field]);
 }
 
+// Decide the text to render for a counter across the loading / loaded states.
+// While loading (no data object yet) it returns the empty sentinel "" so the
+// caller leaves the em dash placeholder in the markup untouched -- it NEVER
+// renders an apparent 0 before real data arrives. Once data is present, a
+// missing entry renders a genuine 0 (the backend always returns both books, so
+// a missing entry is a real zero count, not a loading state).
+export function counterText(data, book, field) {
+  if (!data || typeof data !== 'object') return '';
+  const entry = findBookEntry(data, book);
+  return counterValue(entry, field) || '0';
+}
+
 // Find a book entry inside { books: [...] } safely.
 export function findBookEntry(data, book) {
   if (!data || !Array.isArray(data.books)) return null;
@@ -114,7 +129,6 @@ const TURNSTILE_SCRIPT_SRC =
   'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 const INTEREST_URL = '/api/books/interest';
 const EOI_URL = '/api/books/eoi';
-const BACK_TO_TOP_THRESHOLD = 400;
 
 function init() {
   const form = document.getElementById('books-eoi-form');
@@ -239,13 +253,13 @@ function renderCounters(data) {
 }
 
 function setCounters(book, data) {
-  const entry = typeof data === 'string' ? null : findBookEntry(data, book);
+  // Loading (no data object yet): leave the em dash placeholder in place --
+  // never render an apparent 0 before real data arrives.
+  if (!data || typeof data !== 'object') return;
   const interestEl = document.querySelector(`[data-book-interest="${book}"]`);
   const copiesEl = document.querySelector(`[data-book-copies="${book}"]`);
-  const interest = counterValue(entry, 'interestCount') || '0';
-  const copies = counterValue(entry, 'requestedCopies') || '0';
-  if (interestEl) interestEl.textContent = interest;
-  if (copiesEl) copiesEl.textContent = copies;
+  if (interestEl) interestEl.textContent = counterText(data, book, 'interestCount');
+  if (copiesEl) copiesEl.textContent = counterText(data, book, 'requestedCopies');
 }
 
 function announceCounters(els, message) {
@@ -346,34 +360,9 @@ function announce(statusEl, message) {
   }
 }
 
-// Page-local Back to Top: targets the Books page top (#top), independent of the
-// gallery script. Coexists with the fixed chapter navigator.
-function initBackToTop() {
-  const button = document.getElementById('back-to-top');
-  if (!button) return;
-
-  const reducedMotion = () =>
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  const sync = () => {
-    button.hidden = window.scrollY < BACK_TO_TOP_THRESHOLD;
-  };
-
-  window.addEventListener('scroll', sync, { passive: true });
-  window.addEventListener('resize', sync, { passive: true });
-
-  button.addEventListener('click', () => {
-    const behavior = reducedMotion() ? 'auto' : 'smooth';
-    const top = document.getElementById('top');
-    if (top) {
-      top.scrollIntoView({ behavior, block: 'start' });
-    } else {
-      window.scrollTo({ top: 0, behavior });
-    }
-  });
-
-  sync();
-}
+// Page-local Back to Top is powered by the shared ./back-to-top.js module
+// (imported above). The Books page passes no dialog, so the control only reacts
+// to scroll position and prefers-reduced-motion, targeting the page #top.
 
 // Browser only: in Node (tests importing the pure helpers) `document` is
 // undefined, so no DOM side-effects run.
