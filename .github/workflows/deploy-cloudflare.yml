@@ -26,6 +26,9 @@ on:
           - preview
           - production
 
+permissions:
+  contents: read
+
 concurrency:
   group: deploy-cloudflare-${{ github.ref }}
   cancel-in-progress: true
@@ -41,7 +44,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -75,7 +78,7 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v5
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
@@ -124,6 +127,19 @@ jobs:
               exit 1
             fi
           done
+          # HMAC / encryption secrets must meet the minimum key strength (>= 32
+          # chars). The runtime config gate enforces >= 32 *bytes* via UTF-8
+          # encoding; this deploy gate is a matching ASCII proxy that blocks an
+          # under-strength secret from ever being pushed. The length is never
+          # echoed (only a pass/fail message is printed).
+          for strong in ADMIN_SESSION_SECRET BOOK_EOI_HMAC_KEY BOOK_EOI_ENCRYPTION_KEY; do
+            val="${!strong}"
+            if [ "${#val}" -lt 32 ]; then
+              echo "Secret is shorter than 32 characters and does not meet the minimum key strength: $strong" >&2
+              exit 1
+            fi
+          done
+          echo "All required secrets are present and meet minimum strength."
         env:
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
           ADMIN_SESSION_SECRET: ${{ secrets.ADMIN_SESSION_SECRET }}

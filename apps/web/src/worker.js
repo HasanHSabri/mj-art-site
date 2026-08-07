@@ -13,9 +13,10 @@ import {
   MAX_BOOK_EOI_ADMITTED_LIMIT,
   DEFAULT_BOOK_EOI_LIMIT,
   TURNSTILE_ACTION,
-  EXPECTED_SCHEMA_SIGNATURE,
-  SCHEMA_TABLE,
-  computeColumnSignature,
+  createNeonSqlExecutor,
+  bookEoiSecretsOk,
+  compareLiveCatalog,
+  probeLiveCatalogShape,
   validateBookEoiPayload,
   validateStatusUpdate,
   hmacEmailHash,
@@ -28,8 +29,7 @@ import {
   updateBookEoiStatus,
   countBookInterest,
   listRecentBookEoi,
-  summarizeBookEoi,
-  probeBookEoiSchemaColumns
+  summarizeBookEoi
 } from './book-eoi.js';
 
 const ARTWORKS_KEY = 'artworks.json';
@@ -43,6 +43,12 @@ const MAX_FULL_BYTES = 4 * 1024 * 1024;
 const MAX_THUMB_BYTES = 1 * 1024 * 1024;
 const MAX_UPLOAD_COMBINED_BYTES = MAX_FULL_BYTES + MAX_THUMB_BYTES;
 const JPEG = 'image/jpeg';
+
+// Strict byte caps for small JSON bodies. Declared Content-Length is checked
+// first, then the actual UTF-8 byte length is measured (multibyte-safe) after
+// reading the body, so an oversized payload is rejected even with no header.
+const MAX_ADMIN_LOGIN_BODY_BYTES = 4 * 1024;
+const MAX_BOOK_EOI_PATCH_BODY_BYTES = 2 * 1024;
 
 // Strict allowlist for served uploaded-image keys. Only canonical catalog JPEG
 // paths (full/thumb) ever match; everything else -- including artworks.json,
@@ -133,7 +139,15 @@ export default {
     if (request.method === 'PATCH' && url.pathname.startsWith('/api/admin/books/eoi/')) {
       const auth = await requireAdmin(request, env);
       if (auth) return auth;
-      const id = decodeURIComponent(url.pathname.slice('/api/admin/books/eoi/'.length));
+      // Safe decode: a malformed percent-encoded id must never throw (which
+      // would surface as an opaque 500). It is not a valid resource -> JSON 404.
+      const rawId = url.pathname.slice('/api/admin/books/eoi/'.length);
+      let id;
+      try {
+        id = decodeURIComponent(rawId);
+      } catch {
+        return jsonResponse({ error: 'Not found.' }, 404);
+      }
       return handleAdminPatchBookEoi(request, env, id);
     }
     if (url.pathname.startsWith('/api/admin/books/')) {
@@ -348,9 +362,27 @@ async function login(request, env) {
     return jsonResponse({ error: 'Admin secrets are not configured.' }, 503);
   }
 
+  // Rate limit BEFORE the password compare, using the existing rate-limiter
+  // binding. A missing/undefined binding fails closed (no fallback, no separate
+  // binding). This caps brute-force attempts against the admin password.
+  const rl = await rateLimit(env, 'admin-login:' + (clientIp(request) || 'unknown'));
+  if (!rl.allowed) {
+    return jsonResponse({ error: rl.serviceError ? 'Service unavailable.' : 'Too many requests.' }, rl.serviceError ? 503 : 429);
+  }
+
+  // Declared + actual (multibyte-safe) byte cap on the login body.
+  const declaredLength = Number(request.headers.get('content-length') || 0);
+  if (declaredLength > MAX_ADMIN_LOGIN_BODY_BYTES) {
+    return jsonResponse({ error: 'Request body is too large.' }, 413);
+  }
+
   let body;
   try {
-    body = await request.json();
+    const text = await request.text();
+    if (new TextEncoder().encode(text).length > MAX_ADMIN_LOGIN_BODY_BYTES) {
+      return jsonResponse({ error: 'Request body is too large.' }, 413);
+    }
+    body = JSON.parse(text);
   } catch (error) {
     return jsonResponse({ error: 'Request body must be valid JSON.' }, 400);
   }
@@ -473,22 +505,25 @@ function base64UrlDecode(value) {
 // Build the Neon SQL executor for this request. The driver is imported lazily so
 // it is only loaded when a Books/DB route is actually hit (keeping the module
 // importable in environments where the package is absent, e.g. unit tests). The
-// BOOK_EOI_SQL env hook lets tests inject a fake executor.
+// raw neon() HTTP client is wrapped by createNeonSqlExecutor so the repository
+// seam stays the pure sql(text, params) form -- the neon client's plain
+// call-form is NOT used (see createNeonSqlExecutor for the 1.x compatibility
+// note). The BOOK_EOI_SQL env hook lets tests inject a fake executor.
 async function getBookEoiSql(env) {
   if (env.BOOK_EOI_SQL) return env.BOOK_EOI_SQL;
   const { neon } = await import('@neondatabase/serverless');
-  return neon(env.NEON_DATABASE_URL);
+  return createNeonSqlExecutor(neon(env.NEON_DATABASE_URL));
 }
 
-// Fail-closed config gate: every Books EOI secret/binding must be present before
-// any submission is accepted. A missing binding means the route is unavailable.
+// Fail-closed config gate: every Books EOI secret/binding must be present AND
+// the PII secrets must meet the minimum key length before any submission is
+// accepted. A missing binding or short key means the route is unavailable.
 function bookEoiConfigOk(env) {
   return Boolean(
     env.NEON_DATABASE_URL &&
-      env.BOOK_EOI_HMAC_KEY &&
-      env.BOOK_EOI_ENCRYPTION_KEY &&
       env.TURNSTILE_SECRET_KEY &&
-      env.BOOK_EOI_RATE_LIMITER
+      env.BOOK_EOI_RATE_LIMITER &&
+      bookEoiSecretsOk(env)
   );
 }
 
@@ -520,16 +555,35 @@ function sameOrigin(request) {
 }
 
 function clientIp(request) {
+  // Cloudflare-provided client IP only. The spoofable X-Forwarded-For header is
+  // intentionally NOT consulted: outside Cloudflare there is no trustworthy
+  // per-client IP, and a spoofed value would let an attacker shift buckets.
   const cf = request.headers.get('cf-connecting-ip');
-  if (cf) return cf;
-  const xff = request.headers.get('x-forwarded-for');
-  if (xff) return xff.split(',')[0].trim();
-  return null;
+  return cf ? cf.trim() : null;
 }
 
 function bookEoiRateLimitKey(request) {
   const ip = clientIp(request);
-  return ip ? `books-eoi:${ip}` : 'books-eoi:global';
+  // A single stable bucket for requests with no CF IP (no per-spoofed-value
+  // fan-out).
+  return ip ? `books-eoi:${ip}` : 'books-eoi:unknown';
+}
+
+// Fail-closed rate-limit wrapper around the existing BOOK_EOI_RATE_LIMITER
+// binding. Returns { allowed, serviceError }. serviceError is true (-> 503) when
+// the binding is missing/undefined OR limit() throws: both are service faults,
+// not a legitimate rate-limit denial. A real denial ({ success: false }) sets
+// allowed=false with serviceError=false (-> 429). There is no fallback binding.
+async function rateLimit(env, key) {
+  const rl = env.BOOK_EOI_RATE_LIMITER;
+  if (!rl || typeof rl.limit !== 'function') return { allowed: false, serviceError: true };
+  let decision;
+  try {
+    decision = await rl.limit({ key });
+  } catch {
+    return { allowed: false, serviceError: true };
+  }
+  return { allowed: Boolean(decision && decision.success !== false), serviceError: false };
 }
 
 function parseAllowedHostnames(value) {
@@ -541,14 +595,20 @@ function parseAllowedHostnames(value) {
 }
 
 // Verify a Turnstile token via Siteverify. Validates success, expected action,
-// and expected hostname (when configured). Returns { ok, failClosed }.
-// On network failure (cannot reach/exceed 2xx) it fails closed.
+// and expected hostname. The hostname allowlist is MANDATORY: a missing/empty
+// BOOK_EOI_ALLOWED_HOSTNAMES config fails closed. A per-call idempotency_key
+// (UUID) is sent so a retried verification is safe. On network failure (cannot
+// reach / non-2xx / unparseable body) it fails closed. Returns { ok, failClosed }.
 async function verifyTurnstile(env, token, remoteip) {
   const fetcher = env.TURNSTILE_FETCH || fetch;
+  const allowedHosts = parseAllowedHostnames(env.BOOK_EOI_ALLOWED_HOSTNAMES);
+  if (allowedHosts.length === 0) return { ok: false, failClosed: true };
+
   const form = new URLSearchParams();
   form.append('secret', env.TURNSTILE_SECRET_KEY);
   form.append('response', token);
   if (remoteip) form.append('remoteip', remoteip);
+  form.append('idempotency_key', crypto.randomUUID());
 
   let res;
   try {
@@ -569,9 +629,8 @@ async function verifyTurnstile(env, token, remoteip) {
   }
 
   const action = env.BOOK_EOI_TURNSTILE_ACTION || TURNSTILE_ACTION;
-  const allowedHosts = parseAllowedHostnames(env.BOOK_EOI_ALLOWED_HOSTNAMES);
   const actionOk = data.action === action;
-  const hostOk = allowedHosts.length === 0 ? true : allowedHosts.includes(String(data.hostname || '').toLowerCase());
+  const hostOk = allowedHosts.includes(String(data.hostname || '').toLowerCase());
   return { ok: Boolean(data.success && actionOk && hostOk), failClosed: false };
 }
 
@@ -612,9 +671,9 @@ async function handleCreateBookEoi(request, env) {
   }
   const { book, format, quantity, name, email, turnstileToken } = validation.fields;
 
-  const decision = await env.BOOK_EOI_RATE_LIMITER.limit({ key: bookEoiRateLimitKey(request) });
-  if (decision && decision.success === false) {
-    return jsonResponse({ error: 'Too many requests.' }, 429);
+  const decision = await rateLimit(env, bookEoiRateLimitKey(request));
+  if (!decision.allowed) {
+    return jsonResponse({ error: decision.serviceError ? 'Service unavailable.' : 'Too many requests.' }, decision.serviceError ? 503 : 429);
   }
 
   const turnstile = await verifyTurnstile(env, turnstileToken, clientIp(request));
@@ -700,35 +759,29 @@ async function handleBookInterest(env) {
   }
 }
 
-// GET /api/books/health -- schema-signature/read probe for post-deploy
-// validation. No PII, no credentials. Compares the live column-name signature
-// to the expected constant.
+// GET /api/books/health -- runtime schema-drift probe for post-deploy
+// validation. Compares the LIVE catalog shape (columns/types/nullability/
+// defaults + CHECK value sets + UNIQUE constraint + exact indexes) to the
+// canonical model. No PII, no credentials. The PUBLIC response reveals only the
+// outcome (healthy | mismatch | unavailable) and never the differences, column
+// data, or any internal detail.
 async function handleBookHealth(env) {
   if (!bookEoiReadConfigOk(env)) {
-    return jsonResponse({ status: 'unhealthy', error: 'Not configured.' }, 503);
+    return jsonResponse({ status: 'unavailable' }, 503);
   }
   let sql;
   try {
     sql = await getBookEoiSql(env);
   } catch {
-    return jsonResponse({ status: 'unhealthy', error: 'Database unreachable.' }, 503);
+    return jsonResponse({ status: 'unavailable' }, 503);
   }
   try {
-    const columns = await probeBookEoiSchemaColumns(sql);
-    const tableExists = columns.length > 0;
-    const liveSignature = computeColumnSignature(SCHEMA_TABLE, columns);
-    const match = tableExists && liveSignature === EXPECTED_SCHEMA_SIGNATURE;
-    return jsonResponse(
-      {
-        status: match ? 'healthy' : 'degraded',
-        tableExists,
-        columnCount: columns.length,
-        schemaSignature: match ? 'match' : 'mismatch'
-      },
-      match ? 200 : 503
-    );
+    const live = await probeLiveCatalogShape(sql);
+    const result = compareLiveCatalog(live);
+    if (result.match) return jsonResponse({ status: 'healthy' }, 200);
+    return jsonResponse({ status: 'mismatch' }, 503);
   } catch {
-    return jsonResponse({ status: 'unhealthy', error: 'Probe failed.' }, 503);
+    return jsonResponse({ status: 'unavailable' }, 503);
   }
 }
 
@@ -804,9 +857,19 @@ async function handleAdminPatchBookEoi(request, env, id) {
   if (contentType.split(';')[0].trim().toLowerCase() !== 'application/json') {
     return jsonResponse({ error: 'Request must be JSON.' }, 415);
   }
+
+  const declaredLength = Number(request.headers.get('content-length') || 0);
+  if (declaredLength > MAX_BOOK_EOI_PATCH_BODY_BYTES) {
+    return jsonResponse({ error: 'Request body is too large.' }, 413);
+  }
+
   let body;
   try {
-    body = await request.json();
+    const text = await request.text();
+    if (new TextEncoder().encode(text).length > MAX_BOOK_EOI_PATCH_BODY_BYTES) {
+      return jsonResponse({ error: 'Request body is too large.' }, 413);
+    }
+    body = JSON.parse(text);
   } catch {
     return jsonResponse({ error: 'Request body is not valid JSON.' }, 400);
   }

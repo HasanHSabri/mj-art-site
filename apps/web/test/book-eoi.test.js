@@ -6,6 +6,7 @@ import * as bookEoi from '../src/book-eoi.js';
 import {
   extractCreateTableBody,
   parseTableBody,
+  parseChecks,
   extractIndexes,
   stripSqlComments,
   liveCatalogProbe
@@ -18,19 +19,28 @@ const {
   MAX_BOOK_EOI_BODY_BYTES,
   MAX_BOOK_EOI_ADMITTED_LIMIT,
   EXPECTED_SCHEMA_SIGNATURE,
+  EXPECTED_LIVE_CATALOG,
+  MIN_SECRET_BYTES,
   SCHEMA_TABLE,
   computeColumnSignature,
+  createNeonSqlExecutor,
+  bookEoiSecretsOk,
+  secretByteLength,
+  compareLiveCatalog,
+  probeLiveCatalogShape,
   validateBookEoiPayload,
   validateStatusUpdate,
   normalizeEmail,
   canonicalizeName,
   hmacEmailHash,
   encryptPii,
-  decryptPii
+  decryptPii,
+  isUniqueViolation
 } = bookEoi;
 
-const HMAC_KEY = 'test-hmac-secret';
-const ENC_KEY = 'test-encryption-secret';
+// Secrets must meet the >=32-byte runtime gate, so the test keys are >=32 chars.
+const HMAC_KEY = 'test-hmac-secret-' + '0123456789'.repeat(3);
+const ENC_KEY = 'test-enc-secret--' + '0123456789'.repeat(3);
 const SESSION_SECRET = 'test-secret-key';
 const SESSION_COOKIE = 'mj_art_admin';
 const SESSION_MAX_AGE_MS = 60 * 60 * 8 * 1000;
@@ -572,38 +582,170 @@ test('interest fails closed 503 when DB throws', async () => {
 });
 
 // ===========================================================================
-// 8. Public GET /api/books/health (schema signature, no PII/credentials)
+// 8. Public GET /api/books/health (live-catalog shape comparison; outcome only)
 // ===========================================================================
+//
+// Health now compares the LIVE catalog (columns/types/nullability/defaults +
+// CHECK value sets + UNIQUE + exact indexes) to EXPECTED_LIVE_CATALOG and
+// reveals only healthy | mismatch | unavailable -- never the differences.
 
-test('health reports healthy when live column signature matches', async () => {
-  const cols = 'book_code,created_at,email_hash,format_code,id,pii_ciphertext,pii_iv,quantity,status,updated_at'.split(',');
-  const sql = makeSql(() => cols.map((c) => ({ column_name: c })));
-  const env = makeEnv({ sql });
+function liveColumnsFixture() {
+  return EXPECTED_LIVE_CATALOG.columns.map((c) => ({
+    column_name: c.name,
+    data_type: c.dataType,
+    is_nullable: c.nullable ? 'YES' : 'NO',
+    column_default: c.default,
+    character_maximum_length: c.charLength == null ? null : c.charLength
+  }));
+}
+function liveChecksFixture() {
+  return [
+    { name: 'book_eoi_book_code_check', definition: "CHECK ((book_code = ANY (ARRAY['biography'::text, 'childrens'::text])))" },
+    { name: 'book_eoi_format_code_check', definition: "CHECK ((format_code = ANY (ARRAY['hardcover'::text, 'paperback'::text, 'ebook'::text, 'unsure'::text])))" },
+    { name: 'book_eoi_status_check', definition: "CHECK ((status = ANY (ARRAY['new'::text, 'contacted'::text, 'withdrawn'::text])))" },
+    { name: 'book_eoi_quantity_check', definition: 'CHECK ((quantity >= 1) AND (quantity <= 10))' }
+  ];
+}
+function liveUniqueFixture() {
+  return [{ name: 'book_eoi_book_email_unique', definition: 'UNIQUE (book_code, email_hash)' }];
+}
+function liveIndexesFixture() {
+  return [
+    { name: 'book_eoi_book_status_idx', definition: 'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING btree (book_code, status)' },
+    { name: 'book_eoi_book_created_idx', definition: 'CREATE INDEX book_eoi_book_created_idx ON mj_eoi.book_eoi USING btree (book_code, created_at DESC)' }
+  ];
+}
+function liveCatalogFixture() {
+  return { columns: liveColumnsFixture(), checks: liveChecksFixture(), unique: liveUniqueFixture(), indexes: liveIndexesFixture() };
+}
+function liveCatalogSql(catalog) {
+  return makeSql((text) => {
+    if (/information_schema\.columns/.test(text)) return catalog.columns;
+    if (/con\.contype = 'c'/.test(text)) return catalog.checks;
+    if (/con\.contype = 'u'/.test(text)) return catalog.unique;
+    if (/pg_indexes/.test(text)) return catalog.indexes;
+    throw new Error('unexpected probe SQL: ' + text);
+  });
+}
+
+test('health reports healthy when the live catalog matches the canonical shape', async () => {
+  const env = makeEnv({ sql: liveCatalogSql(liveCatalogFixture()) });
   const res = await worker.fetch(req('/api/books/health'), env);
   assert.equal(res.status, 200);
-  const data = await body(res);
-  assert.equal(data.status, 'healthy');
-  assert.equal(data.schemaSignature, 'match');
+  assert.deepEqual(await body(res), { status: 'healthy' });
 });
 
-test('health reports degraded on column drift', async () => {
-  const sql = makeSql(() => [{ column_name: 'id' }, { column_name: 'book_code' }]);
-  const env = makeEnv({ sql });
+test('health reports mismatch (503) when a column type drifts', async () => {
+  const drifted = liveCatalogFixture();
+  drifted.columns[2] = { ...drifted.columns[2], data_type: 'text' }; // email_hash char -> text
+  const env = makeEnv({ sql: liveCatalogSql(drifted) });
   const res = await worker.fetch(req('/api/books/health'), env);
   assert.equal(res.status, 503);
-  const data = await body(res);
-  assert.equal(data.schemaSignature, 'mismatch');
+  assert.deepEqual(await body(res), { status: 'mismatch' });
 });
 
-test('health response contains no credentials or PII', async () => {
-  const cols = 'book_code,created_at,email_hash,format_code,id,pii_ciphertext,pii_iv,quantity,status,updated_at'.split(',');
-  const sql = makeSql(() => cols.map((c) => ({ column_name: c })));
-  const env = makeEnv({ sql });
+test('health reports mismatch when a CHECK value set drifts', async () => {
+  const drifted = liveCatalogFixture();
+  drifted.checks[0] = { name: 'book_eoi_book_code_check', definition: "CHECK ((book_code = ANY (ARRAY['biography'::text])))" };
+  const env = makeEnv({ sql: liveCatalogSql(drifted) });
+  const res = await worker.fetch(req('/api/books/health'), env);
+  assert.equal(res.status, 503);
+  assert.deepEqual(await body(res), { status: 'mismatch' });
+});
+
+test('health reports unavailable when the DB throws', async () => {
+  const env = makeEnv({ sql: makeSql(() => { throw new Error('db down'); }) });
+  const res = await worker.fetch(req('/api/books/health'), env);
+  assert.equal(res.status, 503);
+  assert.deepEqual(await body(res), { status: 'unavailable' });
+});
+
+test('health response reveals only the outcome (no columns/types/details/credentials)', async () => {
+  const env = makeEnv({ sql: liveCatalogSql(liveCatalogFixture()) });
   const res = await worker.fetch(req('/api/books/health'), env);
   const text = await res.text();
-  for (const needle of [env.NEON_DATABASE_URL, 'postgres://', 'password', '@example']) {
-    assert.equal(text.includes(needle), false);
+  assert.deepEqual(JSON.parse(text), { status: 'healthy' });
+  for (const needle of ['column', 'mismatch', 'count', 'signature', 'data_type', 'pii_', 'email_hash', env.NEON_DATABASE_URL, 'postgres://', 'password']) {
+    assert.equal(text.toLowerCase().includes(needle.toLowerCase()), false, `leaked ${needle}`);
   }
+});
+
+test('health returns unavailable when NEON_DATABASE_URL is missing', async () => {
+  const env = makeEnv({ withConfig: false });
+  const res = await worker.fetch(req('/api/books/health'), env);
+  assert.equal(res.status, 503);
+  assert.deepEqual(await body(res), { status: 'unavailable' });
+});
+
+test('trailing slash on /api/books/health is intentionally NOT normalized -> JSON 404', async () => {
+  const env = makeEnv({ sql: liveCatalogSql(liveCatalogFixture()) });
+  const res = await worker.fetch(req('/api/books/health/'), env);
+  assert.equal(res.status, 404);
+  assert.equal(res.headers.get('content-type'), 'application/json');
+});
+
+// --- Pure live-catalog comparison tests (compareLiveCatalog) ---
+
+test('compareLiveCatalog: exact-match fixture is a match with no mismatches', () => {
+  const r = compareLiveCatalog(liveCatalogFixture());
+  assert.equal(r.match, true);
+  assert.deepEqual(r.mismatches, []);
+});
+
+test('compareLiveCatalog: column count, order, type, nullable, and default drift are all detected', () => {
+  const tooFew = liveCatalogFixture();
+  tooFew.columns = tooFew.columns.slice(0, 9);
+  assert.equal(compareLiveCatalog(tooFew).match, false);
+
+  const reordered = liveCatalogFixture();
+  const cols = [...reordered.columns];
+  [cols[0], cols[1]] = [cols[1], cols[0]];
+  reordered.columns = cols;
+  assert.equal(compareLiveCatalog(reordered).match, false);
+
+  const nullableDrift = liveCatalogFixture();
+  nullableDrift.columns[1] = { ...nullableDrift.columns[1], is_nullable: 'YES' };
+  assert.equal(compareLiveCatalog(nullableDrift).match, false);
+
+  const defaultDrift = liveCatalogFixture();
+  defaultDrift.columns[7] = { ...defaultDrift.columns[7], column_default: "'archived'::text" };
+  assert.equal(compareLiveCatalog(defaultDrift).match, false);
+
+  const charLenDrift = liveCatalogFixture();
+  charLenDrift.columns[2] = { ...charLenDrift.columns[2], character_maximum_length: 128 };
+  assert.equal(compareLiveCatalog(charLenDrift).match, false);
+});
+
+test('compareLiveCatalog: CHECK value-set/bounds drift, missing UNIQUE, and wrong index columns are detected', () => {
+  const checkDrift = liveCatalogFixture();
+  checkDrift.checks[3] = { name: 'book_eoi_quantity_check', definition: 'CHECK ((quantity >= 1) AND (quantity <= 99))' };
+  assert.equal(compareLiveCatalog(checkDrift).match, false);
+
+  const missingCheck = liveCatalogFixture();
+  missingCheck.checks = missingCheck.checks.slice(0, 3);
+  assert.equal(compareLiveCatalog(missingCheck).match, false);
+
+  const missingUnique = liveCatalogFixture();
+  missingUnique.unique = [];
+  assert.equal(compareLiveCatalog(missingUnique).match, false);
+
+  const wrongIndex = liveCatalogFixture();
+  wrongIndex.indexes[0] = { name: 'book_eoi_book_status_idx', definition: 'CREATE INDEX book_eoi_book_status_idx ON mj_eoi.book_eoi USING btree (status)' };
+  assert.equal(compareLiveCatalog(wrongIndex).match, false);
+});
+
+test('probeLiveCatalogShape issues four catalog reads and assembles the live shape', async () => {
+  const sql = makeSql((text) => {
+    if (/information_schema\.columns/.test(text)) return liveColumnsFixture();
+    if (/contype = 'c'/.test(text)) return liveChecksFixture();
+    if (/contype = 'u'/.test(text)) return liveUniqueFixture();
+    if (/pg_indexes/.test(text)) return liveIndexesFixture();
+    throw new Error('unexpected: ' + text);
+  });
+  const shape = await probeLiveCatalogShape(sql);
+  assert.equal(sql.calls.length, 4);
+  assert.equal(shape.columns.length, 10);
+  assert.equal(compareLiveCatalog(shape).match, true);
 });
 
 // ===========================================================================
@@ -862,6 +1004,40 @@ test('parseTableBody extracts all 10 columns with types', () => {
   assert.match(qtyCol.type, /integer/i);
 });
 
+test('parseTableBody captures exact ordered types, nullability, and defaults', () => {
+  const sql = readFileSync(SQL_PATH, 'utf8');
+  const { columns } = parseTableBody(extractCreateTableBody(sql).body);
+  const want = [
+    { name: 'id', type: 'uuid', nullable: false, default: null },
+    { name: 'book_code', type: 'text', nullable: false, default: null },
+    { name: 'email_hash', type: 'char(64)', nullable: false, default: null },
+    { name: 'pii_ciphertext', type: 'text', nullable: false, default: null },
+    { name: 'pii_iv', type: 'text', nullable: false, default: null },
+    { name: 'quantity', type: 'integer', nullable: false, default: null },
+    { name: 'format_code', type: 'text', nullable: false, default: null },
+    { name: 'status', type: 'text', nullable: false, default: "'new'" },
+    { name: 'created_at', type: 'timestamptz', nullable: false, default: 'now()' },
+    { name: 'updated_at', type: 'timestamptz', nullable: false, default: 'now()' }
+  ];
+  assert.equal(columns.length, want.length);
+  for (let i = 0; i < want.length; i++) {
+    assert.equal(columns[i].name, want[i].name, `col #${i} name`);
+    assert.equal(columns[i].type, want[i].type, `col ${want[i].name} type`);
+    assert.equal(columns[i].nullable, want[i].nullable, `col ${want[i].name} nullable`);
+    assert.equal(columns[i].default, want[i].default, `col ${want[i].name} default`);
+  }
+});
+
+test('parseChecks extracts CHECK value sets and quantity bounds', () => {
+  const sql = readFileSync(SQL_PATH, 'utf8');
+  const { tableConstraints } = parseTableBody(extractCreateTableBody(sql).body);
+  const byName = Object.fromEntries(parseChecks(tableConstraints).map((c) => [c.name, c]));
+  assert.deepEqual(byName.book_eoi_book_code_check.values, ['biography', 'childrens']);
+  assert.deepEqual(byName.book_eoi_format_code_check.values.sort(), ['ebook', 'hardcover', 'paperback', 'unsure']);
+  assert.deepEqual(byName.book_eoi_status_check.values, ['contacted', 'new', 'withdrawn']);
+  assert.deepEqual(byName.book_eoi_quantity_check.bounds, [1, 10]);
+});
+
 test('extractIndexes finds both required indexes', () => {
   const sql = readFileSync(SQL_PATH, 'utf8');
   const indexes = extractIndexes(sql);
@@ -901,3 +1077,279 @@ test('the SQL documents the SELECT/INSERT/UPDATE-only role contract', () => {
   assert.equal(/\bDELETE\s+FROM\b/i.test(stripped), false);
   assert.equal(/\bTRUNCATE\b/i.test(stripped), false);
 });
+
+// ===========================================================================
+// 13. Hardening regressions (Neon adapter, HKDF/secrets, robustness, login)
+// ===========================================================================
+
+// --- Neon 1.1 adapter contract (installed-driver boundary) ---
+
+test('installed @neondatabase/serverless neon() client exposes .query(text, params)', async () => {
+  const { neon } = await import('@neondatabase/serverless');
+  const client = neon('postgres://u:p@host/db');
+  assert.equal(typeof client.query, 'function');
+});
+
+test('createNeonSqlExecutor delegates to neonClient.query, never the tagged-template call form', async () => {
+  const { neon } = await import('@neondatabase/serverless');
+  const client = neon('postgres://u:p@host/db');
+  const calls = [];
+  client.query = (text, params) => { calls.push({ text, params }); return [{ x: 1 }]; };
+  const sql = createNeonSqlExecutor(client);
+  // Must NOT return the raw client (the broken conventional function form).
+  assert.notEqual(sql, client);
+  // The executor is a plain function; it does not itself expose .query.
+  assert.equal(typeof sql.query, 'undefined');
+  const rows = await sql('SELECT $1::int', [42]);
+  assert.deepEqual(rows, [{ x: 1 }]);
+  assert.deepEqual(calls, [{ text: 'SELECT $1::int', params: [42] }]);
+});
+
+test('createNeonSqlExecutor throws when neonClient.query is absent', () => {
+  assert.throws(() => createNeonSqlExecutor({}), /query/);
+  assert.throws(() => createNeonSqlExecutor(null), /query/);
+});
+
+test('production executor wraps neon() via createNeonSqlExecutor (no raw function-form return)', () => {
+  const src = readFileSync(path.resolve(import.meta.dirname, '..', 'src', 'worker.js'), 'utf8');
+  assert.match(src, /return createNeonSqlExecutor\(neon\(env\.NEON_DATABASE_URL\)\)/);
+  // The broken form -- returning the neon() client directly -- must be absent.
+  assert.equal(/return neon\(env\.NEON_DATABASE_URL\)/.test(src), false);
+});
+
+// --- HKDF / secret-length gate ---
+
+test('bookEoiSecretsOk requires >=32-byte HMAC and encryption secrets', () => {
+  assert.equal(bookEoiSecretsOk({ BOOK_EOI_HMAC_KEY: 'x'.repeat(32), BOOK_EOI_ENCRYPTION_KEY: 'x'.repeat(32) }), true);
+  assert.equal(bookEoiSecretsOk({ BOOK_EOI_HMAC_KEY: 'short', BOOK_EOI_ENCRYPTION_KEY: 'x'.repeat(32) }), false);
+  assert.equal(bookEoiSecretsOk({ BOOK_EOI_HMAC_KEY: 'x'.repeat(32), BOOK_EOI_ENCRYPTION_KEY: 'x'.repeat(31) }), false);
+  assert.equal(bookEoiSecretsOk({ BOOK_EOI_HMAC_KEY: 'x'.repeat(31), BOOK_EOI_ENCRYPTION_KEY: 'x'.repeat(31) }), false);
+});
+
+test('secretByteLength counts UTF-8 bytes, not code points', () => {
+  assert.equal(secretByteLength('x'.repeat(32)), 32);
+  assert.equal(secretByteLength('☃'), 3); // 1 code point, 3 UTF-8 bytes
+  assert.equal(MIN_SECRET_BYTES, 32);
+});
+
+test('AES-GCM works with a multibyte secret of sufficient byte length (HKDF input is UTF-8 bytes)', async () => {
+  const id = crypto.randomUUID();
+  const secret = '☃'.repeat(12); // 36 bytes
+  assert.ok(secretByteLength(secret) >= 32);
+  const { ciphertext, iv } = await encryptPii(secret, { name: 'Jane', email: 'jane@example.com' }, id);
+  const recovered = await decryptPii(secret, ciphertext, iv, id);
+  assert.deepEqual(recovered, { name: 'Jane', email: 'jane@example.com' });
+});
+
+test('POST returns 503 when a PII secret is shorter than 32 bytes', async () => {
+  const env = makeEnv({ sql: makeSql(insertResponder()) });
+  env.BOOK_EOI_HMAC_KEY = 'short';
+  env.BOOK_EOI_ENCRYPTION_KEY = 'x'.repeat(32);
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
+  assert.equal(res.status, 503);
+});
+
+// --- unique-violation + insert race ---
+
+test('isUniqueViolation matches only PG SQLSTATE 23505', () => {
+  assert.equal(isUniqueViolation({ code: '23505' }), true);
+  assert.equal(isUniqueViolation({ code: '23505', message: 'duplicate' }), true);
+  assert.equal(isUniqueViolation({ code: '23503' }), false); // FK violation
+  assert.equal(isUniqueViolation({ message: 'unique constraint failed: foo' }), false);
+  assert.equal(isUniqueViolation(null), false);
+  assert.equal(isUniqueViolation(undefined), false);
+});
+
+test('concurrent insert race (unique violation) is treated as idempotent success', async () => {
+  let insertAttempted = false;
+  const sql = makeSql((text) => {
+    if (/SELECT id, status/.test(text)) return [];
+    if (/^INSERT INTO mj_eoi/.test(text)) {
+      insertAttempted = true;
+      const err = new Error('duplicate key value violates unique constraint');
+      err.code = '23505';
+      throw err;
+    }
+    throw new Error('unexpected: ' + text);
+  });
+  const env = makeEnv({ sql });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await body(res), { ok: true });
+  assert.equal(insertAttempted, true);
+});
+
+test('a non-23505 SQL error during insert is NOT swallowed (fails closed 503)', async () => {
+  const sql = makeSql((text) => {
+    if (/SELECT id, status/.test(text)) return [];
+    if (/^INSERT INTO mj_eoi/.test(text)) {
+      const err = new Error('unique constraint failed: something'); // message says "unique"
+      err.code = '23503'; // ...but it is actually a foreign-key violation
+      throw err;
+    }
+    throw new Error('unexpected: ' + text);
+  });
+  const env = makeEnv({ sql });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
+  assert.equal(res.status, 503);
+});
+
+// --- XFF removal + stable unknown bucket ---
+
+test('rate-limit key uses cf-connecting-ip and ignores spoofable X-Forwarded-For', async () => {
+  let seenKey;
+  const env = makeEnv({
+    sql: makeSql(insertResponder()),
+    rateLimiter: { async limit({ key }) { seenKey = key; return { success: true }; } }
+  });
+  await worker.fetch(req('/api/books/eoi', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'http://localhost', 'cf-connecting-ip': '198.51.100.2', 'x-forwarded-for': '10.0.0.99' },
+    body: JSON.stringify(validPayload())
+  }), env);
+  assert.equal(seenKey, 'books-eoi:198.51.100.2');
+});
+
+test('rate-limit key falls back to a single stable unknown bucket (no XFF fan-out)', async () => {
+  let seenKey;
+  const env = makeEnv({
+    sql: makeSql(insertResponder()),
+    rateLimiter: { async limit({ key }) { seenKey = key; return { success: true }; } }
+  });
+  await worker.fetch(req('/api/books/eoi', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: 'http://localhost', 'x-forwarded-for': '10.0.0.99' },
+    body: JSON.stringify(validPayload())
+  }), env);
+  assert.equal(seenKey, 'books-eoi:unknown');
+});
+
+// --- Turnstile idempotency_key + hostname-config fail-closed ---
+
+test('Turnstile verification includes an idempotency_key UUID', async () => {
+  let captured = null;
+  const env = makeEnv({
+    sql: makeSql(insertResponder()),
+    turnstile: async (_url, init) => {
+      const form = new URLSearchParams(init.body);
+      captured = { idempotency_key: form.get('idempotency_key') };
+      return okTurnstile()();
+    }
+  });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
+  assert.equal(res.status, 200);
+  assert.ok(captured, 'siteverify was called');
+  assert.match(
+    captured.idempotency_key,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  );
+});
+
+test('missing Turnstile hostname allowlist fails closed (503)', async () => {
+  const env = makeEnv({ sql: makeSql(insertResponder()) });
+  delete env.BOOK_EOI_ALLOWED_HOSTNAMES;
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
+  assert.equal(res.status, 503);
+});
+
+// --- Rate-limiter fail-closed (public EOI) ---
+
+test('POST fails closed 503 when the rate-limiter binding is undefined', async () => {
+  const env = makeEnv({ sql: makeSql(insertResponder()) });
+  env.BOOK_EOI_RATE_LIMITER = undefined;
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
+  assert.equal(res.status, 503);
+});
+
+test('POST fails closed 503 when rate-limiter.limit() throws', async () => {
+  const env = makeEnv({
+    sql: makeSql(insertResponder()),
+    rateLimiter: { async limit() { throw new Error('limiter down'); } }
+  });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
+  assert.equal(res.status, 503);
+});
+
+// --- Admin login: rate-limit before password compare + body cap ---
+
+test('admin login is rate-limited before the password compare', async () => {
+  const env = makeEnv({});
+  env.BOOK_EOI_RATE_LIMITER = { async limit() { return { success: false }; } };
+  const res = await worker.fetch(req('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: 'wrong-password' })
+  }), env);
+  assert.equal(res.status, 429); // not 401: the limiter precedes the password check
+});
+
+test('admin login fails closed 503 when the rate-limiter binding is missing', async () => {
+  const env = makeEnv({});
+  delete env.BOOK_EOI_RATE_LIMITER;
+  const res = await worker.fetch(req('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: 'secret' })
+  }), env);
+  assert.equal(res.status, 503);
+});
+
+test('admin login rejects an oversized declared body with 413', async () => {
+  const env = makeEnv({});
+  const res = await worker.fetch(req('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-length': String(5 * 1024) },
+    body: JSON.stringify({ password: 'secret' })
+  }), env);
+  assert.equal(res.status, 413);
+});
+
+test('admin login still succeeds when the rate limiter allows', async () => {
+  const env = makeEnv({});
+  const res = await worker.fetch(req('/api/admin/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ password: 'secret' })
+  }), env);
+  assert.equal(res.status, 200);
+});
+
+// --- Books admin PATCH: body cap + safe id decode ---
+
+test('admin PATCH rejects an oversized declared body with 413', async () => {
+  const id = crypto.randomUUID();
+  const env = makeEnv({ sql: makeSql(() => []) });
+  const res = await worker.fetch(await authedReq('/api/admin/books/eoi/' + id, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'content-length': String(4 * 1024) },
+    body: JSON.stringify({ status: 'new' })
+  }), env);
+  assert.equal(res.status, 413);
+});
+
+test('admin PATCH safe-decodes a malformed percent-encoded id to JSON 404 (never throws)', async () => {
+  const env = makeEnv({ sql: makeSql(() => { throw new Error('must not query'); }) });
+  // '%E0%A4' is a truncated/invalid UTF-8 percent sequence that makes
+  // decodeURIComponent throw if it is not guarded.
+  const res = await worker.fetch(await authedReq('/api/admin/books/eoi/%E0%A4', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ status: 'new' })
+  }), env);
+  assert.equal(res.status, 404);
+  assert.equal(res.headers.get('content-type'), 'application/json');
+});
+
+test('admin PATCH: oversized actual UTF-8 body is rejected with 413', async () => {
+  const id = crypto.randomUUID();
+  const env = makeEnv({ sql: makeSql(() => []) });
+  // No Content-Length header; the worker must measure the actual UTF-8 bytes.
+  const payload = { status: 'new', pad: '☃'.repeat(2000) };
+  const res = await worker.fetch(await authedReq('/api/admin/books/eoi/' + id, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload)
+  }), env);
+  assert.equal(res.status, 413);
+});
+

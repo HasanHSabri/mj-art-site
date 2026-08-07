@@ -51,8 +51,37 @@ export function extractCreateTableBody(sql) {
   return { name: m[1], body: m[2] };
 }
 
+// Parse a single column definition line into { name, type, nullable, default }.
+// `type` is the normalized base type (e.g. 'uuid', 'char(64)', 'integer',
+// 'timestamptz'); column-constraint keywords (NOT NULL, PRIMARY KEY, DEFAULT,
+// CHECK, REFERENCES) are separated out.
+function parseColumnDefinition(line) {
+  const cleaned = line.replace(/--.*$/, '').trim();
+  const m = cleaned.match(/^([A-Za-z_][A-Za-z0-9_]*)\s+(.+)$/);
+  if (!m) return null;
+  const name = m[1].toLowerCase();
+  let rest = m[2];
+
+  let defaultVal = null;
+  const dm = rest.match(/\bDEFAULT\s+('(?:[^']|'')*'|[A-Za-z0-9_]+(?:\s*\(\s*\))?)/i);
+  if (dm) {
+    defaultVal = dm[1].replace(/\s+/g, ' ').trim();
+    rest = rest.replace(/\bDEFAULT\s+('(?:[^']|'')*'|[A-Za-z0-9_]+(?:\s*\(\s*\))?)/i, ' ');
+  }
+
+  const isPrimaryKey = /\bPRIMARY\s+KEY\b/i.test(rest);
+  const nullable = !isPrimaryKey && !/\bNOT\s+NULL\b/i.test(rest);
+
+  const tm = rest.match(
+    /^\s*(uuid|text|char\s*\(\s*\d+\s*\)|character(?:\s+varying)?(?:\s*\(\s*\d+\s*\))?|integer|smallint|bigint|boolean|bool|timestamptz|timestamp(?:\s+with(?:out)?\s+time\s+zone)?|date|numeric\s*\(\s*\d+\s*,\s*\d+\s*\)|jsonb?|bytea|serial|bigserial)(?=\s|$)/i
+  );
+  const type = tm ? tm[1].replace(/\s+/g, ' ').trim().toLowerCase() : rest.replace(/\s+/g, ' ').trim().toLowerCase();
+
+  return { name, type, nullable, default: defaultVal };
+}
+
 // Parse column + table-level constraint lines out of a CREATE TABLE body.
-// Returns { columns: [{name, type}], tableConstraints: [raw lines] }.
+// Returns { columns: [{name, type, nullable, default}], tableConstraints: [raw lines] }.
 export function parseTableBody(body) {
   const lines = splitTopLevel(body);
   const columns = [];
@@ -65,12 +94,27 @@ export function parseTableBody(body) {
       tableConstraints.push(trimmed);
       continue;
     }
-    const cm = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\s+(.+?)(?:\s+--.*)?$/);
-    if (cm) {
-      columns.push({ name: cm[1].toLowerCase(), type: cm[2].replace(/\s+--.*/, '').trim() });
-    }
+    const col = parseColumnDefinition(trimmed);
+    if (col) columns.push(col);
   }
   return { columns, tableConstraints };
+}
+
+// Parse table-level CHECK constraints into { name, values[], bounds[] }.
+// `values` are the quoted string literals (for IN-style checks); `bounds` are
+// the integer literals (for BETWEEN-style checks). Both sorted.
+export function parseChecks(tableConstraints) {
+  const out = [];
+  for (const line of tableConstraints) {
+    const m = line.match(/CONSTRAINT\s+([A-Za-z0-9_]+)\s+CHECK\s*\(([\s\S]*)\)\s*$/i);
+    if (!m) continue;
+    const name = m[1].toLowerCase();
+    const body = m[2];
+    const values = (body.match(/'([^']*)'/g) || []).map((s) => s.slice(1, -1)).sort();
+    const bounds = (body.match(/\b\d+\b/g) || []).map(Number).sort((a, b) => a - b);
+    out.push({ name, values, bounds });
+  }
+  return out;
 }
 
 // Split a CREATE TABLE body on commas that are not nested in parentheses.
@@ -188,6 +232,37 @@ function main() {
   }
 
   const { columns, tableConstraints } = parseTableBody(table.body);
+
+  // Exact ordered columns with exact base type, nullability, and default.
+  // Mirrors database/mj-eoi-schema.sql verbatim (the canonical source).
+  const EXPECTED_COLUMNS_FULL = [
+    { name: 'id', type: 'uuid', nullable: false, default: null },
+    { name: 'book_code', type: 'text', nullable: false, default: null },
+    { name: 'email_hash', type: 'char(64)', nullable: false, default: null },
+    { name: 'pii_ciphertext', type: 'text', nullable: false, default: null },
+    { name: 'pii_iv', type: 'text', nullable: false, default: null },
+    { name: 'quantity', type: 'integer', nullable: false, default: null },
+    { name: 'format_code', type: 'text', nullable: false, default: null },
+    { name: 'status', type: 'text', nullable: false, default: "'new'" },
+    { name: 'created_at', type: 'timestamptz', nullable: false, default: 'now()' },
+    { name: 'updated_at', type: 'timestamptz', nullable: false, default: 'now()' }
+  ];
+  if (columns.length !== EXPECTED_COLUMNS_FULL.length) {
+    fail(`expected ${EXPECTED_COLUMNS_FULL.length} columns, found ${columns.length}`);
+  }
+  for (let i = 0; i < EXPECTED_COLUMNS_FULL.length; i++) {
+    const want = EXPECTED_COLUMNS_FULL[i];
+    const got = columns[i];
+    if (!got) { fail(`column #${i + 1} missing: expected ${want.name}`); continue; }
+    if (got.name !== want.name) fail(`column #${i + 1} name: expected ${want.name}, got ${got.name}`);
+    if (got.type !== want.type) fail(`column ${want.name} type: expected ${want.type}, got ${got.type}`);
+    if (got.nullable !== want.nullable) fail(`column ${want.name} nullable: expected ${want.nullable}, got ${got.nullable}`);
+    const gotDefault = got.default == null ? null : got.default.toLowerCase().replace(/\s+/g, ' ').trim();
+    const wantDefault = want.default == null ? null : want.default.toLowerCase().replace(/\s+/g, ' ').trim();
+    if (gotDefault !== wantDefault) fail(`column ${want.name} default: expected ${want.default}, got ${got.default}`);
+  }
+
+  // Column-name signature still must match the app constant.
   const requiredColumns = new Set(
     'id,book_code,email_hash,pii_ciphertext,pii_iv,quantity,format_code,status,created_at,updated_at'.split(',')
   );
@@ -204,18 +279,42 @@ function main() {
     fail('column signature drift:\n  expected: ' + EXPECTED_SCHEMA_SIGNATURE + '\n  got:      ' + signature);
   }
 
-  const joined = tableConstraints.join('\n');
-  for (const needle of ['book_code', 'format_code', 'status', 'quantity', 'BETWEEN 1 AND 10']) {
-    if (!joined.includes(needle)) fail('expected CHECK referencing "' + needle + '" not found');
+  // Exact CHECK value sets / numeric bounds.
+  const checks = parseChecks(tableConstraints);
+  const checkByName = new Map(checks.map((c) => [c.name, c]));
+  const EXPECTED_CHECKS = {
+    book_eoi_book_code_check: { values: ['biography', 'childrens'] },
+    book_eoi_format_code_check: { values: ['ebook', 'hardcover', 'paperback', 'unsure'] },
+    book_eoi_status_check: { values: ['contacted', 'new', 'withdrawn'] },
+    book_eoi_quantity_check: { bounds: [1, 10] }
+  };
+  for (const [name, want] of Object.entries(EXPECTED_CHECKS)) {
+    const got = checkByName.get(name);
+    if (!got) { fail('missing CHECK constraint: ' + name); continue; }
+    if (want.values && got.values.join(',') !== want.values.join(',')) {
+      fail(`CHECK ${name} values: expected ${want.values.join(',')}, got ${got.values.join(',')}`);
+    }
+    if (want.bounds && (got.bounds.length !== 2 || got.bounds[0] !== want.bounds[0] || got.bounds[1] !== want.bounds[1])) {
+      fail(`CHECK ${name} bounds: expected ${want.bounds.join(',')}, got ${got.bounds.join(',')}`);
+    }
   }
+
   if (!/UNIQUE\s*\(\s*book_code\s*,\s*email_hash\s*\)/i.test(tableConstraints.join(' '))) {
     fail('UNIQUE(book_code, email_hash) constraint not found');
   }
 
+  // Exact indexes (name + exact column list/direction).
   const indexes = extractIndexes(sql);
-  const indexNames = new Set(indexes.map((i) => i.name));
-  if (!indexNames.has('book_eoi_book_status_idx')) fail('index book_eoi_book_status_idx not found');
-  if (!indexNames.has('book_eoi_book_created_idx')) fail('index book_eoi_book_created_idx not found');
+  const indexByName = new Map(indexes.map((i) => [i.name.toLowerCase(), i.columns.toLowerCase().replace(/\s+/g, ' ').trim()]));
+  const EXPECTED_INDEXES = {
+    book_eoi_book_status_idx: 'book_code, status',
+    book_eoi_book_created_idx: 'book_code, created_at desc'
+  };
+  for (const [name, cols] of Object.entries(EXPECTED_INDEXES)) {
+    const got = indexByName.get(name);
+    if (got === undefined) fail('index ' + name + ' not found');
+    else if (got !== cols) fail(`index ${name} columns: expected "${cols}", got "${got}"`);
+  }
 
   // Forbidden content (scanned over executable SQL only): no destructive
   // statements, and exactly one CREATE TABLE named mj_eoi.book_eoi (this also

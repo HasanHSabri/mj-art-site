@@ -260,14 +260,57 @@ export async function hmacEmailHash(secret, normalizedEmail) {
 // Web Crypto: AES-256-GCM PII encryption
 // ---------------------------------------------------------------------------
 
-// Derive a fixed 256-bit AES-GCM key from the secret. AES-GCM requires exactly
-// 32 raw bytes; a user-supplied secret string is rarely exactly 32 bytes, so we
-// derive deterministically via SHA-256 (a stable KDF-ish transform). Rotating
-// the secret requires re-encrypting rows, which is inherent to at-rest symmetric
-// encryption regardless of derivation.
+// Minimum strength for PII secrets, enforced before any crypto (see
+// bookEoiSecretsOk). 32 bytes matches the AES-256 key width so a configured
+// secret always carries full-strength key material into HKDF.
+export const MIN_SECRET_BYTES = 32;
+
+export function secretByteLength(secret) {
+  return new TextEncoder().encode(String(secret)).length;
+}
+
+// Fail-closed: both PII secrets must be present AND meet the minimum length
+// before any submission is accepted or PII encrypted. A short/weak key never
+// protects PII. (No compatibility/rotation fallback is needed because no rows
+// exist yet -- this is a greenfield table.)
+export function bookEoiSecretsOk(env) {
+  return (
+    typeof env.BOOK_EOI_HMAC_KEY === 'string' &&
+    typeof env.BOOK_EOI_ENCRYPTION_KEY === 'string' &&
+    secretByteLength(env.BOOK_EOI_HMAC_KEY) >= MIN_SECRET_BYTES &&
+    secretByteLength(env.BOOK_EOI_ENCRYPTION_KEY) >= MIN_SECRET_BYTES
+  );
+}
+
+// Versioned, fixed-salt HKDF-SHA256 derivation of the AES-256-GCM key. The salt
+// and info strings embed the scheme version (v1) so a future scheme can be
+// introduced by bumping the version and re-encrypting at the source; there is
+// deliberately NO legacy fallback or rotation path (no rows exist yet). HKDF is
+// used instead of an unsalted single SHA-256 so the key is properly extracted
+// from the secret and domain-separated from every other use of the secret.
+const KEY_DERIVATION_VERSION = 1;
+const AES_HKDF_SALT = new TextEncoder().encode(
+  `mj-art:book-eoi:pii-aes-gcm:v${KEY_DERIVATION_VERSION}:salt`
+);
+const AES_HKDF_INFO = new TextEncoder().encode(
+  `mj-art:book-eoi:pii-aes-gcm:v${KEY_DERIVATION_VERSION}:aes-256-key`
+);
+
+// Derive a fixed 256-bit AES-GCM key from the secret via HKDF-SHA256.
 async function deriveAesKey(secret) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(secret));
-  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, [
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    'HKDF',
+    false,
+    ['deriveBits']
+  );
+  const keyBytes = await crypto.subtle.deriveBits(
+    { name: 'HKDF', hash: 'SHA-256', salt: AES_HKDF_SALT, info: AES_HKDF_INFO },
+    keyMaterial,
+    256
+  );
+  return crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, [
     'encrypt',
     'decrypt'
   ]);
@@ -307,12 +350,41 @@ export async function decryptPii(secret, ciphertextB64url, ivB64url, aad) {
 // Repository / query seam
 // ---------------------------------------------------------------------------
 //
-// Every function takes a `sql` executor implementing the Neon call-form
-// `async sql(text, params) -> rows[]` (array of plain row objects). The Worker
-// builds the real executor via neon(env.NEON_DATABASE_URL); tests pass a fake.
+// Every function takes a `sql` executor implementing the pure
+// `async sql(text, params) -> rows[]` seam (array of plain row objects). The
+// Worker builds the real executor by wrapping the installed Neon driver with
+// createNeonSqlExecutor (neonClient.query(text, params)); tests pass a fake.
 // All statements fully-qualify mj_eoi.book_eoi and use parameter placeholders.
 // The runtime role contract is SELECT/INSERT/UPDATE only (see the schema file):
 // no DELETE, no DDL, no other tables are referenced.
+
+// ---------------------------------------------------------------------------
+// Neon driver adapter (the single installed-driver boundary)
+// ---------------------------------------------------------------------------
+//
+// @neondatabase/serverless 1.x `neon()` returns an HTTP query function whose
+// *tagged-template* call form is `sql\`...\`` -- i.e. `sql(strings, ...params)`
+// where `strings` must be a TemplateStringsArray. When invoked as a plain
+// function `sql(text, params)` with a string query, the driver's dispatch guard
+// (`Array.isArray(strings) && Array.isArray(strings.raw)`) fails and the
+// parameterized statement is not executed correctly. The driver's correct
+// parameterized entry point is `neonClient.query(text, params)`, which returns
+// the rows array directly (fullResults defaults to false).
+//
+// This adapter wraps a neon client so the repository seam stays the pure,
+// driver-agnostic `sql(text, params) -> rows[]` used by every function below.
+// It is the ONLY place that talks to the installed driver: there is no
+// per-query (8-call) workaround -- each repository function still calls
+// `sql(text, params)` exactly once and is unchanged.
+export function createNeonSqlExecutor(neonClient) {
+  if (!neonClient || typeof neonClient.query !== 'function') {
+    throw new Error('createNeonSqlExecutor: a neon client with a .query(text, params) method is required');
+  }
+  return async function sql(text, params) {
+    const rows = await neonClient.query(text, params || []);
+    return rows;
+  };
+}
 
 export async function findBookEoi(sql, bookCode, emailHash) {
   const rows = await sql(
@@ -402,10 +474,200 @@ export async function probeBookEoiSchemaColumns(sql) {
   return (Array.isArray(rows) ? rows : []).map((r) => r.column_name);
 }
 
-// True when an error looks like a unique-constraint violation (concurrent
-// insert race). Used to treat a duplicate as an idempotent success.
+// ---------------------------------------------------------------------------
+// Live catalog shape (runtime schema-drift comparison for /api/books/health)
+// ---------------------------------------------------------------------------
+//
+// /api/books/health compares the LIVE database catalog (information_schema +
+// pg_catalog) to EXPECTED_LIVE_CATALOG. The comparison is MEANINGFUL: ordered
+// column names, data types, nullability, defaults, CHECK value sets / numeric
+// bounds, the UNIQUE(book_code, email_hash) constraint, and the exact indexes.
+// It is deliberately NOT a column-name-only check. The PUBLIC health response
+// reveals only an outcome (healthy | mismatch | unavailable) -- never the
+// differences, never column data, never credentials/PII.
+
+// Expected information_schema/pg_catalog shape. data_type values are the exact
+// strings Postgres reports; column_default values match information_schema
+// output verbatim. Column order matches database/mj-eoi-schema.sql.
+export const EXPECTED_LIVE_CATALOG = {
+  columns: [
+    { name: 'id', dataType: 'uuid', nullable: false, default: null },
+    { name: 'book_code', dataType: 'text', nullable: false, default: null },
+    { name: 'email_hash', dataType: 'character', nullable: false, default: null, charLength: 64 },
+    { name: 'pii_ciphertext', dataType: 'text', nullable: false, default: null },
+    { name: 'pii_iv', dataType: 'text', nullable: false, default: null },
+    { name: 'quantity', dataType: 'integer', nullable: false, default: null },
+    { name: 'format_code', dataType: 'text', nullable: false, default: null },
+    { name: 'status', dataType: 'text', nullable: false, default: "'new'::text" },
+    { name: 'created_at', dataType: 'timestamp with time zone', nullable: false, default: 'now()' },
+    { name: 'updated_at', dataType: 'timestamp with time zone', nullable: false, default: 'now()' }
+  ],
+  checks: [
+    { name: 'book_eoi_book_code_check', values: ['biography', 'childrens'] },
+    { name: 'book_eoi_format_code_check', values: ['hardcover', 'paperback', 'ebook', 'unsure'] },
+    { name: 'book_eoi_status_check', values: ['new', 'contacted', 'withdrawn'] },
+    { name: 'book_eoi_quantity_check', bounds: [1, 10] }
+  ],
+  unique: { name: 'book_eoi_book_email_unique', columns: ['book_code', 'email_hash'] },
+  indexes: [
+    { name: 'book_eoi_book_status_idx', columns: 'book_code, status' },
+    { name: 'book_eoi_book_created_idx', columns: 'book_code, created_at desc' }
+  ]
+};
+
+function normText(value) {
+  return String(value == null ? '' : value).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// For comma-separated column lists (index/unique definitions), whitespace and
+// casing are insignificant: collapse to a canonical lowercase, spaceless form.
+function normCols(value) {
+  return String(value == null ? '' : value).trim().toLowerCase().replace(/\s+/g, '');
+}
+
+// Quoted string literals from a CHECK definition -> sorted array.
+function extractStringLiterals(def) {
+  return (String(def).match(/'([^']*)'/g) || [])
+    .map((s) => s.slice(1, -1))
+    .filter((s) => s.length > 0)
+    .sort();
+}
+
+// Integer literals from a CHECK definition -> sorted ascending array.
+function extractIntBounds(def) {
+  return (String(def).match(/-?\d+/g) || []).map(Number).sort((a, b) => a - b);
+}
+
+// First parenthesized column list from a definition (lowercased, spaceless).
+function extractParenColumns(def) {
+  const m = String(def).match(/\(([^()]*)\)/);
+  return m ? normCols(m[1]) : '';
+}
+
+// PURE comparison of a live catalog shape to the canonical model. Returns
+// { match: boolean, mismatches: string[] }. mismatches are for tests/operators
+// only -- the public health endpoint never exposes them.
+export function compareLiveCatalog(live, expected = EXPECTED_LIVE_CATALOG) {
+  const mismatches = [];
+  const liveCols = live && Array.isArray(live.columns) ? live.columns : [];
+
+  if (liveCols.length !== expected.columns.length) {
+    mismatches.push(`column count: expected ${expected.columns.length}, got ${liveCols.length}`);
+  }
+  for (let i = 0; i < expected.columns.length; i++) {
+    const want = expected.columns[i];
+    const got = liveCols[i];
+    if (!got) {
+      mismatches.push(`column #${i + 1} missing: expected ${want.name}`);
+      continue;
+    }
+    if (normText(got.column_name) !== want.name) {
+      mismatches.push(`column #${i + 1} name: expected ${want.name}, got ${got.column_name}`);
+    }
+    if (normText(got.data_type) !== want.dataType) {
+      mismatches.push(`column ${want.name} type: expected ${want.dataType}, got ${got.data_type}`);
+    }
+    const nullable = String(got.is_nullable).toUpperCase() !== 'NO';
+    if (nullable !== want.nullable) {
+      mismatches.push(`column ${want.name} nullable: expected ${want.nullable}, got ${nullable}`);
+    }
+    if (want.charLength !== undefined && Number(got.character_maximum_length) !== want.charLength) {
+      mismatches.push(`column ${want.name} charLength: expected ${want.charLength}, got ${got.character_maximum_length}`);
+    }
+    const gotDefault = got.column_default == null ? null : normText(got.column_default);
+    const wantDefault = want.default == null ? null : normText(want.default);
+    if (gotDefault !== wantDefault) {
+      mismatches.push(`column ${want.name} default: expected ${want.default}, got ${got.column_default}`);
+    }
+  }
+
+  const liveChecks = live && Array.isArray(live.checks) ? live.checks : [];
+  const checkByName = new Map(liveChecks.map((c) => [normText(c.name), c.definition || '']));
+  for (const want of expected.checks) {
+    const def = checkByName.get(normText(want.name));
+    if (def === undefined) {
+      mismatches.push(`missing CHECK constraint: ${want.name}`);
+      continue;
+    }
+    if (want.values) {
+      const gotVals = extractStringLiterals(def);
+      if (gotVals.join(',') !== [...want.values].sort().join(',')) {
+        mismatches.push(`CHECK ${want.name} values: expected ${want.values.join(',')}, got ${gotVals.join(',')}`);
+      }
+    }
+    if (want.bounds) {
+      const gotBounds = extractIntBounds(def);
+      if (gotBounds.length !== 2 || gotBounds[0] !== want.bounds[0] || gotBounds[1] !== want.bounds[1]) {
+        mismatches.push(`CHECK ${want.name} bounds: expected ${want.bounds.join(',')}, got ${gotBounds.join(',')}`);
+      }
+    }
+  }
+
+  const liveUnique = live && Array.isArray(live.unique) ? live.unique : [];
+  const wantUniqueCols = normCols(expected.unique.columns.join(','));
+  const uniqueOk = liveUnique.some(
+    (u) => normText(u.name) === normText(expected.unique.name) && extractParenColumns(u.definition) === wantUniqueCols
+  );
+  if (!uniqueOk) {
+    mismatches.push(`UNIQUE constraint ${expected.unique.name}(${expected.unique.columns.join(', ')}) not found`);
+  }
+
+  const liveIndexes = live && Array.isArray(live.indexes) ? live.indexes : [];
+  for (const wantIdx of expected.indexes) {
+    const found = liveIndexes.some(
+      (idx) => normText(idx.name) === normText(wantIdx.name) && extractParenColumns(idx.definition) === normCols(wantIdx.columns)
+    );
+    if (!found) mismatches.push(`index ${wantIdx.name}(${wantIdx.columns}) not found`);
+  }
+
+  return { match: mismatches.length === 0, mismatches };
+}
+
+// Probe the LIVE database catalog (columns, CHECKs, UNIQUE, indexes) for the
+// runtime schema-drift health check. No PII, no credentials. Four cheap catalog
+// reads against information_schema/pg_catalog, run in parallel (each is an
+// independent HTTP query via the executor).
+export async function probeLiveCatalogShape(sql) {
+  const [columns, checks, unique, indexes] = await Promise.all([
+    sql(
+      'SELECT column_name, data_type, is_nullable, column_default, character_maximum_length ' +
+        'FROM information_schema.columns WHERE table_schema = $1 AND table_name = $2 ORDER BY ordinal_position',
+      [SCHEMA_NAME, TABLE_NAME]
+    ),
+    sql(
+      'SELECT con.conname AS name, pg_get_constraintdef(con.oid) AS definition ' +
+        'FROM pg_constraint con ' +
+        'JOIN pg_class rel ON rel.oid = con.conrelid ' +
+        'JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace ' +
+        "WHERE nsp.nspname = $1 AND rel.relname = $2 AND con.contype = 'c'",
+      [SCHEMA_NAME, TABLE_NAME]
+    ),
+    sql(
+      'SELECT con.conname AS name, pg_get_constraintdef(con.oid) AS definition ' +
+        'FROM pg_constraint con ' +
+        'JOIN pg_class rel ON rel.oid = con.conrelid ' +
+        'JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace ' +
+        "WHERE nsp.nspname = $1 AND rel.relname = $2 AND con.contype = 'u'",
+      [SCHEMA_NAME, TABLE_NAME]
+    ),
+    sql(
+      'SELECT indexname AS name, indexdef AS definition FROM pg_indexes WHERE schemaname = $1 AND tablename = $2',
+      [SCHEMA_NAME, TABLE_NAME]
+    )
+  ]);
+  return {
+    columns: Array.isArray(columns) ? columns : [],
+    checks: Array.isArray(checks) ? checks : [],
+    unique: Array.isArray(unique) ? unique : [],
+    indexes: Array.isArray(indexes) ? indexes : []
+  };
+}
+
+// True only for a PostgreSQL unique-constraint violation (SQLSTATE 23505), used
+// to treat a concurrent-insert race as an idempotent success. The check is
+// strict to the driver error code: a message-substring match would be both too
+// broad (could match unrelated errors) and too narrow (neon HTTP errors surface
+// the code, not a stable message shape).
 export function isUniqueViolation(error) {
-  if (!error) return false;
-  if (error.code === '23505') return true;
-  return /unique/i.test(String(error.message || error.code || ''));
+  return Boolean(error && error.code === '23505');
 }

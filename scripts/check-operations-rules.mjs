@@ -72,6 +72,25 @@ function hasWorkflowLevelContentsRead(text) {
   return false;
 }
 
+// Policy: every THIRD-PARTY action (any owner other than the first-party
+// `actions/*` organization) must be pinned to a verified 40-character commit
+// SHA. First-party actions may remain on version tags. This is the supply-chain
+// guard required for the deploy and read-only backup workflows.
+function assertThirdPartyActionsPinned(wfPath, text) {
+  if (text === null) return; // a missing workflow is reported by its own check
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^\s*-\s*uses:\s*([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)@([A-Za-z0-9._-]+)/);
+    if (!m) continue;
+    const owner = m[1].split('/')[0].toLowerCase();
+    const ref = m[2];
+    if (owner === 'actions') continue; // first-party: version tags permitted
+    if (!/^[0-9a-f]{40}$/.test(ref)) {
+      fail(wfPath + ' third-party action ' + m[1] + ' must be pinned to a 40-char commit SHA (line ' + (i + 1) + '), found @' + ref);
+    }
+  }
+}
+
 function main() {
   const args = process.argv.slice(2);
   if (args.includes('--help') || args.includes('-h')) {
@@ -130,6 +149,9 @@ function main() {
   if (!hasWorkflowLevelContentsRead(workflow)) {
     fail(workflowPath + ' must declare workflow-level permissions with contents: read');
   }
+
+  // All third-party actions used here must be pinned to a verified SHA.
+  assertThirdPartyActionsPinned(workflowPath, workflow);
 
   // The prerequisite gate must not be conditional on secrets. GitHub Actions
   // does not safely evaluate secrets.* inside `if:` expressions, so any step
@@ -222,6 +244,14 @@ function main() {
   if (deployWf === null) {
     fail(deployWfPath + ' is missing');
   } else {
+    // The deploy workflow runs on push/PR too (the check job), so it must
+    // declare least-repo permissions explicitly at the workflow level.
+    if (!hasWorkflowLevelContentsRead(deployWf)) {
+      fail(deployWfPath + ' must declare workflow-level permissions with contents: read');
+    }
+    // All third-party actions used here must be pinned to a verified SHA.
+    assertThirdPartyActionsPinned(deployWfPath, deployWf);
+
     // push, pull_request, and workflow_dispatch triggers must all be declared
     // so push/PR validation is preserved while deployment stays manual.
     const deployTriggers = extractOnTriggers(deployWf);

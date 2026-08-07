@@ -65,7 +65,8 @@ function makeEnv(storedText) {
       }
     },
     ADMIN_PASSWORD: 'secret',
-    ADMIN_SESSION_SECRET: 'test-secret-key'
+    ADMIN_SESSION_SECRET: 'test-secret-key',
+    BOOK_EOI_RATE_LIMITER: { async limit() { return { success: true }; } }
   };
 }
 
@@ -393,7 +394,8 @@ function makeStoreEnv() {
       }
     },
     ADMIN_PASSWORD: 'secret',
-    ADMIN_SESSION_SECRET: 'test-secret-key'
+    ADMIN_SESSION_SECRET: 'test-secret-key',
+    BOOK_EOI_RATE_LIMITER: { async limit() { return { success: true }; } }
   };
 }
 
