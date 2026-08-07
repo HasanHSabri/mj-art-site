@@ -74,6 +74,17 @@ export default {
       return servePublicIndex(request, env);
     }
 
+    // Books public page. GET /books serves the SSR-injected page; GET /books/
+    // is permanently redirected to the canonical /books (single URL). The site
+    // key is injected server-side from a pre-provisioned Worker secret; a
+    // missing key fails closed 503 (no static/fallback page is ever served).
+    if (request.method === 'GET' && (url.pathname === '/books' || url.pathname === '/books/')) {
+      if (url.pathname === '/books/') {
+        return Response.redirect(new URL('/books', request.url).toString(), 301);
+      }
+      return serveBooksPage(request, env);
+    }
+
     if (url.pathname === '/api/admin/login' && request.method === 'POST') {
       return login(request, env);
     }
@@ -222,6 +233,56 @@ async function servePublicIndex(request, env) {
 
   return new Response(rendered, {
     status,
+    headers: {
+      'cache-control': 'no-store',
+      'content-type': 'text/html; charset=UTF-8'
+    }
+  });
+}
+
+// Unique, unambiguous marker in public/books.html that the Worker replaces with
+// the pre-provisioned TURNSTILE_SITE_KEY. It is intentionally a sentinel that
+// never appears in any other context, so a single replaceAll is total and safe.
+const TURNSTILE_SITE_KEY_MARKER = '__BOOKS_TURNSTILE_SITE_KEY__';
+
+// Escape a value for safe interpolation into an HTML double-quoted attribute.
+// The Turnstile site key is opaque operator-controlled text; this defends in
+// depth against any quoting/control characters breaking out of the attribute.
+function escapeHtmlAttribute(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
+}
+
+// GET /books -- serve public/books.html with the pre-provisioned Turnstile site
+// key injected into the widget container's data-sitekey marker. Fails closed
+// with 503 when TURNSTILE_SITE_KEY is absent/empty: the EOI form cannot render a
+// verifiable widget without it, so no half-functional page is ever served.
+async function serveBooksPage(request, env) {
+  if (typeof env.TURNSTILE_SITE_KEY !== 'string' || env.TURNSTILE_SITE_KEY.length === 0) {
+    return new Response('Service unavailable.', {
+      status: 503,
+      headers: { 'content-type': 'text/plain; charset=UTF-8' }
+    });
+  }
+
+  const booksUrl = new URL('/books.html', request.url);
+  const asset = await env.ASSETS.fetch(booksUrl);
+  if (!asset.ok) {
+    return new Response('Not found', { status: 404 });
+  }
+
+  const html = await asset.text();
+  const rendered = html.replaceAll(
+    TURNSTILE_SITE_KEY_MARKER,
+    escapeHtmlAttribute(env.TURNSTILE_SITE_KEY)
+  );
+
+  return new Response(rendered, {
+    status: 200,
     headers: {
       'cache-control': 'no-store',
       'content-type': 'text/html; charset=UTF-8'
@@ -546,6 +607,25 @@ function bookEoiReadConfigOk(env) {
   return Boolean(env.NEON_DATABASE_URL);
 }
 
+// Full deployment-config gate for the post-deploy /api/books/health probe. It
+// verifies that EVERY pre-provisioned Worker secret/binding is present so a
+// deploy fails closed when the Turnstile keys, DB URL, or crypto keys are
+// missing or misconfigured, and that the non-secret allowed Turnstile action
+// and hostname allowlist are set. Intentionally stricter than the per-route
+// read/write gates: its job is to catch an incompletely provisioned deployment
+// before it is trusted. It performs NO DB access.
+function bookEoiHealthConfigOk(env) {
+  return Boolean(
+    env &&
+      env.NEON_DATABASE_URL &&
+      typeof env.TURNSTILE_SECRET_KEY === 'string' && env.TURNSTILE_SECRET_KEY.length > 0 &&
+      typeof env.TURNSTILE_SITE_KEY === 'string' && env.TURNSTILE_SITE_KEY.length > 0 &&
+      typeof env.BOOK_EOI_TURNSTILE_ACTION === 'string' && env.BOOK_EOI_TURNSTILE_ACTION.length > 0 &&
+      parseAllowedHostnames(env.BOOK_EOI_ALLOWED_HOSTNAMES).length > 0 &&
+      bookEoiSecretsOk(env)
+  );
+}
+
 // Same-origin enforcement: the request's Origin (or Referer) host must match the
 // host the Worker is serving. Blocks cross-site submissions without needing env.
 function sameOrigin(request) {
@@ -781,7 +861,11 @@ async function handleBookInterest(env) {
 // outcome (healthy | mismatch | unavailable) and never the differences, column
 // data, or any internal detail.
 async function handleBookHealth(env) {
-  if (!bookEoiReadConfigOk(env)) {
+  // Post-deploy smoke gate: the FULL pre-provisioned config (DB + both
+  // Turnstile keys + crypto keys + allowed action/host) must be present, then
+  // the live schema is compared. The PUBLIC response reveals only the outcome
+  // (healthy | mismatch | unavailable), never the differences or any detail.
+  if (!bookEoiHealthConfigOk(env)) {
     return jsonResponse({ status: 'unavailable' }, 503);
   }
   let sql;

@@ -688,19 +688,33 @@ Secret names configured (names only, never values):
 - `BOOK_EOI_HMAC_KEY` (environment: preview, production)
 - `BOOK_EOI_ENCRYPTION_KEY` (environment: preview, production)
 
-`TURNSTILE_SECRET_KEY` is **currently absent** and intentionally deferred. It is
-unrelated to this data-layer provisioning, but it is **not optional for deploy**:
-the deploy workflow's fail-closed secret gate (§1,
-`.github/workflows/deploy-cloudflare.yml`, "Verify required secrets are present")
-lists `TURNSTILE_SECRET_KEY` among the required secrets and exits non-zero while
-it is empty, so a preview/production deploy **deliberately cannot proceed until it
-is configured** — it is not merely pending. No existing repo-level secret was
-modified to add EOI; the EOI secrets are environment-scoped only.
+`TURNSTILE_SECRET_KEY` and `TURNSTILE_SITE_KEY` are **not** GitHub secrets.
+Per the infrastructure plan they are **pre-provisioned directly on the Worker**
+(via `wrangler secret put` / dashboard, per environment) and never pushed from
+CI. They are unrelated to this data-layer provisioning, but they are **not
+optional for the Books page or a deploy**:
 
-The deploy workflow (`.github/workflows/deploy-cloudflare.yml`) reads these as
-environment secrets under the selected `environment:` and pushes them to the
-Worker as Wrangler secrets on manual `workflow_dispatch` deploy. Push/PR still
-run checks only; production is never deployed automatically.
+- `TURNSTILE_SITE_KEY` (non-secret, but kept out of Git) is injected by the
+  Worker into the `/books` page's Turnstile widget. If it is absent the Worker
+  **fails closed with 503** for `/books` (no half-functional page is served).
+- `TURNSTILE_SECRET_KEY` verifies submitted tokens server-side.
+
+Both are enforced by the post-deploy **`/api/books/health` smoke** in the deploy
+workflow (`.github/workflows/deploy-cloudflare.yml`, "Verify deployment"): that
+probe's config gate requires `NEON_DATABASE_URL`, `TURNSTILE_SECRET_KEY`,
+`TURNSTILE_SITE_KEY`, both crypto keys, and the non-secret allowed Turnstile
+action/host, then compares the live schema. A preview/production deploy
+**deliberately cannot succeed** until both keys are present and the schema
+matches — it is not merely pending. No existing repo-level secret was modified
+to add EOI; the EOI data/crypto secrets are environment-scoped only, and the two
+Turnstile keys are Worker-scoped only.
+
+The deploy workflow (`.github/workflows/deploy-cloudflare.yml`) reads the
+data/crypto secrets as environment secrets under the selected `environment:` and
+pushes them to the Worker as Wrangler secrets on manual `workflow_dispatch`
+deploy. The two Turnstile keys are **excluded** from that push list because they
+are pre-provisioned directly. Push/PR still run checks only; production is never
+deployed automatically.
 
 No connection string, password, or key value is stored in Git or this document.
 Rotation re-provisions the role password/keys against the project and resets the

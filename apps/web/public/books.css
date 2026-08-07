@@ -1,0 +1,247 @@
+/* Books Expression of Interest page.
+   Layers on top of the shared warm-gallery system (styles.css). Reuses the
+   design tokens (--bg, --surface, --accent, --border, --shadow), the card
+   surface treatment, button styles, section rhythm, and the persistent
+   chapter navigator. No new fonts and no dark-mode override. */
+
+.books-hero-content {
+  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.9fr);
+  align-items: stretch;
+}
+
+/* Concise hero aside card: a single warm callout, not a busy stack. */
+.books-hero-card,
+.books-panel,
+.books-eoi-form {
+  border: 1px solid var(--border);
+  border-radius: 28px;
+  background: var(--surface);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow);
+}
+
+.books-hero-card {
+  padding: 28px;
+}
+
+.hero-card-label,
+.books-counter-value,
+.books-counters dt {
+  color: var(--muted);
+}
+
+.books-hero-note {
+  margin: 10px 0 0;
+  line-height: 1.6;
+}
+
+.books-section,
+.books-form-section {
+  margin-top: 28px;
+}
+
+/* Two typographic book panels, side by side, collapsing to one column. There is
+   deliberately NO cover art: titles/prices/dates are not announced yet. */
+.books-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 20px;
+}
+
+.books-panel {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 28px;
+}
+
+.books-panel-text {
+  margin: 0;
+  color: var(--muted);
+  max-width: 42ch;
+}
+
+/* Live interest / copies-of-interest counters per book. */
+.books-counters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 14px 0 0;
+  padding: 0;
+}
+
+.books-counters div {
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.books-counters dt {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.books-counters dd {
+  margin: 6px 0 0;
+}
+
+.books-counter-value {
+  display: block;
+  font-family: "Cormorant Garamond", serif;
+  font-size: 2.4rem;
+  line-height: 1;
+  color: var(--accent-deep);
+}
+
+.books-counters-status {
+  color: var(--muted);
+  font-size: 0.92rem;
+  margin: 10px 0 0;
+}
+
+/* Centered, readable EOI form with a bounded measure. */
+.books-form-section {
+  display: grid;
+  justify-items: center;
+}
+
+.books-eoi-form {
+  display: grid;
+  gap: 16px;
+  width: 100%;
+  max-width: 620px;
+  padding: 28px;
+}
+
+.books-fieldset {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.books-fieldset legend {
+  padding: 0;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.books-choice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  grid-template-columns: none;
+  min-height: 48px;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.45);
+  cursor: pointer;
+}
+
+.books-choice input {
+  width: auto;
+}
+
+.books-consent {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  grid-template-columns: none;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.books-consent input {
+  flex: 0 0 auto;
+  width: auto;
+  margin-top: 4px;
+}
+
+.books-consent span {
+  line-height: 1.55;
+}
+
+/* Turnstile widget container. The widget iframe is injected here once the
+   official script is loaded explicitly by books.js. */
+.books-turnstile {
+  display: flex;
+  justify-content: flex-start;
+  min-height: 65px;
+}
+
+.books-turnstile:empty {
+  min-height: 0;
+}
+
+.books-status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.books-noscript {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+/* Visually hidden honeypot: removed from sight and screen readers, kept in the
+   form so bots auto-filling fields still submit it. */
+.books-honeypot {
+  position: absolute;
+  left: -10000px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.books-honeypot label {
+  grid-template-columns: none;
+}
+
+@media (max-width: 960px) {
+  .books-hero-content {
+    grid-template-columns: 1fr;
+  }
+
+  .books-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .books-hero-card,
+  .books-panel,
+  .books-eoi-form {
+    padding: 20px;
+  }
+
+  .books-counters {
+    gap: 10px;
+  }
+}
+
+@media (max-width: 420px) {
+  /* Very narrow viewports: stack the two counter cells so each row never
+     overflows at 320px / 200% zoom. */
+  .books-counters {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .button,
+  .books-choice {
+    transition: none;
+  }
+}

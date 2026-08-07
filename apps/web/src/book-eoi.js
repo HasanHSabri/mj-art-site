@@ -49,12 +49,17 @@ export const TURNSTILE_ACTION = 'books-eoi';
 export const HONEYPOT_FIELDS = ['website', 'companyUrl', 'company'];
 
 // Exactly these keys are accepted on a public EOI submission (plus honeypots).
+// `consent` is validated server-side (must be the boolean true) but is NOT
+// part of the stored fields: it proves the submitter explicitly agreed to be
+// contacted, and is dropped after validation rather than persisted in the
+// encrypted PII blob.
 const PUBLIC_ALLOWED_FIELDS = new Set([
   'book',
   'format',
   'quantity',
   'name',
   'email',
+  'consent',
   'turnstileToken'
 ]);
 
@@ -150,6 +155,13 @@ export function validateBookEoiPayload(body) {
     if (value !== undefined && value !== null && value !== '') {
       return { ok: false, honeypot: true };
     }
+  }
+
+  // Explicit, required consent. It must be exactly the boolean true (not a
+  // truthy string/number): a checkbox the submitter actively checked. Consent
+  // is validated here and intentionally NOT carried into the persisted fields.
+  if (body.consent !== true) {
+    return { ok: false, status: 400, error: 'Consent is required to continue.' };
   }
 
   const book = body.book;

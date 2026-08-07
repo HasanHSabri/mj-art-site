@@ -20,15 +20,41 @@
 //      the active band, the LATER/nearest-to-marker section is chosen
 //      deterministically (see pickActiveSection) so there is no lag during
 //      transitions. It is non-intrusive: no history, no focus move, no live
-//      region, and it never marks the /books page link.
+//      region. On the Books page the spy is not started (its home targets are
+//      absent) and the Books page link is marked aria-current="page" instead.
 //
-// The pure helpers (pickActiveSection, reduceScrollSpy, createDisclosureController)
-// are exported so they can be unit-tested with real inputs and a tiny fake-DOM
-// / fake-observer harness, without a heavy dependency.
+// The pure helpers (pickActiveSection, reduceScrollSpy, createDisclosureController,
+// isBooksPage, markBooksPageCurrent) are exported so they can be unit-tested
+// with real inputs and a tiny fake-DOM / fake-observer harness, without a heavy
+// dependency.
 
 // In-page section ids, in document order. "/books" is intentionally absent:
-// it is a route, not an in-page anchor, so it never receives aria-current.
+// it is a route, not an in-page anchor, so it never receives aria-current from
+// the scroll-spy. The Books page itself is marked aria-current="page" via
+// isBooksPage()/markBooksPageCurrent() instead.
 const IN_PAGE_SECTIONS = ['gallery', 'story', 'testimonials', 'contact'];
+
+// The canonical Books route. The trailing-slash form is treated as the same
+// page (the Worker redirects /books/ -> /books with 301).
+export function isBooksPage(pathname) {
+  const raw = typeof pathname === 'string'
+    ? pathname
+    : (typeof location !== 'undefined' ? location.pathname : '');
+  return raw.replace(/\/+$/, '') === '/books';
+}
+
+// Mark the Books page link(s) as the current page (aria-current="page") and
+// clear the attribute from every other link. Pure over a list of link handles
+// so it is unit-testable without a DOM.
+export function markBooksPageCurrent(links) {
+  for (const link of links || []) {
+    if (link && link.classList && link.classList.contains('chapter-link-page')) {
+      link.setAttribute('aria-current', 'page');
+    } else if (link) {
+      link.removeAttribute('aria-current');
+    }
+  }
+}
 
 // --- Pure: deterministic active-section selection ---------------------------
 // entries: Array of { id, top } for the currently intersecting sections
@@ -253,7 +279,15 @@ function initChapterNav() {
     syncChapterNavVisibility();
   }
 
-  setupScrollSpy();
+  // On the Books page there are no in-page home sections to observe, so the
+  // scroll-spy is skipped entirely (its targets are absent) and the Books page
+  // link is marked aria-current="page" instead. On the home page the scroll-spy
+  // runs as usual and never touches the Books link.
+  if (isBooksPage()) {
+    markBooksPageCurrent(chapterLinks());
+  } else {
+    setupScrollSpy();
+  }
 }
 
 // Browser only: in Node (tests importing the pure helpers) `document` is

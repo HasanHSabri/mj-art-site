@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#f8f1ea">
+  <title>Books &mdash; MJ Art</title>
+  <meta
+    name="description"
+    content="Two books by MJ are being prepared for launch. Register your interest now &mdash; an expression of interest, not a payment or a commitment to buy."
+  >
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%239a5c4b'/%3E%3Ccircle cx='24' cy='24' r='10' fill='%23f7d4b1'/%3E%3Cpath d='M20 44c8-10 18-14 24-10 2 1 4 4 4 8H20Z' fill='%23fff4e8'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://challenges.cloudflare.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css?v=warm-gallery">
+  <link rel="stylesheet" href="./books.css?v=books-eoi">
+</head>
+<body>
+  <a class="skip-link" href="#books-main">Skip to content</a>
+  <div class="page-shell">
+    <header class="hero books-hero">
+      <nav class="topbar" aria-label="Primary navigation">
+        <a class="brand" href="/">MJ</a>
+        <div class="topbar-links">
+          <a href="/#gallery">Gallery</a>
+          <a href="/#story">Story</a>
+          <a href="/#contact">Contact</a>
+        </div>
+      </nav>
+
+      <section class="hero-content books-hero-content" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow">Books in progress</p>
+          <h1>Register your interest in MJ's upcoming books.</h1>
+          <p class="hero-text">
+            Two books are being prepared for launch. This is an expression of interest &mdash; not a
+            payment and not a commitment to buy. How and where these books can be bought online is
+            still to be decided.
+          </p>
+          <div class="hero-tags" aria-label="What this is">
+            <span>Expression of interest</span>
+            <span>No payment now</span>
+            <span>Updates only</span>
+          </div>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#books-interest">Register your interest</a>
+            <a class="button button-secondary" href="/#gallery">Back to the gallery</a>
+          </div>
+        </div>
+
+        <div class="hero-stack books-hero-aside">
+          <div class="books-hero-card">
+            <p class="hero-card-label">Before you continue</p>
+            <p class="books-hero-note">
+              Your details are used only to share updates about the book(s) you select. Nothing is
+              sold or paid for through this page, and registering interest is not a reservation.
+            </p>
+          </div>
+        </div>
+      </section>
+    </header>
+
+    <main id="books-main">
+      <section class="section books-section" id="books-interest" aria-labelledby="books-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">The books</p>
+            <h2 id="books-heading">Two books, readying for launch.</h2>
+          </div>
+          <p class="section-note">
+            Titles, covers, and prices are not announced yet. Select the book you are interested in
+            below to add yourself to its update list.
+          </p>
+        </div>
+
+        <p class="books-counters-status" id="books-counters-status" role="status" aria-live="polite"></p>
+
+        <div class="books-grid">
+          <article class="books-panel">
+            <p class="section-label">Book one</p>
+            <h3>Biography</h3>
+            <p class="books-panel-text">A biography, currently being prepared for launch.</p>
+            <dl class="books-counters" data-book-counters="biography">
+              <div>
+                <dt>Interested</dt>
+                <dd class="books-counter-value" data-book-interest="biography">&mdash;</dd>
+              </div>
+              <div>
+                <dt>Copies of interest</dt>
+                <dd class="books-counter-value" data-book-copies="biography">&mdash;</dd>
+              </div>
+            </dl>
+          </article>
+
+          <article class="books-panel">
+            <p class="section-label">Book two</p>
+            <h3>Children&rsquo;s Book</h3>
+            <p class="books-panel-text">A children&rsquo;s book, currently being prepared for launch.</p>
+            <dl class="books-counters" data-book-counters="childrens">
+              <div>
+                <dt>Interested</dt>
+                <dd class="books-counter-value" data-book-interest="childrens">&mdash;</dd>
+              </div>
+              <div>
+                <dt>Copies of interest</dt>
+                <dd class="books-counter-value" data-book-copies="childrens">&mdash;</dd>
+              </div>
+            </dl>
+          </article>
+        </div>
+      </section>
+
+      <section class="section books-form-section">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">Expression of interest</p>
+            <h2 id="books-form-heading">Add yourself to the update list.</h2>
+          </div>
+          <p class="section-note">
+            An expression of interest only. No payment is taken and you are not committing to buy.
+            We will only use your details to share updates about the book(s) you select.
+          </p>
+        </div>
+
+        <form class="books-eoi-form" id="books-eoi-form" aria-labelledby="books-form-heading" novalidate>
+          <fieldset class="books-fieldset">
+            <legend>Which book are you interested in?</legend>
+            <label class="books-choice">
+              <input type="radio" name="book" value="biography" required>
+              <span>Biography</span>
+            </label>
+            <label class="books-choice">
+              <input type="radio" name="book" value="childrens" required>
+              <span>Children&rsquo;s Book</span>
+            </label>
+          </fieldset>
+
+          <label>
+            Preferred format
+            <select id="books-format" name="format" required>
+              <option value="" disabled selected>Select a format</option>
+              <option value="hardcover">Hardcover</option>
+              <option value="paperback">Paperback</option>
+              <option value="ebook">E-book</option>
+              <option value="unsure">Not sure yet</option>
+            </select>
+          </label>
+
+          <label>
+            Number of copies
+            <input type="number" id="books-quantity" name="quantity" min="1" max="10" step="1" value="1" inputmode="numeric" required>
+          </label>
+
+          <label>
+            Your name
+            <input type="text" id="books-name" name="name" autocomplete="name" placeholder="Jane Smith" required>
+          </label>
+
+          <label>
+            Your email
+            <input type="email" id="books-email" name="email" autocomplete="email" placeholder="jane@example.com" required>
+          </label>
+
+          <!-- Honeypot: visually hidden, off-screen, and non-required. Humans
+               leave it empty; bots that fill it are accepted silently server-side
+               without storing anything. -->
+          <div class="books-honeypot" aria-hidden="true">
+            <label>
+              Leave this field empty
+              <input type="text" name="website" tabindex="-1" autocomplete="off">
+            </label>
+          </div>
+
+          <label class="books-consent">
+            <input type="checkbox" id="books-consent" name="consent" value="yes" required>
+            <span>
+              I agree to be contacted about these books only. My details will be used to send updates
+              about the book(s) I select and nothing else.
+            </span>
+          </label>
+
+          <div id="books-turnstile" class="books-turnstile" data-sitekey="__BOOKS_TURNSTILE_SITE_KEY__" data-action="books-eoi" role="group" aria-label="Verification"></div>
+
+          <button class="button button-primary" type="submit" id="books-submit">Register interest</button>
+
+          <p class="books-status" id="books-status" role="status" aria-live="polite"></p>
+
+          <noscript>
+            <p class="books-noscript">
+              This expression-of-interest form needs JavaScript and the verification widget enabled to
+              work. You can still browse the
+              <a class="inline-link" href="/#gallery">gallery</a>.
+            </p>
+          </noscript>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <button type="button" id="back-to-top" class="back-to-top button button-primary" hidden>Back to Top</button>
+
+  <!-- Persistent chapter navigation (consistent with the home page). The Books
+       link carries aria-current="page"; section links point to the home page via
+       root-absolute anchors (/#gallery, /#story, /#testimonials, /#contact). -->
+  <nav class="chapter-nav" aria-label="Chapter navigation">
+    <ul class="chapter-rail" id="chapter-rail">
+      <li><a class="chapter-link" href="/#gallery" data-target="gallery">Gallery</a></li>
+      <li><a class="chapter-link" href="/#story" data-target="story">Story</a></li>
+      <li><a class="chapter-link" href="/#testimonials" data-target="testimonials">Testimonials</a></li>
+      <li><a class="chapter-link chapter-link-page" href="/books" aria-current="page">Books</a></li>
+      <li><a class="chapter-link" href="/#contact" data-target="contact">Contact</a></li>
+    </ul>
+
+    <details class="chapter-disclosure" id="chapter-details">
+      <summary class="chapter-summary button button-primary" id="chapter-toggle">Explore</summary>
+      <ul class="chapter-menu" id="chapter-menu">
+        <li><a class="chapter-link" href="/#gallery" data-target="gallery">Gallery</a></li>
+        <li><a class="chapter-link" href="/#story" data-target="story">Story</a></li>
+        <li><a class="chapter-link" href="/#testimonials" data-target="testimonials">Testimonials</a></li>
+        <li><a class="chapter-link chapter-link-page" href="/books" aria-current="page">Books</a></li>
+        <li><a class="chapter-link" href="/#contact" data-target="contact">Contact</a></li>
+      </ul>
+    </details>
+  </nav>
+
+  <script type="module" src="./chapter-nav.js?v=chapter-nav-disclosure"></script>
+  <script type="module" src="./books.js?v=books-eoi"></script>
+</body>
+</html>

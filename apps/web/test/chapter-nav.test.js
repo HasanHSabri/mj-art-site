@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { pickActiveSection, reduceScrollSpy, createDisclosureController } from '../public/chapter-nav.js';
+import { pickActiveSection, reduceScrollSpy, createDisclosureController, isBooksPage, markBooksPageCurrent } from '../public/chapter-nav.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(__dirname, '..', 'public');
@@ -565,17 +565,58 @@ test('scroll-spy uses IntersectionObserver and delegates to pickActiveSection', 
   assert.match(chapterJs, /pickActiveSection\(visible/, 'selection is delegated to the pure helper');
 });
 
-test('aria-current uses the "location" value (in-page position), never "page"', () => {
+test('in-page scroll-spy uses the "location" value (an in-page position)', () => {
   assert.match(
     chapterJs,
     /setAttribute\(\s*['"]aria-current['"]\s*,\s*['"]location['"]\)/,
-    'must set aria-current="location" for the current in-page section'
+    'scroll-spy must set aria-current="location" for the current in-page section'
   );
-  assert.doesNotMatch(
+});
+
+test('the Books page is marked aria-current="page" via a dedicated page-current path', () => {
+  // Scroll-spy still owns "location" for in-page sections. The Books PAGE link
+  // (a route, not an in-page anchor) is marked "page" by a separate, explicit
+  // code path that only runs when isBooksPage() is true.
+  assert.match(
     chapterJs,
-    /aria-current['"]\s*,\s*['"]page['"]/,
-    'must never use aria-current="page" for in-page scroll-spy'
+    /setAttribute\(\s*['"]aria-current['"]\s*,\s*['"]page['"]\)/,
+    'must set aria-current="page" for the Books page link on the /books page'
   );
+  assert.match(chapterJs, /isBooksPage/, 'must expose an isBooksPage detection');
+  assert.match(chapterJs, /markBooksPageCurrent/, 'must mark the books page link current');
+  // The scroll-spy is skipped on the books page (its home targets are absent).
+  assert.match(
+    chapterJs,
+    /if\s*\(\s*isBooksPage\(\)\s*\)\s*\{[\s\S]*?markBooksPageCurrent[\s\S]*?\}\s*else\s*\{[\s\S]*?setupScrollSpy/,
+    'books page marks current page; otherwise scroll-spy runs'
+  );
+});
+
+test('isBooksPage: recognizes /books and /books/ (canonical), rejects home and others', () => {
+  assert.equal(isBooksPage('/books'), true);
+  assert.equal(isBooksPage('/books/'), true);
+  assert.equal(isBooksPage('/books//'), true);
+  assert.equal(isBooksPage('/'), false);
+  assert.equal(isBooksPage('/index.html'), false);
+  assert.equal(isBooksPage('/#gallery'), false);
+});
+
+test('markBooksPageCurrent: sets "page" only on chapter-link-page links, clears others', () => {
+  const pageSet = { value: null };
+  const sectionCleared = { count: 0 };
+  const pageLink = {
+    classList: { contains: (c) => c === 'chapter-link-page' },
+    setAttribute: (_k, v) => { pageSet.value = v; },
+    removeAttribute() {}
+  };
+  const sectionLink = {
+    classList: { contains: () => false },
+    setAttribute() {},
+    removeAttribute: () => { sectionCleared.count += 1; }
+  };
+  markBooksPageCurrent([pageLink, sectionLink]);
+  assert.equal(pageSet.value, 'page');
+  assert.equal(sectionCleared.count, 1);
 });
 
 test('only links with a data-target can become current; books is never observed', () => {
@@ -627,15 +668,14 @@ test('chapter-nav.js keeps the native dialog as the top layer (no manual stackin
 
 // --- /books dependency -------------------------------------------------
 
-test('/books link is retained for future phases but the route is unimplemented (deployment blocked)', () => {
-  // The link stays: later phases build the Books page off it.
+test('/books link is retained and the route is now implemented and served by the Worker', () => {
+  // The link stays in the home nav as a route (not an in-page anchor).
   assert.match(indexHtml, /href="\/books"/, 'the /books link is retained');
-  // The worker has NO /books route, so it is not deployed. Final deployment is
-  // explicitly blocked until the /books route exists.
-  assert.doesNotMatch(
+  // The worker now wires the GET /books route (the page is implemented).
+  assert.match(
     workerJs,
-    /['"]\/books['"]/,
-    'no /books route is wired in the worker (the page is not implemented)'
+    /url\.pathname === '\/books'/,
+    'the worker must handle GET /books'
   );
 });
 

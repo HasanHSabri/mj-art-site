@@ -120,7 +120,13 @@ jobs:
         working-directory: apps/web
         run: |
           set -euo pipefail
-          for required in ADMIN_PASSWORD ADMIN_SESSION_SECRET NEON_DATABASE_URL BOOK_EOI_HMAC_KEY BOOK_EOI_ENCRYPTION_KEY TURNSTILE_SECRET_KEY; do
+          # Turnstile keys (TURNSTILE_SECRET_KEY and TURNSTILE_SITE_KEY) are NOT
+          # GitHub secrets: per the infrastructure plan they are pre-provisioned
+          # DIRECTLY on the Worker (wrangler secret put / dashboard), not pushed
+          # from CI. Their presence is instead enforced by the post-deploy
+          # /api/books/health smoke below (config + schema gate), which fails the
+          # deploy if either key, the DB URL, or the crypto keys are missing.
+          for required in ADMIN_PASSWORD ADMIN_SESSION_SECRET NEON_DATABASE_URL BOOK_EOI_HMAC_KEY BOOK_EOI_ENCRYPTION_KEY; do
             val="${!required}"
             if [ -z "$val" ]; then
               echo "Required secret is empty or missing: $required" >&2
@@ -146,7 +152,6 @@ jobs:
           NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
           BOOK_EOI_HMAC_KEY: ${{ secrets.BOOK_EOI_HMAC_KEY }}
           BOOK_EOI_ENCRYPTION_KEY: ${{ secrets.BOOK_EOI_ENCRYPTION_KEY }}
-          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
 
       - name: Configure admin secrets
         working-directory: apps/web
@@ -171,7 +176,10 @@ jobs:
           printf '%s' "$NEON_DATABASE_URL" | pnpm exec wrangler secret put NEON_DATABASE_URL "${deploy_args[@]}"
           printf '%s' "$BOOK_EOI_HMAC_KEY" | pnpm exec wrangler secret put BOOK_EOI_HMAC_KEY "${deploy_args[@]}"
           printf '%s' "$BOOK_EOI_ENCRYPTION_KEY" | pnpm exec wrangler secret put BOOK_EOI_ENCRYPTION_KEY "${deploy_args[@]}"
-          printf '%s' "$TURNSTILE_SECRET_KEY" | pnpm exec wrangler secret put TURNSTILE_SECRET_KEY "${deploy_args[@]}"
+          # NOTE: TURNSTILE_SECRET_KEY and TURNSTILE_SITE_KEY are intentionally
+          # NOT pushed from CI. They are pre-provisioned directly on the Worker
+          # (see docs/OPERATIONS.md). The post-deploy /api/books/health smoke
+          # below verifies they are present and the schema matches.
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -180,7 +188,6 @@ jobs:
           NEON_DATABASE_URL: ${{ secrets.NEON_DATABASE_URL }}
           BOOK_EOI_HMAC_KEY: ${{ secrets.BOOK_EOI_HMAC_KEY }}
           BOOK_EOI_ENCRYPTION_KEY: ${{ secrets.BOOK_EOI_ENCRYPTION_KEY }}
-          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
 
       - name: Deploy to Cloudflare Workers
         working-directory: apps/web
@@ -229,6 +236,7 @@ jobs:
 
           URL="$DEPLOY_URL"
 
+          # 1) Liveness: /api/health.
           HEALTH_URL="$URL/api/health"
 
           echo "Checking deployment health at: $HEALTH_URL"
@@ -240,12 +248,45 @@ jobs:
 
             if [ "$code" = "200" ] && echo "$body" | grep -q '"status":"healthy"'; then
               echo "Deployment verified successfully!"
-              exit 0
+              break
+            fi
+
+            if [ "$i" = "6" ]; then
+              echo "Deployment health check failed at: $HEALTH_URL"
+              exit 1
             fi
 
             echo "Attempt $i/6: HTTP $code, waiting 10s..."
             sleep 10
           done
 
-          echo "Deployment health check failed at: $HEALTH_URL"
-          exit 1
+          # 2) Books EOI post-deploy smoke: /api/books/health fails the deploy if
+          # the pre-provisioned Turnstile keys (TURNSTILE_SECRET_KEY +
+          # TURNSTILE_SITE_KEY), the DB URL, or the crypto keys are missing, if
+          # the allowed Turnstile action/host is unset, or if the live Neon
+          # schema has drifted from the canonical shape. It reveals only the
+          # outcome (healthy | mismatch | unavailable) -- never credentials or
+          # schema detail. A healthy result proves the full Books path is wired.
+          BOOKS_HEALTH_URL="$URL/api/books/health"
+
+          echo "Checking Books EOI configuration + schema at: $BOOKS_HEALTH_URL"
+
+          for i in {1..6}; do
+            response=$(curl -sS -w "\n%{http_code}" "$BOOKS_HEALTH_URL" || echo -e "\n000")
+            code=$(echo "$response" | tail -n 1)
+            body=$(echo "$response" | sed '$d')
+
+            if [ "$code" = "200" ] && echo "$body" | grep -q '"status":"healthy"'; then
+              echo "Books EOI configuration and schema verified successfully!"
+              exit 0
+            fi
+
+            if [ "$i" = "6" ]; then
+              echo "Books EOI post-deploy smoke failed at: $BOOKS_HEALTH_URL"
+              echo "This means a pre-provisioned Turnstile/DB/crypto secret is missing, the allowed action/host is unset, or the schema has drifted."
+              exit 1
+            fi
+
+            echo "Attempt $i/6: HTTP $code, waiting 10s..."
+            sleep 10
+          done

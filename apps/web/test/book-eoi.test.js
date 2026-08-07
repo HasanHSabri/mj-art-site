@@ -103,6 +103,7 @@ function makeEnv({ sql, turnstile, rateLimiter, withConfig = true } = {}) {
     env.BOOK_EOI_HMAC_KEY = HMAC_KEY;
     env.BOOK_EOI_ENCRYPTION_KEY = ENC_KEY;
     env.TURNSTILE_SECRET_KEY = 'turnstile-secret';
+    env.TURNSTILE_SITE_KEY = 'test-site-key';
   }
   if (sql) env.BOOK_EOI_SQL = sql;
   return env;
@@ -148,6 +149,7 @@ function validPayload(overrides = {}) {
     quantity: 2,
     name: 'Jane Doe',
     email: 'JANE.Example@Example.COM ',
+    consent: true,
     turnstileToken: 'fake-turnstile-token',
     ...overrides
   };
@@ -282,6 +284,37 @@ test('validateBookEoiPayload enforces book/format allowlists', () => {
   assert.equal(validateBookEoiPayload({ ...validPayload(), book: 'childrens' }).ok, true);
   assert.equal(validateBookEoiPayload({ ...validPayload(), format: 'audiobook' }).ok, false);
   assert.equal(validateBookEoiPayload({ ...validPayload(), format: 'ebook' }).ok, true);
+});
+
+test('validateBookEoiPayload requires consent to be exactly the boolean true', () => {
+  // Missing consent -> rejected.
+  const { book, format, quantity, name, email, turnstileToken } = validPayload();
+  assert.equal(validateBookEoiPayload({ book, format, quantity, name, email, turnstileToken }).ok, false);
+  // Truthy-but-not-true values are rejected (a checkbox must be actively set).
+  for (const bad of [false, 'true', 'yes', 1, 'on', null]) {
+    const r = validateBookEoiPayload({ ...validPayload(), consent: bad });
+    assert.equal(r.ok, false, `consent ${JSON.stringify(bad)} must be rejected`);
+    assert.equal(r.status, 400);
+  }
+  // Exactly boolean true is accepted.
+  assert.equal(validateBookEoiPayload(validPayload()).ok, true);
+});
+
+test('validateBookEoiPayload does not carry consent into the stored fields', () => {
+  const r = validateBookEoiPayload(validPayload());
+  assert.equal(r.ok, true);
+  assert.deepEqual(Object.keys(r.fields).sort(), ['book', 'email', 'format', 'name', 'quantity', 'turnstileToken']);
+  assert.equal('consent' in r.fields, false);
+});
+
+test('validateBookEoiPayload rejects consent sent as a non-boolean with 400', async () => {
+  const env = makeEnv({ sql: makeSql(insertResponder()) });
+  const res = await worker.fetch(
+    jsonPost('/api/books/eoi', { ...validPayload(), consent: 'yes' }),
+    env
+  );
+  assert.equal(res.status, 400);
+  assert.equal(env.BOOK_EOI_SQL.calls.length, 0);
 });
 
 test('validateBookEoiPayload treats any non-empty honeypot as a honeypot hit', () => {
@@ -672,6 +705,38 @@ test('health response reveals only the outcome (no columns/types/details/credent
 
 test('health returns unavailable when NEON_DATABASE_URL is missing', async () => {
   const env = makeEnv({ withConfig: false });
+  const res = await worker.fetch(req('/api/books/health'), env);
+  assert.equal(res.status, 503);
+  assert.deepEqual(await body(res), { status: 'unavailable' });
+});
+
+test('health returns unavailable when TURNSTILE_SITE_KEY is missing', async () => {
+  const env = makeEnv({ sql: liveCatalogSql(liveCatalogFixture()) });
+  delete env.TURNSTILE_SITE_KEY;
+  const res = await worker.fetch(req('/api/books/health'), env);
+  assert.equal(res.status, 503);
+  assert.deepEqual(await body(res), { status: 'unavailable' });
+});
+
+test('health returns unavailable when TURNSTILE_SECRET_KEY is missing', async () => {
+  const env = makeEnv({ sql: liveCatalogSql(liveCatalogFixture()) });
+  delete env.TURNSTILE_SECRET_KEY;
+  const res = await worker.fetch(req('/api/books/health'), env);
+  assert.equal(res.status, 503);
+  assert.deepEqual(await body(res), { status: 'unavailable' });
+});
+
+test('health returns unavailable when the allowed hostname allowlist is empty', async () => {
+  const env = makeEnv({ sql: liveCatalogSql(liveCatalogFixture()) });
+  env.BOOK_EOI_ALLOWED_HOSTNAMES = '';
+  const res = await worker.fetch(req('/api/books/health'), env);
+  assert.equal(res.status, 503);
+  assert.deepEqual(await body(res), { status: 'unavailable' });
+});
+
+test('health returns unavailable when a PII crypto key is short', async () => {
+  const env = makeEnv({ sql: liveCatalogSql(liveCatalogFixture()) });
+  env.BOOK_EOI_HMAC_KEY = 'short';
   const res = await worker.fetch(req('/api/books/health'), env);
   assert.equal(res.status, 503);
   assert.deepEqual(await body(res), { status: 'unavailable' });
@@ -1352,4 +1417,93 @@ test('admin PATCH: oversized actual UTF-8 body is rejected with 413', async () =
   }), env);
   assert.equal(res.status, 413);
 });
+
+// ===========================================================================
+// 14. GET /books page route: site-key marker injection, fail-closed, redirect
+// ===========================================================================
+
+const BOOKS_HTML_WITH_MARKER =
+  '<!doctype html><html><body>' +
+  '<div id="books-turnstile" data-sitekey="__BOOKS_TURNSTILE_SITE_KEY__" data-action="books-eoi"></div>' +
+  '</body></html>';
+
+function booksHtmlEnv(html, { withSiteKey = true } = {}) {
+  const env = makeEnv({});
+  env.ASSETS = {
+    // The Worker passes a URL object to ASSETS.fetch (mirroring servePublicIndex);
+    // accept a URL, string, or Request here.
+    async fetch(input) {
+      const u = input instanceof URL ? input : new URL(typeof input === 'string' ? input : input.url);
+      if (u.pathname === '/books.html') {
+        return new Response(html, {
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=UTF-8' }
+        });
+      }
+      return new Response('not found', { status: 404 });
+    }
+  };
+  if (!withSiteKey) delete env.TURNSTILE_SITE_KEY;
+  return env;
+}
+
+test('GET /books injects the Turnstile site key in place of the marker', async () => {
+  const env = booksHtmlEnv(BOOKS_HTML_WITH_MARKER);
+  const res = await worker.fetch(req('/books'), env);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'text/html; charset=UTF-8');
+  const html = await res.text();
+  assert.equal(html.includes('__BOOKS_TURNSTILE_SITE_KEY__'), false, 'marker must be replaced');
+  assert.ok(html.includes('data-sitekey="test-site-key"'), 'site key is injected into the attribute');
+  assert.ok(html.includes('data-action="books-eoi"'), 'action is preserved');
+});
+
+test('GET /books HTML-escapes the site key for the attribute context', async () => {
+  const env = booksHtmlEnv(BOOKS_HTML_WITH_MARKER);
+  env.TURNSTILE_SITE_KEY = '1x00"onmouseover="evil';
+  const res = await worker.fetch(req('/books'), env);
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  // The double-quote that would break out of the attribute is escaped.
+  assert.equal(html.includes('"onmouseover'), false);
+  assert.ok(html.includes('&quot;'));
+});
+
+test('GET /books fails closed 503 when TURNSTILE_SITE_KEY is absent', async () => {
+  const env = booksHtmlEnv(BOOKS_HTML_WITH_MARKER, { withSiteKey: false });
+  const res = await worker.fetch(req('/books'), env);
+  assert.equal(res.status, 503);
+  // No HTML page (and no marker) is ever served.
+  const text = await res.text();
+  assert.equal(text.includes('books-turnstile'), false);
+});
+
+test('GET /books/ is permanently redirected to the canonical /books', async () => {
+  const env = booksHtmlEnv(BOOKS_HTML_WITH_MARKER);
+  const res = await worker.fetch(req('/books/'), env);
+  assert.equal(res.status, 301);
+  assert.equal(new URL(res.headers.get('location')).pathname, '/books');
+});
+
+test('GET /books returns 404 when the books.html asset is missing', async () => {
+  const env = booksHtmlEnv(BOOKS_HTML_WITH_MARKER);
+  env.ASSETS = {
+    async fetch() {
+      return new Response('not found', { status: 404 });
+    }
+  };
+  const res = await worker.fetch(req('/books'), env);
+  assert.equal(res.status, 404);
+});
+
+test('/books route is registered in run_worker_first so it is handled by the Worker', () => {
+  // Parse the run_worker_first array text directly: the .jsonc file contains
+  // https:// URLs, so a naive // comment-strip would corrupt those strings.
+  const wrangler = readFileSync(path.resolve(import.meta.dirname, '..', 'wrangler.jsonc'), 'utf8');
+  const rwf = wrangler.match(/"run_worker_first"\s*:\s*\[([^\]]*)\]/);
+  assert.ok(rwf, 'an assets.run_worker_first array must exist');
+  assert.match(rwf[1], /"\/books"/, 'run_worker_first must include "/books"');
+  assert.match(rwf[1], /"\/books\/"/, 'run_worker_first must include "/books/"');
+});
+
 
