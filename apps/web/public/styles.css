@@ -15,13 +15,14 @@
      rail only where an unreserved gutter genuinely fits (>=1440px).
 
      Gutter math is evidence-based: the page-shell is centred at <=1180px, so
-     at 1440px each side gutter is (1440-1180)/2 = 130px. A 116px rail plus a
-     14px gap consumes exactly that 130px, so the rail overlays only the
+     at 1440px each side gutter is (1440-1180)/2 = 130px. A 100px rail, 12px
+     viewport inset, and 14px gap consume 126px, so the rail overlays only the
      gutter and the body keeps zero right padding (content + Back to Top stay
      viewport-centred, never shifted). Below 1440px the gutter is too narrow
      and the disclosure is used instead. */
-  --chapter-rail-width: 116px;
+  --chapter-rail-width: 100px;
   --chapter-rail-gap: 14px;
+  --chapter-rail-inset: 12px;
   --chapter-summary-min: 44px;
   --chapter-disclosure-inset: 16px;
   --btt-narrow-lift-gap: 16px;
@@ -136,6 +137,7 @@ h3 {
 .intro-panel,
 .painting-card,
 .testimonials-grid blockquote,
+.testimonials-empty,
 .contact-form,
 .contact-card,
 .painting-dialog {
@@ -468,6 +470,18 @@ textarea:focus-visible,
   background-position: center;
 }
 
+.preview-primary {
+  background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.17%20PM.jpeg');
+}
+
+.preview-secondary {
+  background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.21%20PM%20(3).jpeg');
+}
+
+.preview-tertiary {
+  background-image: url('./artwork/WhatsApp%20Image%202026-03-30%20at%204.41.22%20PM.jpeg');
+}
+
 .preview-large {
   min-height: 308px;
 }
@@ -576,6 +590,12 @@ textarea:focus-visible,
   background-color: rgba(255, 255, 255, 0.4);
 }
 
+.painting-image {
+  aspect-ratio: 1 / 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .painting-image img,
 .dialog-image img {
   display: block;
@@ -583,6 +603,17 @@ textarea:focus-visible,
   height: 100%;
   max-width: 100%;
   max-height: 100%;
+  object-fit: cover;
+}
+
+/* Artworks flagged containImage, plus the detail dialog, show the full piece
+   inside the reserved box without cropping (contain). The default card media
+   stays cover so square artwork fills the reserved square media box; only this
+   opt-in class and the detail dialog switch to contain. The reserved square
+   geometry (aspect-ratio: 1/1 + overflow: hidden above) and the lazy-image
+   width/height attributes keep layout stable in both modes. */
+.painting-image-contained img,
+.dialog-image img {
   object-fit: contain;
 }
 
@@ -636,6 +667,7 @@ textarea:focus-visible,
 
 .placeholder-copy,
 .testimonials-placeholder blockquote,
+.testimonials-empty,
 .contact-card {
   background: rgba(255, 250, 246, 0.82);
 }
@@ -645,13 +677,15 @@ textarea:focus-visible,
   margin-top: 20px;
 }
 
-.testimonials-grid blockquote {
+.testimonials-grid blockquote,
+.testimonials-empty {
   margin: 0;
   padding: 24px;
   font-size: 1.05rem;
 }
 
-.testimonials-placeholder blockquote {
+.testimonials-placeholder blockquote,
+.testimonials-empty {
   color: var(--muted);
   font-style: italic;
 }
@@ -759,14 +793,15 @@ textarea {
       align-content (no transform, so nothing can clash with hover nudges). */
   .chapter-rail {
     position: fixed;
-    top: 0;
-    right: 0;
+    top: calc(env(safe-area-inset-top, 0px) + var(--chapter-rail-inset));
+    right: calc(env(safe-area-inset-right, 0px) + var(--chapter-rail-inset));
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--chapter-rail-inset));
     display: grid;
     align-content: center;
     gap: 4px;
     width: var(--chapter-rail-width);
     max-width: var(--chapter-rail-width);
-    height: 100dvh;
+    height: auto;
     padding: 12px 10px;
     border-left: 1px solid var(--border);
     background: var(--surface-strong);
@@ -788,6 +823,12 @@ textarea {
   }
 }
 
+@media (max-width: 1024px) {
+  .gallery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 960px) {
   .hero-content,
   .intro-grid,
@@ -795,10 +836,6 @@ textarea {
   .painting-dialog[open],
   .testimonials-grid {
     grid-template-columns: 1fr;
-  }
-
-  .gallery-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .stats-panel {

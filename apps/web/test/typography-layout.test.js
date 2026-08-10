@@ -177,18 +177,18 @@ test('gallery keeps 3 columns on desktop by default', () => {
   assert.match(grid, /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
 });
 
-test('gallery adds a 2-column tier inside the 960px band', () => {
-  const mq = stylesCss.match(/@media\s*\(\s*max-width:\s*960px\s*\)\s*\{([\s\S]*?)\}\s*(?=@media)/);
-  assert.ok(mq, '960px media block must exist');
+test('gallery adds a 2-column tier at the explicit 1024px tablet breakpoint', () => {
+  const mq = stylesCss.match(/@media\s*\(\s*max-width:\s*1024px\s*\)\s*\{([\s\S]*?)\}\s*(?=@media)/);
+  assert.ok(mq, '1024px media block must exist');
   assert.match(
     mq[1],
     /\.gallery-grid\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/,
-    '960px block must set the gallery to two columns'
+    '1024px block must set the gallery to two columns'
   );
   assert.doesNotMatch(
     mq[1],
     /\.gallery-grid\s*,/,
-    'gallery must not be lumped into the 1fr collapse at 960px'
+    'gallery must not be lumped into a 1fr collapse at 1024px'
   );
 });
 
@@ -202,14 +202,14 @@ test('gallery drops to a single column at and below 680px', () => {
   );
 });
 
-test('gallery breakpoint source order: 960px precedes 680px (<=680px resolves to one column)', () => {
-  const at960 = stylesCss.search(/@media\s*\(\s*max-width:\s*960px\s*\)/);
+test('gallery breakpoint source order: 1024px precedes 680px (<=680px resolves to one column)', () => {
+  const at1024 = stylesCss.search(/@media\s*\(\s*max-width:\s*1024px\s*\)/);
   const at680 = stylesCss.search(/@media\s*\(\s*max-width:\s*680px\s*\)/);
-  assert.notStrictEqual(at960, -1, 'a 960px media block must exist');
+  assert.notStrictEqual(at1024, -1, 'a 1024px media block must exist');
   assert.notStrictEqual(at680, -1, 'a 680px media block must exist');
   assert.ok(
-    at960 < at680,
-    'the 960px media block must precede the 680px block so the cascade collapses the gallery to one column at <=680px'
+    at1024 < at680,
+    'the 1024px media block must precede the 680px block so the cascade collapses the gallery to one column at <=680px'
   );
 });
 

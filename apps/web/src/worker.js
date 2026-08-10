@@ -37,6 +37,19 @@ import {
 const ARTWORKS_KEY = 'artworks.json';
 const SESSION_COOKIE = 'mj_art_admin';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
+export const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "form-action 'self' mailto:",
+  "script-src 'self' https://challenges.cloudflare.com",
+  "style-src 'self' https://fonts.googleapis.com",
+  "font-src 'self' https://fonts.gstatic.com",
+  "img-src 'self' data:",
+  "connect-src 'self' https://challenges.cloudflare.com",
+  "frame-src https://challenges.cloudflare.com"
+].join('; ');
 
 // The Worker owns every Books page URL. The canonical page is /books; the raw
 // .html alias and any trailing-slash variant (single or repeated) all
@@ -74,19 +87,48 @@ const SERVED_IMAGE_KEY_RE = /^artwork\/catalog\/(mj|misc)-\d{3}\/(full|thumb)\.j
 
 export default {
   async fetch(request, env) {
-    const url = new URL(request.url);
-
-    if (url.pathname === '/api/health' && request.method === 'GET') {
-      return jsonResponse({ status: 'healthy' });
+    if (!requestHostAllowed(request, env)) {
+      return finalizeResponse(
+        new Response('Misdirected request.', {
+          status: 421,
+          headers: { 'content-type': 'text/plain; charset=UTF-8' }
+        }),
+        request.method
+      );
     }
 
-    if (url.pathname === '/api/artworks' && request.method === 'GET') {
-      return handlePublicArtworks(env);
+    try {
+      return finalizeResponse(await routeRequest(request, env), request.method);
+    } catch {
+      return finalizeResponse(
+        new Response('Internal server error.', {
+          status: 500,
+          headers: { 'content-type': 'text/plain; charset=UTF-8' }
+        }),
+        request.method
+      );
     }
+  }
+};
 
-    if ((url.pathname === '/' || url.pathname === '/index.html') && request.method === 'GET') {
-      return servePublicIndex(request, env);
-    }
+async function routeRequest(request, env) {
+  const url = new URL(request.url);
+  const getLike = request.method === 'GET' || request.method === 'HEAD';
+
+  if (url.pathname === '/api/health') {
+    if (!getLike) return methodNotAllowed('GET, HEAD');
+    return jsonResponse({ status: 'healthy' });
+  }
+
+  if (url.pathname === '/api/artworks') {
+    if (!getLike) return methodNotAllowed('GET, HEAD');
+    return handlePublicArtworks(env);
+  }
+
+  if (url.pathname === '/' || url.pathname === '/index.html') {
+    if (!getLike) return methodNotAllowed('GET, HEAD');
+    return servePublicIndex(request, env);
+  }
 
     // Books public page. The Worker owns every Books URL so the raw books.html
     // asset is never served with an unreplaced Turnstile site-key marker, and so
@@ -96,106 +138,124 @@ export default {
     // GET /books.html, /books/, and repeated trailing slashes (/books//, ...)
     // are permanently redirected to /books. Any other method on a Books URL is
     // an explicit JSON 405 and NEVER falls through to static assets.
-    if (isBooksPage(url.pathname)) {
-      if (url.pathname !== '/books') {
-        if (request.method === 'GET') {
-          return Response.redirect(new URL('/books', request.url).toString(), 301);
-        }
-        return methodNotAllowed();
+  if (isBooksPage(url.pathname)) {
+    if (url.pathname !== '/books') {
+      if (getLike) {
+        return Response.redirect(new URL('/books', request.url).toString(), 301);
       }
-      if (request.method !== 'GET') {
-        return methodNotAllowed();
-      }
-      return serveBooksPage(request, env);
+      return methodNotAllowed('GET, HEAD');
     }
+    if (!getLike) return methodNotAllowed('GET, HEAD');
+    return serveBooksPage(request, env);
+  }
 
-    if (url.pathname === '/api/admin/login' && request.method === 'POST') {
-      return login(request, env);
-    }
+  if (url.pathname === '/api/admin/login') {
+    if (request.method === 'POST') return login(request, env);
+    return methodNotAllowed('POST');
+  }
 
-    if (url.pathname === '/api/admin/logout' && request.method === 'POST') {
-      return logout();
-    }
+  if (url.pathname === '/api/admin/logout') {
+    if (request.method === 'POST') return logout();
+    return methodNotAllowed('POST');
+  }
 
-    if (url.pathname === '/api/admin/artworks' && request.method === 'GET') {
+  if (url.pathname === '/api/admin/artworks') {
+    if (getLike) {
       const auth = await requireAdmin(request, env);
       if (auth) return auth;
       return handleAdminArtworks(env);
     }
-
-    if (url.pathname === '/api/admin/artworks' && request.method === 'PUT') {
+    if (request.method === 'PUT') {
       const auth = await requireAdmin(request, env);
       if (auth) return auth;
       return saveArtworks(request, env);
     }
+    return methodNotAllowed('GET, HEAD, PUT');
+  }
 
-    if (url.pathname === '/api/admin/upload' && request.method === 'POST') {
+  if (url.pathname === '/api/admin/upload') {
+    if (request.method === 'POST') {
       const auth = await requireAdmin(request, env);
       if (auth) return auth;
       return uploadArtworkImage(request, env);
     }
+    return methodNotAllowed('POST');
+  }
 
-    if (url.pathname.startsWith('/artwork-uploaded/') && request.method === 'GET') {
-      return serveUploadedImage(url, env);
-    }
+  if (url.pathname.startsWith('/artwork-uploaded/')) {
+    if (!getLike) return methodNotAllowed('GET, HEAD');
+    return serveUploadedImage(url, env, request.method === 'HEAD');
+  }
 
     // -------------------------------------------------------------------------
     // Books Expression of Interest (public). Unknown/unsupported /api/books/*
     // returns a JSON 404/405 and NEVER falls through to static assets.
     // -------------------------------------------------------------------------
-    if (url.pathname.startsWith('/api/books/')) {
-      if (url.pathname === '/api/books/eoi' && request.method === 'POST') {
-        return handleCreateBookEoi(request, env);
-      }
-      if (url.pathname === '/api/books/interest' && request.method === 'GET') {
-        return handleBookInterest(env);
-      }
-      if (url.pathname === '/api/books/health' && request.method === 'GET') {
-        return handleBookHealth(env);
-      }
-      // Known path, unsupported method -> 405; unknown path -> 404.
-      if (url.pathname === '/api/books/eoi' || url.pathname === '/api/books/interest' || url.pathname === '/api/books/health') {
-        return jsonResponse({ error: 'Method not allowed.' }, 405);
-      }
-      return jsonResponse({ error: 'Not found.' }, 404);
+  if (url.pathname.startsWith('/api/books/')) {
+    if (url.pathname === '/api/books/eoi') {
+      if (request.method === 'POST') return handleCreateBookEoi(request, env);
+      return methodNotAllowed('POST');
     }
+    if (url.pathname === '/api/books/interest') {
+      if (getLike) return handleBookInterest(env);
+      return methodNotAllowed('GET, HEAD');
+    }
+    if (url.pathname === '/api/books/health') {
+      if (getLike) return handleBookHealth(env);
+      return methodNotAllowed('GET, HEAD');
+    }
+    return jsonResponse({ error: 'Not found.' }, 404);
+  }
 
     // -------------------------------------------------------------------------
     // Books EOI (admin). Auth is enforced before any DB/crypto work. No DELETE.
     // -------------------------------------------------------------------------
-    if (url.pathname === '/api/admin/books/eoi' && request.method === 'GET') {
+  if (url.pathname === '/api/admin/books/eoi') {
+    if (getLike) {
       const auth = await requireAdmin(request, env);
       if (auth) return auth;
       return handleAdminListBookEoi(request, env);
     }
-    if (url.pathname === '/api/admin/books/eoi/summary' && request.method === 'GET') {
+    return methodNotAllowed('GET, HEAD');
+  }
+  if (url.pathname === '/api/admin/books/eoi/summary') {
+    if (getLike) {
       const auth = await requireAdmin(request, env);
       if (auth) return auth;
       return handleAdminSummaryBookEoi(env);
     }
-    if (request.method === 'PATCH' && url.pathname.startsWith('/api/admin/books/eoi/')) {
-      const auth = await requireAdmin(request, env);
-      if (auth) return auth;
-      // Safe decode: a malformed percent-encoded id must never throw (which
-      // would surface as an opaque 500). It is not a valid resource -> JSON 404.
-      const rawId = url.pathname.slice('/api/admin/books/eoi/'.length);
-      let id;
-      try {
-        id = decodeURIComponent(rawId);
-      } catch {
-        return jsonResponse({ error: 'Not found.' }, 404);
-      }
-      return handleAdminPatchBookEoi(request, env, id);
-    }
-    if (url.pathname.startsWith('/api/admin/books/')) {
-      const auth = await requireAdmin(request, env);
-      if (auth) return auth;
+    return methodNotAllowed('GET, HEAD');
+  }
+  if (request.method === 'PATCH' && url.pathname.startsWith('/api/admin/books/eoi/')) {
+    const auth = await requireAdmin(request, env);
+    if (auth) return auth;
+    // Safe decode: a malformed percent-encoded id must never throw (which
+    // would surface as an opaque 500). It is not a valid resource -> JSON 404.
+    const rawId = url.pathname.slice('/api/admin/books/eoi/'.length);
+    let id;
+    try {
+      id = decodeURIComponent(rawId);
+    } catch {
       return jsonResponse({ error: 'Not found.' }, 404);
     }
-
-    return env.ASSETS.fetch(request);
+    return handleAdminPatchBookEoi(request, env, id);
   }
-};
+  if (url.pathname.startsWith('/api/admin/books/')) {
+    const auth = await requireAdmin(request, env);
+    if (auth) return auth;
+    return jsonResponse({ error: 'Not found.' }, 404);
+  }
+
+  const assetResponse = await env.ASSETS.fetch(request);
+  // Every asset-generated 405 carries an exact Allow: GET, HEAD, overwriting
+  // any divergent value the asset binding may have provided.
+  if (assetResponse.status === 405) {
+    const headers = new Headers(assetResponse.headers);
+    headers.set('allow', 'GET, HEAD');
+    return new Response(assetResponse.body, { status: 405, headers });
+  }
+  return assetResponse;
+}
 
 // Read the persisted catalogue from R2. Single runtime metadata source.
 // Returns { state: 'present', records } | { state: 'missing' } | { state: 'invalid' }.
@@ -420,7 +480,7 @@ function isJpeg(buf) {
   return view.length >= 2 && view[0] === 0xff && view[1] === 0xd8;
 }
 
-async function serveUploadedImage(url, env) {
+async function serveUploadedImage(url, env, headOnly = false) {
   const key = url.pathname.replace('/artwork-uploaded/', '');
 
   // Strict canonical-path allowlist: only artwork/catalog/(mj|misc)-NNN/(full|thumb).jpg
@@ -431,7 +491,17 @@ async function serveUploadedImage(url, env) {
     return new Response('Not found', { status: 404 });
   }
 
-  const object = await env.ARTWORK_IMAGES.get(key);
+  // Metadata-only HEAD uses R2 head() so the object body is never downloaded.
+  // We never fall back to the body-returning get() for HEAD: if head() is
+  // unavailable we decline with a stable HEAD-shaped 501 rather than fetch the
+  // object body only to discard it.
+  if (headOnly && typeof env.ARTWORK_IMAGES.head !== 'function') {
+    return new Response(null, { status: 501 });
+  }
+
+  const object = headOnly
+    ? await env.ARTWORK_IMAGES.head(key)
+    : await env.ARTWORK_IMAGES.get(key);
 
   if (!object) {
     return new Response('Not found', { status: 404 });
@@ -440,8 +510,7 @@ async function serveUploadedImage(url, env) {
   const headers = new Headers();
   object.writeHttpMetadata(headers);
   headers.set('cache-control', 'public, max-age=31536000, immutable');
-  headers.set('x-content-type-options', 'nosniff');
-  return new Response(object.body, { headers });
+  return new Response(headOnly ? null : object.body, { headers });
 }
 
 // Fail-closed admin session-secret gate, mirroring the Books PII secret gate.
@@ -573,12 +642,13 @@ function timingSafeEqual(a, b) {
   return diff === 0;
 }
 
-function jsonResponse(body, status = 200) {
+function jsonResponse(body, status = 200, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       'cache-control': 'no-store',
-      'content-type': 'application/json'
+      'content-type': 'application/json',
+      ...extraHeaders
     }
   });
 }
@@ -586,8 +656,50 @@ function jsonResponse(body, status = 200) {
 // Consistent JSON 405 for any supported path hit with an unsupported method.
 // Used by the Books page routes so unsupported methods never fall through to
 // static assets. Mirrors the /api/books/* 405 shape.
-function methodNotAllowed() {
-  return jsonResponse({ error: 'Method not allowed.' }, 405);
+function methodNotAllowed(allow) {
+  return jsonResponse({ error: 'Method not allowed.' }, 405, { allow });
+}
+
+function requestHostAllowed(request, env) {
+  const environment = env && env.BOOK_EOI_ENVIRONMENT;
+  const allowed = parseAllowedHostnames(env && env.BOOK_EOI_ALLOWED_HOSTNAMES);
+  // Fail closed unless the environment and its configured hostname set are a
+  // consistent pair: a local environment only allows loopback/local hosts, and
+  // preview/production only allow non-local (public) hosts. This rejects
+  // mismatched environment/config pairs (e.g. production env with a localhost
+  // allowlist) without duplicating the deployment host values in code.
+  if (!environmentHostnamesConsistent(environment, allowed)) return false;
+
+  const urlHost = new URL(request.url).hostname.toLowerCase();
+  const rawHost = request.headers.get('host');
+  let headerHost = urlHost;
+  if (rawHost) {
+    try {
+      headerHost = new URL(`http://${rawHost}`).hostname.toLowerCase();
+    } catch {
+      return false;
+    }
+  }
+
+  return headerHost === urlHost && allowed.includes(urlHost);
+}
+
+function finalizeResponse(response, method) {
+  const headers = new Headers(response.headers);
+  headers.set('content-security-policy', CONTENT_SECURITY_POLICY);
+  headers.set('strict-transport-security', 'max-age=31536000');
+  headers.set('x-content-type-options', 'nosniff');
+  headers.set('x-frame-options', 'DENY');
+  headers.set('referrer-policy', 'strict-origin');
+  headers.set('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()');
+  headers.set('cross-origin-opener-policy', 'same-origin');
+  headers.set('cross-origin-resource-policy', 'same-origin');
+
+  return new Response(method === 'HEAD' ? null : response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers
+  });
 }
 
 function base64UrlEncode(value) {
@@ -652,8 +764,7 @@ async function bookEoiHealthConfigOk(env) {
     typeof env.TURNSTILE_SITE_KEY === 'string' && env.TURNSTILE_SITE_KEY.length > 0 &&
     typeof env.TURNSTILE_WIDGET_FINGERPRINT === 'string' && /^[0-9a-f]{64}$/.test(env.TURNSTILE_WIDGET_FINGERPRINT) &&
     typeof env.BOOK_EOI_TURNSTILE_ACTION === 'string' && env.BOOK_EOI_TURNSTILE_ACTION.length > 0 &&
-    parseAllowedHostnames(env.BOOK_EOI_ALLOWED_HOSTNAMES).length > 0 &&
-    BOOK_EOI_ENVIRONMENTS.has(env.BOOK_EOI_ENVIRONMENT) &&
+    environmentHostnamesConsistent(env.BOOK_EOI_ENVIRONMENT, parseAllowedHostnames(env.BOOK_EOI_ALLOWED_HOSTNAMES)) &&
     env.BOOK_EOI_RATE_LIMITER && typeof env.BOOK_EOI_RATE_LIMITER.limit === 'function' &&
     bookEoiSecretsOk(env)
   )) return false;
@@ -736,6 +847,37 @@ function parseAllowedHostnames(value) {
     .split(',')
     .map((h) => h.trim().toLowerCase())
     .filter((h) => h.length > 0);
+}
+
+// A hostname is "local-class" when it is a loopback or link-local address that
+// can never be a public deployment host. This class test (not the literal
+// deployment FQDNs) is what binds a configured hostname set to an environment.
+function isLocalHostname(host) {
+  const h = String(host).toLowerCase();
+  return (
+    h === 'localhost' ||
+    h.endsWith('.localhost') ||
+    /^127\./.test(h) ||
+    h === '0.0.0.0' ||
+    h === '::1' ||
+    /^\[::1\]$/.test(h)
+  );
+}
+
+// Fail-closed environment/hostname policy. Binds the configured hostname set
+// to the environment: local only allows loopback hosts, and preview/production
+// only allow non-local (public) hosts. Returns false for an unknown environment
+// or an empty hostname set. Used by both the request host gate and the health
+// config gate so a mismatched pair (e.g. production env with localhost) fails
+// closed everywhere. It does not embed the deployment FQDNs: any non-loopback
+// host satisfies preview/production, and only loopback hosts satisfy local.
+function environmentHostnamesConsistent(environment, allowedHostnames) {
+  if (!BOOK_EOI_ENVIRONMENTS.has(environment)) return false;
+  if (!Array.isArray(allowedHostnames) || allowedHostnames.length === 0) return false;
+  if (environment === 'local') {
+    return allowedHostnames.every((h) => isLocalHostname(h));
+  }
+  return allowedHostnames.every((h) => !isLocalHostname(h));
 }
 
 // Verify a Turnstile token via Siteverify. Validates success, expected action,

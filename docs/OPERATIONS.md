@@ -57,6 +57,39 @@ already serving until an operator performs a separate corrective deploy. The
 stronger mutation-free preflight reduces that risk but cannot eliminate runtime
 or propagation failures after deployment.
 
+### 3.1 Worker request and response acceptance
+
+All asset paths run Worker-first. The Worker rejects requests before routing unless
+the request URL hostname and any explicit `Host` header agree and match the
+environment's `BOOK_EOI_ALLOWED_HOSTNAMES` value. The environment
+(`BOOK_EOI_ENVIRONMENT`) and its configured hostname set must be a consistent pair:
+local only permits loopback hosts (`localhost`, `127.0.0.1`); preview and production
+only permit non-local (public) hosts, each its own Worker hostname. A mismatched
+environment/hostname pair fails closed with a sanitized `421` response, including for
+health routes.
+
+One response finalizer applies the same security policy to pages, APIs, static/R2
+assets, redirects, and errors: a source-exact CSP, HSTS, `nosniff`, clickjacking
+protection, strict-origin referrers, a constrained Permissions Policy, COOP, and
+same-origin CORP. The CSP permits scripts/frames/connections only from self and the
+Cloudflare Turnstile origin, and styles/fonts only from self and Google Fonts. Page
+markup has no inline styles or scripts, so no `unsafe-inline` or `unsafe-eval` is
+allowed. COEP is deliberately omitted: cross-origin isolation is not required by
+this site and can prevent Turnstile or hosted fonts from loading, while COOP and
+CORP still provide the intended isolation boundary.
+
+`HEAD` follows every successful `GET` route with the same status and headers and an
+empty body. R2 artwork `HEAD` requires the R2 `head()` capability: when the binding
+exposes `head()` it answers from object metadata without downloading the body, and
+when `head()` is unavailable the Worker declines with `501` rather than fetching the
+object body only to discard it. On explicitly handled routes, unsupported methods
+return `405` with that route's exact `Allow` value; unhandled dynamic sub-paths (for
+example an unknown `/api/books/*` path or a non-PATCH method on an item id under the
+PATCH-only admin route) return `404`, not an invented `405`. Every actual `405`
+carries an exact `Allow`. `OPTIONS` is not a CORS escape hatch and receives no
+access-control headers. Pushes to `main` continue to run checks only; these protocol
+rules do not alter the manual-only deployment policy.
+
 ## 4. Secrets (names only)
 
 The following GitHub Actions secret names exist (names only, never values):

@@ -11,7 +11,7 @@
   "assets": {
     "binding": "ASSETS",
     "directory": "./public",
-    "run_worker_first": ["/", "/index.html", "/books", "/books/", "/books.html", "/api/*", "/artwork-uploaded/*"]
+    "run_worker_first": true
   },
   "observability": {
     "enabled": true
@@ -22,7 +22,7 @@
     // Non-secret Books EOI / Turnstile expectations. The Turnstile secret and
     // DB URL are provisioned as encrypted secrets (never in this file).
     "BOOK_EOI_TURNSTILE_ACTION": "books-eoi",
-    "BOOK_EOI_ALLOWED_HOSTNAMES": "mj-art.drhasansabri.workers.dev",
+    "BOOK_EOI_ALLOWED_HOSTNAMES": "localhost,127.0.0.1",
     "BOOK_EOI_ENVIRONMENT": "local"
   },
 

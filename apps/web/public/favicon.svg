@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">MJ Art</title>
+  <rect width="64" height="64" rx="14" fill="#fff9f3"/>
+  <circle cx="24" cy="24" r="11" fill="#9a5c4b"/>
+  <path d="M18 47c8-12 20-17 29-11" fill="none" stroke="#6f3f35" stroke-width="6" stroke-linecap="round"/>
+</svg>

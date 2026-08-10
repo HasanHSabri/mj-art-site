@@ -665,6 +665,16 @@ test('interest fails closed 503 when DB throws', async () => {
   assert.equal(res.status, 503);
 });
 
+test('HEAD /api/books/interest matches successful GET headers and omits the body', async () => {
+  const sql = makeSql(() => []);
+  const env = makeEnv({ sql });
+  const get = await worker.fetch(req('/api/books/interest'), env);
+  const head = await worker.fetch(req('/api/books/interest', { method: 'HEAD' }), env);
+  assert.equal(head.status, get.status);
+  assert.deepEqual([...head.headers.entries()].sort(), [...get.headers.entries()].sort());
+  assert.equal(await head.text(), '');
+});
+
 // ===========================================================================
 // 8. Public GET /api/books/health (live-catalog shape comparison; outcome only)
 // ===========================================================================
@@ -754,6 +764,15 @@ test('health response reveals only the outcome (no columns/types/details/credent
   }
 });
 
+test('HEAD /api/books/health matches successful GET headers and omits the body', async () => {
+  const env = makeEnv({ sql: liveCatalogSql(liveCatalogFixture()) });
+  const get = await worker.fetch(req('/api/books/health'), env);
+  const head = await worker.fetch(req('/api/books/health', { method: 'HEAD' }), env);
+  assert.equal(head.status, get.status);
+  assert.deepEqual([...head.headers.entries()].sort(), [...get.headers.entries()].sort());
+  assert.equal(await head.text(), '');
+});
+
 test('health returns unavailable when NEON_DATABASE_URL is missing', async () => {
   const env = makeEnv({ withConfig: false });
   const res = await worker.fetch(req('/api/books/health'), env);
@@ -803,12 +822,12 @@ test('health returns unavailable when the rate limiter is missing or lacks limit
   }
 });
 
-test('health returns unavailable when the allowed hostname allowlist is empty', async () => {
+test('health fails at the host gate when the allowed hostname allowlist is empty', async () => {
   const env = makeEnv({ sql: liveCatalogSql(liveCatalogFixture()) });
   env.BOOK_EOI_ALLOWED_HOSTNAMES = '';
   const res = await worker.fetch(req('/api/books/health'), env);
-  assert.equal(res.status, 503);
-  assert.deepEqual(await body(res), { status: 'unavailable' });
+  assert.equal(res.status, 421);
+  assert.equal(await res.text(), 'Misdirected request.');
 });
 
 test('health returns unavailable when a PII crypto key is short', async () => {
@@ -1065,12 +1084,14 @@ test('GET on POST-only /api/books/eoi returns 405', async () => {
   const res = await worker.fetch(req('/api/books/eoi'), env);
   assert.equal(res.status, 405);
   assert.equal(res.headers.get('content-type'), 'application/json');
+  assert.equal(res.headers.get('allow'), 'POST');
 });
 
 test('DELETE on /api/books/interest returns 405', async () => {
   const env = makeEnv({ sql: makeSql(insertResponder()) });
   const res = await worker.fetch(req('/api/books/interest', { method: 'DELETE' }), env);
   assert.equal(res.status, 405);
+  assert.equal(res.headers.get('allow'), 'GET, HEAD');
 });
 
 // ===========================================================================
@@ -1318,6 +1339,64 @@ test('there is no DELETE route: DELETE on admin eoi returns 404 (no deletion pat
     env
   );
   assert.equal(res.status, 404);
+});
+
+test('authorized HEAD matches authorized GET for /api/admin/books/eoi (parity, empty body)', async () => {
+  const env = makeEnv({ sql: await seedRowSql([]) });
+  const get = await worker.fetch(await authedReq('/api/admin/books/eoi'), env);
+  const head = await worker.fetch(await authedReq('/api/admin/books/eoi', { method: 'HEAD' }), env);
+  assert.equal(head.status, get.status);
+  assert.deepEqual([...get.headers.entries()].sort(), [...head.headers.entries()].sort());
+  assert.equal(await head.text(), '');
+});
+
+test('authorized HEAD matches authorized GET for /api/admin/books/eoi/summary (parity, empty body)', async () => {
+  const env = makeEnv({ sql: makeSql(() => [{}]) });
+  const get = await worker.fetch(await authedReq('/api/admin/books/eoi/summary'), env);
+  const head = await worker.fetch(await authedReq('/api/admin/books/eoi/summary', { method: 'HEAD' }), env);
+  assert.equal(head.status, get.status);
+  assert.deepEqual([...get.headers.entries()].sort(), [...head.headers.entries()].sort());
+  assert.equal(await head.text(), '');
+});
+
+test('admin EOI collection/summary/item method contracts and exact Allow where 405 applies', async () => {
+  const env = makeEnv({ sql: await seedRowSql([]) });
+
+  // Collection: authorized GET succeeds; every other method -> 405, exact Allow.
+  assert.equal((await worker.fetch(await authedReq('/api/admin/books/eoi'), env)).status, 200);
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    const res = await worker.fetch(await authedReq('/api/admin/books/eoi', { method }), env);
+    assert.equal(res.status, 405, `${method} collection -> 405`);
+    assert.equal(res.headers.get('allow'), 'GET, HEAD', `${method} collection -> exact Allow`);
+  }
+
+  // Summary: authorized GET succeeds; every other method -> 405, exact Allow.
+  assert.equal((await worker.fetch(await authedReq('/api/admin/books/eoi/summary'), env)).status, 200);
+  for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) {
+    const res = await worker.fetch(await authedReq('/api/admin/books/eoi/summary', { method }), env);
+    assert.equal(res.status, 405, `${method} summary -> 405`);
+    assert.equal(res.headers.get('allow'), 'GET, HEAD', `${method} summary -> exact Allow`);
+  }
+
+  // Item: PATCH is the only supported method and succeeds; every other method
+  // intentionally falls through to a JSON 404 (the contract does NOT invent a 405).
+  const id = crypto.randomUUID();
+  const patchEnv = makeEnv({
+    sql: makeSql((text) => {
+      if (/UPDATE mj_eoi.book_eoi SET status/.test(text)) return [{ id }];
+      throw new Error('unexpected: ' + text);
+    })
+  });
+  const patched = await worker.fetch(
+    await authedReq('/api/admin/books/eoi/' + id, { method: 'PATCH', body: JSON.stringify({ status: 'new' }) }),
+    patchEnv
+  );
+  assert.equal(patched.status, 200, 'PATCH is the supported item method');
+  for (const method of ['GET', 'POST', 'PUT', 'DELETE']) {
+    const res = await worker.fetch(await authedReq('/api/admin/books/eoi/' + id, { method }), env);
+    assert.equal(res.status, 404, `${method} item intentionally 404 (no invented 405)`);
+    assert.equal(res.headers.get('content-type'), 'application/json', `${method} item -> JSON 404`);
+  }
 });
 
 // ===========================================================================
@@ -1655,11 +1734,11 @@ test('Turnstile verification includes an idempotency_key UUID', async () => {
   );
 });
 
-test('missing Turnstile hostname allowlist fails closed (503)', async () => {
+test('missing hostname allowlist fails closed at the request host gate (421)', async () => {
   const env = makeEnv({ sql: makeSql(insertResponder()) });
   delete env.BOOK_EOI_ALLOWED_HOSTNAMES;
   const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
-  assert.equal(res.status, 503);
+  assert.equal(res.status, 421);
 });
 
 // --- Rate-limiter fail-closed (public EOI) ---
@@ -1841,17 +1920,9 @@ test('GET /books returns 404 when the books.html asset is missing', async () => 
   assert.equal(res.status, 404);
 });
 
-test('/books routes are registered in run_worker_first so they are handled by the Worker', () => {
-  // Parse the run_worker_first array text directly: the .jsonc file contains
-  // https:// URLs, so a naive // comment-strip would corrupt those strings.
+test('all assets run Worker-first so headers and host policy are central', () => {
   const wrangler = readFileSync(path.resolve(import.meta.dirname, '..', 'wrangler.jsonc'), 'utf8');
-  const rwf = wrangler.match(/"run_worker_first"\s*:\s*\[([^\]]*)\]/);
-  assert.ok(rwf, 'an assets.run_worker_first array must exist');
-  assert.match(rwf[1], /"\/books"/, 'run_worker_first must include "/books"');
-  assert.match(rwf[1], /"\/books\/"/, 'run_worker_first must include "/books/"');
-  // The raw .html asset must be Worker-first so it is redirected (never served
-  // with an unreplaced Turnstile site-key marker).
-  assert.match(rwf[1], /"\/books\.html"/, 'run_worker_first must include "/books.html"');
+  assert.match(wrangler, /"run_worker_first"\s*:\s*true/, 'every static path must pass through the Worker');
 });
 
 // --- isBooksPage route contract ---
@@ -1906,6 +1977,7 @@ test('unsupported methods on /books return a JSON 405, never an asset', async ()
     const res = await worker.fetch(req('/books', { method }), env);
     assert.equal(res.status, 405, `${method} /books -> 405`);
     assert.equal(res.headers.get('content-type'), 'application/json', `${method} /books -> JSON`);
+    assert.equal(res.headers.get('allow'), 'GET, HEAD', `${method} /books -> correct Allow`);
     assert.deepEqual(await body(res), { error: 'Method not allowed.' });
   }
 });
@@ -1916,5 +1988,6 @@ test('unsupported methods on /books.html and /books/ return a JSON 405', async (
     const res = await worker.fetch(req(path, { method: 'POST' }), env);
     assert.equal(res.status, 405, `POST ${path} -> 405`);
     assert.equal(res.headers.get('content-type'), 'application/json', `POST ${path} -> JSON`);
+    assert.equal(res.headers.get('allow'), 'GET, HEAD', `POST ${path} -> correct Allow`);
   }
 });

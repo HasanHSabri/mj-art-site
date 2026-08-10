@@ -1,5 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import {
   renderArtworkCard,
   renderArtworkCards,
@@ -9,6 +12,8 @@ import {
   escapeAttribute
 } from '../src/gallery-ssr.js';
 import * as clientDisplay from '../public/gallery-display.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 // A minimal projected public record (no catalogNumber/sortOrder/provenance).
 function publicRecord(overrides = {}) {
@@ -135,6 +140,27 @@ test('renderArtworkCard applies the contain-image class when requested', () => {
   const contained = renderArtworkCard(publicRecord({ containImage: true }));
   assert.ok(normal.includes('class="painting-image"'));
   assert.ok(contained.includes('class="painting-image painting-image-contained"'));
+});
+
+test('containImage contract: false/true render differently and class/CSS agree', () => {
+  const css = readFileSync(join(__dirname, '..', 'public', 'styles.css'), 'utf8');
+  // SSR emits a distinct class per mode.
+  const normal = renderArtworkCard(publicRecord({ containImage: false }));
+  const contained = renderArtworkCard(publicRecord({ containImage: true }));
+  assert.ok(!normal.includes('painting-image-contained'), 'default card omits the contained class');
+  assert.ok(contained.includes('painting-image-contained'), 'containImage card carries the contained class');
+  assert.notEqual(normal, contained, 'the two modes must produce different markup');
+  // CSS backs both modes: default cover on .painting-image img, contain only on
+  // the opt-in .painting-image-contained img selector.
+  const defaultImg = css.match(/\.painting-image img,[\s\S]*?object-fit:\s*cover/);
+  const containedImg = css.match(/\.painting-image-contained img,[\s\S]*?object-fit:\s*contain/);
+  assert.ok(defaultImg, 'CSS default card image uses object-fit: cover');
+  assert.ok(containedImg, 'CSS containImage selector uses object-fit: contain');
+  // The default .painting-image rule must NOT itself carry object-fit (the box
+  // reserves geometry; the img object-fit lives in the dedicated img rule).
+  const box = css.match(/\.painting-image\s*\{([^}]*)\}/);
+  assert.ok(box);
+  assert.doesNotMatch(box[1], /object-fit/, 'the square media box rule carries no object-fit');
 });
 
 test('renderArtworkCard never emits the More works placeholder', () => {

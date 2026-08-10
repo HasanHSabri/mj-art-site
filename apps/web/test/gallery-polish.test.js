@@ -210,3 +210,40 @@ test('theme-color meta matches the page background', () => {
     'theme-color meta must be #f8f1ea'
   );
 });
+
+test('gallery has explicit 3 -> 2 at 1024 -> 1 column breakpoints', () => {
+  const base = ruleBody(stylesCss, '.gallery-grid');
+  assert.match(base, /grid-template-columns:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(
+    stylesCss,
+    /@media\s*\(max-width:\s*1024px\)[\s\S]*?\.gallery-grid\s*\{[^}]*repeat\(2,\s*minmax\(0,\s*1fr\)\)/,
+    '1024px tablet uses exactly two columns'
+  );
+  assert.match(
+    stylesCss,
+    /@media\s*\(max-width:\s*680px\)[\s\S]*?\.gallery-grid\s*\{[^}]*grid-template-columns:\s*1fr/,
+    'mobile uses one column'
+  );
+});
+
+test('gallery media reserves deterministic geometry before lazy images load', () => {
+  const media = ruleBody(stylesCss, '.painting-image');
+  assert.match(media, /aspect-ratio:\s*1\s*\/\s*1/);
+  assert.match(media, /overflow:\s*hidden/);
+  // Default card media fills the reserved square with cover; only the opt-in
+  // containImage class switches to contain so non-square originals are not cropped.
+  assert.match(stylesCss, /\.painting-image img,[\s\S]*?object-fit:\s*cover/, 'default artwork fills the square media box (cover)');
+  assert.match(stylesCss, /\.painting-image-contained img,[\s\S]*?object-fit:\s*contain/, 'containImage artwork uses contain (never distorted)');
+});
+
+test('testimonial placeholders are replaced by one permission-bound empty state', () => {
+  assert.doesNotMatch(indexHtml, /Add a short quote|Add another line/i);
+  const emptyStates = indexHtml.match(/class="testimonials-empty"/g) || [];
+  assert.equal(emptyStates.length, 1);
+  assert.match(indexHtml, /Additional testimonials will be shared here only with permission\./);
+});
+
+test('public page links the self-hosted SVG favicon and has no inline styles', () => {
+  assert.match(indexHtml, /<link rel="icon" href="\/favicon\.svg" type="image\/svg\+xml">/);
+  assert.doesNotMatch(indexHtml, /\sstyle=/, 'strict style CSP needs no inline allowance');
+});

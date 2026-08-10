@@ -760,3 +760,8 @@ input[readonly] {
     font-size: 1.6rem;
   }
 }
+/* Keep admin anchor targets clear of the section navigation without inline CSS. */
+#artwork-section,
+#books-dashboard {
+  scroll-margin-top: 84px;
+}

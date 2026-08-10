@@ -14,16 +14,11 @@
 //      whole nav hides while the painting <dialog> is open (restoring on
 //      close). The native dialog stays in the top layer above everything.
 //
-//   2. Scroll-spy: an IntersectionObserver mirrors the current in-page section
-//      onto exactly one chapter link as aria-current="location" (an in-page
-//      position, never aria-current="page"). When multiple sections intersect
-//      the active band, the LATER/nearest-to-marker section is chosen
-//      deterministically (see pickActiveSection) so there is no lag during
-//      transitions. It is non-intrusive: no history, no focus move, no live
-//      region. On the Books page the spy is not started (its home targets are
-//      absent) and the Books page link is marked aria-current="page" instead.
+//   2. Scroll-spy: ordered section tops are compared with one fixed viewport
+//      offset. This avoids intersection-ratio ambiguity when short adjacent
+//      sections are both visible. Document bottom explicitly selects Contact.
 //
-// The pure helpers (pickActiveSection, reduceScrollSpy, createDisclosureController,
+// The pure helpers (pickActiveSection, correctHashTarget, createDisclosureController,
 // isBooksPage, markBooksPageCurrent) are exported so they can be unit-tested
 // with real inputs and a tiny fake-DOM / fake-observer harness, without a heavy
 // dependency.
@@ -33,6 +28,7 @@
 // the scroll-spy. The Books page itself is marked aria-current="page" via
 // isBooksPage()/markBooksPageCurrent() instead.
 const IN_PAGE_SECTIONS = ['gallery', 'story', 'testimonials', 'contact'];
+const ACTIVE_SECTION_OFFSET = 96;
 
 // The canonical Books route. The trailing-slash form is treated as the same
 // page (the Worker redirects /books/ -> /books with 301).
@@ -57,67 +53,40 @@ export function markBooksPageCurrent(links) {
 }
 
 // --- Pure: deterministic active-section selection ---------------------------
-// entries: Array of { id, top } for the currently intersecting sections
+// entries: Array of { id, top } for every section in document order
 //          (top = boundingClientRect.top, document order preserved by caller).
-// markerY: px offset of the top of the active band from the viewport top.
+// markerY: px offset from the viewport top.
 //
 // The current section is the LATEST section whose top has crossed at/above the
-// marker line (so the section the reader is entering wins immediately -- no
-// document-first lag). If no visible top has crossed yet (approaching a
-// section from below), the nearest one below the marker is chosen. Returns
-// null when nothing is visible (e.g. over the hero), so the caller clears the
-// marker rather than show a stale current.
-export function pickActiveSection(entries, markerY) {
+// marker line. Before Gallery reaches the marker there is no active chapter.
+// At document bottom the last chapter wins even when a short page cannot place
+// its top above the marker.
+export function pickActiveSection(entries, markerY, atDocumentBottom = false) {
   if (!entries || entries.length === 0) return null;
+  if (atDocumentBottom) return entries[entries.length - 1].id;
 
   let chosen = null;
   for (const entry of entries) {
     if (entry.top <= markerY) chosen = entry.id; // last crossed-above wins
   }
-  if (chosen !== null) return chosen;
-
-  // None has crossed the marker yet: pick the nearest below (smallest top).
-  let nearest = entries[0];
-  for (const entry of entries) {
-    if (entry.top < nearest.top) nearest = entry;
-  }
-  return nearest.id;
+  return chosen;
 }
 
-// --- Pure: incremental scroll-spy state -----------------------------------
-// IntersectionObserver invokes its callback once per change batch containing
-// ONLY the entries whose intersection state CHANGED since the last call;
-// sections that remain intersecting but did not change are NOT included.
-// Computing the current section from that partial batch alone drops
-// still-active sections during transitions: e.g. once Story is active, a later
-// batch reporting only Testimonials entering (or only an unrelated section
-// leaving) would make the reducer "forget" Story and clear the marker early.
-//
-// The MDN-correct pattern keeps a persistent map of EVERY observed section's
-// current state, merges each changed-entry batch into it, and derives the
-// current section from the COMPLETE active state. This helper is that pure
-// reducer, exported so the multi-batch contract can be exercised with a tiny
-// fake-observer harness (no real DOM/IntersectionObserver needed).
-//
-// state:   Map<id, { id, top }> of currently-intersecting sections, or null on
-//          the first call. Passed in (and returned) so the reducer stays pure.
-// batch:   Array of normalized entries { id, isIntersecting, top }.
-// markerY: px offset of the top of the active band from the viewport top.
-//
-// Returns { state: nextMap, current: id|null }. `current` is null when nothing
-// is intersecting (e.g. over the hero) so the caller clears the marker rather
-// than show a stale current.
-export function reduceScrollSpy(state, batch, markerY) {
-  const next = new Map(state || []);
-  for (const entry of batch || []) {
-    if (entry.isIntersecting) {
-      next.set(entry.id, { id: entry.id, top: entry.top });
-    } else {
-      next.delete(entry.id);
-    }
+// Schedule one post-navigation correction without intercepting native anchor
+// history or focus behaviour. The deterministic gallery media box keeps the
+// target stable while lazy images finish loading.
+export function correctHashTarget(hash, getTarget, schedule) {
+  if (typeof hash !== 'string' || !hash.startsWith('#') || hash.length < 2) return false;
+  let id;
+  try {
+    id = decodeURIComponent(hash.slice(1));
+  } catch {
+    return false;
   }
-  const visible = [...next.values()];
-  return { state: next, current: pickActiveSection(visible, markerY) };
+  const target = getTarget(id);
+  if (!target || typeof target.scrollIntoView !== 'function') return false;
+  schedule(() => target.scrollIntoView());
+  return true;
 }
 
 // --- Pure: disclosure controller ------------------------------------------
@@ -228,34 +197,57 @@ function initChapterNav() {
       .map((id) => document.getElementById(id))
       .filter(Boolean);
 
-    if (sections.length === 0 || typeof IntersectionObserver === 'undefined') return;
+    if (sections.length === 0) return;
 
-    // Bias the active zone to a horizontal band near the top of the viewport.
-    const rootMargin = '-20% 0px -60% 0px';
-
-    // Persistent state of every observed section across callbacks. Each
-    // IntersectionObserver batch reports only the entries whose intersection
-    // state CHANGED; reduceScrollSpy merges that partial batch into this map so
-    // a still-active section absent from a later batch can never be dropped.
-    let spyState = new Map();
-
-    const observer = new IntersectionObserver((entries) => {
-      const batch = entries.map((entry) => ({
-        id: entry.target.id,
-        isIntersecting: entry.isIntersecting,
-        top: entry.boundingClientRect.top
+    let frame = 0;
+    function update() {
+      frame = 0;
+      const entries = sections.map((section) => ({
+        id: section.id,
+        top: section.getBoundingClientRect().top
       }));
-      // The marker line is the top of the active band: 20% down the viewport
-      // (matches the rootMargin top inset).
-      const markerY = (window.innerHeight || 0) * 0.2;
-      const next = reduceScrollSpy(spyState, batch, markerY);
-      spyState = next.state;
-      if (next.current) setCurrentSection(next.current);
+      const documentHeight = document.documentElement.scrollHeight;
+      const atDocumentBottom = window.scrollY + window.innerHeight >= documentHeight - 1;
+      const current = pickActiveSection(entries, ACTIVE_SECTION_OFFSET, atDocumentBottom);
+      if (current) setCurrentSection(current);
       else clearCurrentSection();
-    }, { rootMargin, threshold: [0, 1] });
+    }
 
-    for (const section of sections) observer.observe(section);
+    function scheduleUpdate() {
+      if (!frame) frame = window.requestAnimationFrame(update);
+    }
+
+    window.addEventListener('scroll', scheduleUpdate, { passive: true });
+    window.addEventListener('resize', scheduleUpdate);
+    window.addEventListener('hashchange', scheduleUpdate);
+    update();
   }
+
+  function scheduleAnchorCorrection(hash) {
+    correctHashTarget(
+      hash,
+      (id) => document.getElementById(id),
+      (callback) => window.requestAnimationFrame(callback)
+    );
+  }
+
+  document.addEventListener('click', (event) => {
+    const link = event.target && typeof event.target.closest === 'function'
+      ? event.target.closest('a[href*="#"]')
+      : null;
+    if (!link) return;
+    const targetUrl = new URL(link.href, window.location.href);
+    if (targetUrl.pathname === window.location.pathname) scheduleAnchorCorrection(targetUrl.hash);
+  });
+
+  // On hashchange (link activation, programmatic hash changes, and back/forward
+  // history navigation) schedule a post-layout anchor correction for the current
+  // hash so the target stays put while lazy images settle. The deterministic
+  // scroll-spy update on hashchange is wired separately in setupScrollSpy.
+  window.addEventListener('hashchange', () => {
+    scheduleAnchorCorrection(window.location.hash);
+  });
+  if (window.location.hash) scheduleAnchorCorrection(window.location.hash);
 
   // --- Dialog coexistence -------------------------------------------------
   // The painting <dialog> uses showModal()/close(); showModal toggles its `open`

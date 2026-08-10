@@ -66,6 +66,7 @@ function makeEnv(storedText) {
     },
     ADMIN_PASSWORD: 'secret',
     ADMIN_SESSION_SECRET: 'test-admin-session-secret-0123456789',
+    BOOK_EOI_ALLOWED_HOSTNAMES: 'localhost',
     BOOK_EOI_ENVIRONMENT: 'local',
     BOOK_EOI_RATE_LIMITER: { async limit() { return { success: true }; } }
   };
@@ -219,6 +220,15 @@ test('admin GET with missing metadata returns []', async () => {
   const res = await worker.fetch(request, env);
   assert.equal(res.status, 200);
   assert.deepEqual(await body(res), []);
+});
+
+test('authorized HEAD matches authorized GET status and headers with an empty body for /api/admin/artworks', async () => {
+  const env = makeEnv(JSON.stringify(twoValidRecords()));
+  const get = await worker.fetch(await authedReq('/api/admin/artworks', env.ADMIN_SESSION_SECRET), env);
+  const head = await worker.fetch(await authedReq('/api/admin/artworks', env.ADMIN_SESSION_SECRET, { method: 'HEAD' }), env);
+  assert.equal(head.status, get.status);
+  assert.deepEqual([...get.headers.entries()].sort(), [...head.headers.entries()].sort());
+  assert.equal(await head.text(), '');
 });
 
 // ---------------------------------------------------------------------------
@@ -396,6 +406,7 @@ function makeStoreEnv() {
     },
     ADMIN_PASSWORD: 'secret',
     ADMIN_SESSION_SECRET: 'test-admin-session-secret-0123456789',
+    BOOK_EOI_ALLOWED_HOSTNAMES: 'localhost',
     BOOK_EOI_ENVIRONMENT: 'local',
     BOOK_EOI_RATE_LIMITER: { async limit() { return { success: true }; } }
   };

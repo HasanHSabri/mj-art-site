@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { pickActiveSection, reduceScrollSpy, createDisclosureController, isBooksPage, markBooksPageCurrent } from '../public/chapter-nav.js';
+import { pickActiveSection, correctHashTarget, createDisclosureController, isBooksPage, markBooksPageCurrent } from '../public/chapter-nav.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(__dirname, '..', 'public');
@@ -152,28 +152,32 @@ test('wide breakpoint is min-width: 1440px (evidence-based gutter fit)', () => {
   );
 });
 
-test('rail width token is <=120px and fits the >=1440px gutter with a declared gap', () => {
+test('rail width, inset, and gap fit the >=1440px gutter', () => {
   const width = intToken(stylesCss, '--chapter-rail-width');
   const gap = intToken(stylesCss, '--chapter-rail-gap');
+  const inset = intToken(stylesCss, '--chapter-rail-inset');
   assert.ok(width, '--chapter-rail-width must exist');
   assert.ok(gap, '--chapter-rail-gap must exist');
   assert.ok(width <= 120, `rail width must be <= 120px (got ${width}px)`);
+  assert.ok(inset >= 12, `rail inset must be >=12px (got ${inset}px)`);
   // The centred page-shell is max 1180px (margin: 0 auto). At 1440px the
   // unreserved gutter per side is (1440-1180)/2 = 130px. Rail + gap must fit.
   const gutterAtBreakpoint = (1440 - 1180) / 2;
   assert.ok(
-    width + gap <= gutterAtBreakpoint,
-    `rail (${width}) + gap (${gap}) = ${width + gap} must fit the ${gutterAtBreakpoint}px gutter at 1440px`
+    width + gap + inset <= gutterAtBreakpoint,
+    `rail (${width}) + gap (${gap}) + inset (${inset}) must fit the ${gutterAtBreakpoint}px gutter at 1440px`
   );
 });
 
-test('desktop rail is fixed to the right edge, opaque and warm', () => {
+test('desktop rail is fixed inside the right edge, opaque and warm', () => {
   const wide = mediaBlock(stylesCss, '(min-width: 1440px)');
   assert.ok(wide, 'wide media block must exist');
   const body = ruleBody(wide, '.chapter-rail');
   assert.ok(body, '.chapter-rail rule must exist in the wide block');
   assert.match(body, /position:\s*fixed/, 'rail must be position: fixed');
-  assert.match(body, /right:\s*0/, 'rail must anchor to the right edge');
+  assert.match(body, /right:\s*calc\(env\(safe-area-inset-right,\s*0px\)\s*\+\s*var\(--chapter-rail-inset\)\)/, 'rail uses a safe right inset');
+  assert.match(body, /top:\s*calc\(env\(safe-area-inset-top,\s*0px\)\s*\+\s*var\(--chapter-rail-inset\)\)/, 'rail uses a safe top inset');
+  assert.match(body, /bottom:\s*calc\(env\(safe-area-inset-bottom,\s*0px\)\s*\+\s*var\(--chapter-rail-inset\)\)/, 'rail uses a safe bottom inset');
   assert.match(body, /width:\s*var\(--chapter-rail-width\)/, 'rail width uses the token');
   assert.match(body, /background:\s*var\(--surface-strong\)/, 'rail surface must be opaque warm');
   assert.match(body, /border-left:\s*1px solid var\(--border\)/, 'rail has a subtle 1px divider');
@@ -194,6 +198,16 @@ test('desktop rail targets are >= 44px', () => {
   const m = a.match(/min-height:\s*(\d+(?:\.\d+)?)px/i);
   assert.ok(m, 'rail link must declare a min-height');
   assert.ok(Number(m[1]) >= 44, `rail link min-height must be >= 44px (got ${m[1]}px)`);
+});
+
+test('rail remains wholly inside a 1600px viewport', () => {
+  const width = intToken(stylesCss, '--chapter-rail-width');
+  const inset = intToken(stylesCss, '--chapter-rail-inset');
+  assert.ok(inset + width < 1600, 'right edge minus inset and width remains on-screen');
+  const wide = mediaBlock(stylesCss, '(min-width: 1440px)');
+  const body = ruleBody(wide, '.chapter-rail');
+  assert.match(body, /height:\s*auto/, 'top and bottom insets determine a non-clipped height');
+  assert.doesNotMatch(body, /height:\s*100(?:d)?vh/, 'full viewport height cannot combine with an inset');
 });
 
 test('body is NEVER padded right for the rail (no content/BTT misalignment)', () => {
@@ -335,153 +349,106 @@ test('pickActiveSection: nothing visible returns null (e.g. over the hero)', () 
   assert.equal(pickActiveSection(null, 200), null);
 });
 
-test('pickActiveSection: a single visible section is chosen', () => {
+test('pickActiveSection: a section that crosses the fixed offset is chosen', () => {
   assert.equal(pickActiveSection([{ id: 'story', top: 150 }], 200), 'story');
 });
 
-test('pickActiveSection: when multiple intersect, the LATER section wins (no document-first lag)', () => {
-  // Scrolling down: story still in the band while testimonials has crossed the
-  // marker. The later section (testimonials) must win immediately.
-  const entries = [
-    { id: 'story', top: 80 },
-    { id: 'testimonials', top: 190 }
-  ];
-  assert.equal(pickActiveSection(entries, 200), 'testimonials');
+test('ordered top tracking marks every chapter deterministically', () => {
+  const ids = ['gallery', 'story', 'testimonials', 'contact'];
+  for (let active = 0; active < ids.length; active += 1) {
+    const entries = ids.map((id, index) => ({ id, top: (index - active) * 600 + 24 }));
+    assert.equal(pickActiveSection(entries, 96), ids[active]);
+  }
 });
 
-test('pickActiveSection: when no top has crossed the marker, the nearest below is chosen', () => {
+test('Testimonials near the top remains active until Contact crosses the offset', () => {
   const entries = [
-    { id: 'story', top: 260 },
-    { id: 'testimonials', top: 300 }
+    { id: 'gallery', top: -1200 },
+    { id: 'story', top: -500 },
+    { id: 'testimonials', top: 24 },
+    { id: 'contact', top: 150 }
   ];
-  assert.equal(pickActiveSection(entries, 200), 'story');
+  assert.equal(pickActiveSection(entries, 96), 'testimonials');
 });
 
-test('pickActiveSection: three visible, the latest crossed-above wins', () => {
+test('document bottom explicitly marks Contact', () => {
   const entries = [
-    { id: 'gallery', top: -400 },
-    { id: 'story', top: 60 },
-    { id: 'testimonials', top: 195 }
+    { id: 'gallery', top: -1800 },
+    { id: 'story', top: -1200 },
+    { id: 'testimonials', top: -300 },
+    { id: 'contact', top: 180 }
   ];
-  assert.equal(pickActiveSection(entries, 200), 'testimonials');
+  assert.equal(pickActiveSection(entries, 96, true), 'contact');
 });
 
-// --- JS: incremental scroll-spy state (partial-entry robustness) ---------
-// A minimal fake-observer harness: it feeds normalized { id, isIntersecting,
-// top } batches through reduceScrollSpy, threading the persistent state map
-// between callbacks exactly as the real IntersectionObserver callback does.
-// Each batch contains ONLY the entries whose state changed (the real API
-// contract), so these tests exercise the multi-callback guarantee that a
-// partial batch must never drop a still-active section.
-function fakeObserver(markerY = 200) {
-  let state = new Map();
-  return {
-    // Emit one change batch (only changed entries, like the real API).
-    emit(batch) {
-      const result = reduceScrollSpy(state, batch, markerY);
-      state = result.state;
-      return result.current;
-    },
-    snapshot() {
-      return new Map(state);
-    }
+test('initial hash and first click are corrected after native navigation while images are delayed', () => {
+  const callbacks = [];
+  let imageLoaded = false;
+  const calls = [];
+  const targets = {
+    story: { scrollIntoView() { calls.push({ id: 'story', top: 2400, imageLoaded }); } },
+    testimonials: { scrollIntoView() { calls.push({ id: 'testimonials', top: 3600, imageLoaded }); } }
   };
-}
+  const lookup = (id) => targets[id];
+  const schedule = (callback) => callbacks.push(callback);
 
-test('reduceScrollSpy: empty batch with no prior state clears (hero-none)', () => {
-  assert.equal(reduceScrollSpy(null, [], 200).current, null);
-  assert.equal(reduceScrollSpy(new Map(), [], 200).current, null);
+  assert.equal(correctHashTarget('#story', lookup, schedule), true, 'initial hash is scheduled');
+  callbacks.shift()();
+  imageLoaded = true;
+  assert.equal(correctHashTarget('#testimonials', lookup, schedule), true, 'first click is scheduled');
+  callbacks.shift()();
+  assert.deepEqual(calls, [
+    { id: 'story', top: 2400, imageLoaded: false },
+    { id: 'testimonials', top: 3600, imageLoaded: true }
+  ]);
 });
 
-test('reduceScrollSpy: a single entering section becomes current', () => {
-  const r = reduceScrollSpy(null, [{ id: 'story', isIntersecting: true, top: 150 }], 200);
-  assert.equal(r.current, 'story');
-  assert.equal(r.state.size, 1);
-});
+test('hashchange schedules post-layout anchor correction for the current hash (event-behavior harness)', () => {
+  // Smallest practical event-behavior harness for the hashchange path (no DOM
+  // dependency): model window.location.hash + a requestAnimationFrame queue,
+  // then drive the SAME flow the hashchange listener performs -- read the
+  // CURRENT hash (covering link activation, programmatic changes, and back/
+  // forward history travel), schedule correction, and drain the animation
+  // frame. Proves the current hash target is corrected after the event.
+  const callbacks = [];
+  let currentHash = '';
+  const corrected = [];
+  const targets = {
+    story: { scrollIntoView() { corrected.push('story'); } },
+    testimonials: { scrollIntoView() { corrected.push('testimonials'); } }
+  };
+  const schedule = (cb) => callbacks.push(cb);
 
-test('partial-entry: an unrelated exit batch keeps the still-active section current', () => {
-  // Story is active. A LATER callback fires for an UNRELATED section (gallery)
-  // leaving the band; Story is NOT in this batch because its state did not
-  // change. The complete state must still know Story is the active section.
-  const spy = fakeObserver(200);
-  assert.equal(spy.emit([{ id: 'story', isIntersecting: true, top: 80 }]), 'story');
-  // gallery exits (partial/unrelated batch). Story must remain current.
-  assert.equal(
-    spy.emit([{ id: 'gallery', isIntersecting: false, top: -500 }]),
-    'story',
-    'an unrelated exit batch must not clear the still-active Story'
-  );
-});
+  // Emulate the hashchange listener: correct the CURRENT location.hash, not a
+  // click-time-captured one. This mirrors chapter-nav.js scheduling
+  // correctHashTarget(window.location.hash, getElementById, requestAnimationFrame):
+  // the target is resolved from the current hash at event time and the
+  // scrollIntoView correction is queued for the next animation frame.
+  function dispatchHashchange() {
+    correctHashTarget(
+      currentHash,
+      (id) => targets[id] || null,
+      schedule
+    );
+  }
 
-test('partial-entry: a section entering while another stays keeps the later active', () => {
-  // Story active; Testimonials partially enters but has not crossed the marker
-  // (its top is below the marker line). The complete state now has both, so
-  // the latest crossed-above (Story) stays current until Testimonials crosses.
-  const spy = fakeObserver(200);
-  spy.emit([{ id: 'story', isIntersecting: true, top: 60 }]);
-  assert.equal(
-    spy.emit([{ id: 'testimonials', isIntersecting: true, top: 260 }]),
-    'story',
-    'Story stays current while Testimonials has not yet crossed the marker'
-  );
-});
+  // Initial in-page navigation to #story, then history travel to #testimonials.
+  currentHash = '#story';
+  dispatchHashchange();
+  currentHash = '#testimonials';
+  dispatchHashchange();
 
-test('transition Story->Testimonials is deterministic across partial batches', () => {
-  // Full real-world transition driven by several small, partial callback
-  // batches (each batch reports only the section whose state changed):
-  const spy = fakeObserver(200);
-  assert.equal(spy.emit([{ id: 'gallery', isIntersecting: true, top: -400 }]), 'gallery');
-  assert.equal(spy.emit([{ id: 'story', isIntersecting: true, top: 60 }]), 'story');
-  // Testimonials crosses the marker in its own batch -> it must win immediately.
-  assert.equal(
-    spy.emit([{ id: 'testimonials', isIntersecting: true, top: 190 }]),
-    'testimonials',
-    'the later section wins the moment it crosses the marker (no document-first lag)'
-  );
-  // Story later fully leaves; Testimonials is NOT in this batch, so a naive
-  // single-batch reducer would have cleared it. The complete state keeps it.
-  assert.equal(
-    spy.emit([{ id: 'story', isIntersecting: false, top: -300 }]),
-    'testimonials',
-    'Testimonials stays current after Story leaves (no flicker during transition)'
-  );
-});
+  // Process the scheduled animation-frame corrections in registration order.
+  assert.equal(callbacks.length, 2, 'each hashchange schedules exactly one correction');
+  while (callbacks.length) callbacks.shift()();
 
-test('all observed sections leaving clears the current marker', () => {
-  const spy = fakeObserver(200);
-  spy.emit([{ id: 'story', isIntersecting: true, top: 80 }]);
-  spy.emit([{ id: 'testimonials', isIntersecting: true, top: 190 }]);
-  // Every observed section leaves (could arrive as one combined batch or two):
-  assert.equal(
-    spy.emit([
-      { id: 'story', isIntersecting: false, top: -300 },
-      { id: 'testimonials', isIntersecting: false, top: -400 }
-    ]),
-    null,
-    'once every observed section has left, current must be null (hero-none)'
-  );
-  assert.equal(spy.snapshot().size, 0, 'the complete state is empty after all leave');
-});
+  assert.deepEqual(corrected, ['story', 'testimonials'],
+    'each hashchange corrects the target that was current at event time');
 
-test('reduceScrollSpy: a re-entry batch refreshes a stored position without losing others', () => {
-  // A later change batch for an already-active section reports a new top; it
-  // must update the stored position while keeping the other section known.
-  let { state, current } = reduceScrollSpy(null, [{ id: 'story', isIntersecting: true, top: 60 }], 200);
-  ({ state, current } = reduceScrollSpy(state, [{ id: 'testimonials', isIntersecting: true, top: 190 }], 200));
-  assert.equal(current, 'testimonials');
-  ({ state, current } = reduceScrollSpy(state, [{ id: 'story', isIntersecting: true, top: 100 }], 200));
-  assert.equal(state.size, 2, 'both sections remain in the complete state');
-  assert.equal(current, 'testimonials', 'current is unaffected by a non-crossing re-entry');
-});
-
-test('reduceScrollSpy: books is never a key (books exclusion is upheld upstream)', () => {
-  // The observer only observes IN_PAGE_SECTIONS (which excludes /books), so a
-  // books-like id can never appear in a batch. This guard documents that the
-  // reducer itself stays generic but the caller's exclusion is what matters.
-  const spy = fakeObserver(200);
-  spy.emit([{ id: 'story', isIntersecting: true, top: 80 }]);
-  assert.equal(spy.snapshot().has('books'), false);
-  assert.equal(spy.snapshot().has('/books'), false);
+  // A hash with no matching target schedules nothing (no throw, no correction).
+  currentHash = '#nonexistent';
+  dispatchHashchange();
+  assert.equal(callbacks.length, 0, 'an unmatched hash schedules no correction');
 });
 
 // --- JS: pure disclosure controller (fake-DOM harness, no heavy dep) ---
@@ -565,11 +532,11 @@ test('outside click and link activation close the menu', () => {
 
 // --- JS: scroll-spy / aria-current -------------------------------------
 
-test('scroll-spy uses IntersectionObserver and delegates to pickActiveSection', () => {
-  assert.match(chapterJs, /new IntersectionObserver/, 'must construct an IntersectionObserver');
-  assert.match(chapterJs, /rootMargin\s*[:=]\s*['"]-20%/, 'uses a top-biased rootMargin band');
-  assert.match(chapterJs, /observer\.observe\(/, 'must observe the section targets');
-  assert.match(chapterJs, /pickActiveSection\(visible/, 'selection is delegated to the pure helper');
+test('scroll-spy uses ordered section tops and an explicit document-bottom decision', () => {
+  assert.doesNotMatch(chapterJs, /IntersectionObserver/, 'intersection ratios do not drive chapter state');
+  assert.match(chapterJs, /getBoundingClientRect\(\)\.top/, 'reads every ordered section top');
+  assert.match(chapterJs, /atDocumentBottom/, 'handles document bottom explicitly');
+  assert.match(chapterJs, /pickActiveSection\(entries, ACTIVE_SECTION_OFFSET, atDocumentBottom\)/);
 });
 
 test('in-page scroll-spy uses the "location" value (an in-page position)', () => {
