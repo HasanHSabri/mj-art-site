@@ -6,7 +6,7 @@
 //
 // A card carries data attributes for every value the dialog needs (title,
 // medium, dimensions display, formatted price, availability, description, and
-// the FULL image for the dialog). The card <img> itself uses the thumbnail. No
+// the FULL image for the dialog). The card image itself uses the thumbnail. No
 // internal-only field is ever emitted.
 
 const PRICE_ENQUIRY = 'Price on enquiry';
@@ -90,4 +90,39 @@ export function renderArtworkCard(artwork) {
 export function renderArtworkCards(artworks) {
   if (!Array.isArray(artworks) || artworks.length === 0) return '';
   return artworks.map(renderArtworkCard).join('\n\n');
+}
+
+// Render a Home preview card. The Home page shows exactly the first few public
+// artworks (in the artist's sortOrder) as a preview that links clearly to the
+// dedicated /gallery page. Each preview card is an anchor to /gallery (never a
+// dialog-opening button): Home has no artwork dialog, no filters, and no
+// enquiry form of its own -- the visitor follows the link to the full Gallery
+// for those. Only public display values are emitted (title, price, status,
+// thumbnail); no dialog data attributes and no internal-only field.
+export function renderArtworkPreviewCard(artwork) {
+  const title = artwork.title || UNKNOWN_TITLE;
+  const priceDisplay = formatPriceDisplay(artwork.price);
+  const availability = artwork.availability || '';
+  const thumbnail = artwork.thumbnail || artwork.image || '';
+  const imageClass = artwork.containImage
+    ? 'painting-image painting-image-contained'
+    : 'painting-image';
+  const { width, height } = intrinsicSize(artwork.dimensions);
+  const sizeAttrs = width != null ? ` width="${width}" height="${height}"` : '';
+
+  return `          <a class="painting-card painting-preview-card" href="/gallery" aria-label="View ${escapeAttribute(title)} in the gallery">
+            <div class="${imageClass}"><img src="${escapeAttribute(thumbnail)}" alt="${escapeAttribute(title)}" loading="lazy" decoding="async"${sizeAttrs}></div>
+            <div class="painting-card-body">
+              <h3>${escapeHtml(title)}</h3>
+              <p>${escapeHtml(priceDisplay)}</p>
+              <span>${escapeHtml(availability)}</span>
+            </div>
+          </a>`;
+}
+
+// Render the Home preview fragment (anchor cards joined by blank lines). Empty
+// input yields an empty string; the Worker renders an accessible empty state.
+export function renderArtworkPreviewCards(artworks) {
+  if (!Array.isArray(artworks) || artworks.length === 0) return '';
+  return artworks.map(renderArtworkPreviewCard).join('\n\n');
 }

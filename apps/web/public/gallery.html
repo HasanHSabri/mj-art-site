@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#f8f1ea">
+  <title>Gallery &mdash; MJ Art</title>
+  <meta
+    name="description"
+    content="The complete MJ art gallery: every painting, filterable by size. Open any piece for a closer look and send a direct inquiry."
+  >
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css?v=three-page-nav">
+  <link rel="stylesheet" href="./gallery.css?v=gallery-natural-ratio">
+</head>
+<body>
+  <a class="skip-link" href="#gallery">Skip to gallery</a>
+  <div class="page-shell">
+    <header class="hero">
+      <nav class="topbar" aria-label="Primary navigation">
+        <a class="brand" href="/" aria-label="MJ home">MJ</a>
+        <div class="topbar-links site-nav-links">
+          <a href="/">Home</a>
+          <a href="/gallery" aria-current="page">Gallery</a>
+          <a href="/books">Books</a>
+          <a href="/#contact">Enquire</a>
+        </div>
+        <details class="site-nav-disclosure">
+          <summary class="site-nav-summary">Menu</summary>
+          <ul class="site-nav-menu">
+            <li><a href="/">Home</a></li>
+            <li><a href="/gallery" aria-current="page">Gallery</a></li>
+            <li><a href="/books">Books</a></li>
+            <li><a href="/#contact">Enquire</a></li>
+          </ul>
+        </details>
+      </nav>
+
+      <section class="hero-content gallery-hero-content" id="top">
+        <div class="hero-copy">
+          <p class="eyebrow">The complete collection</p>
+          <h1>Every painting, gathered in one place.</h1>
+          <p class="hero-text">
+            Browse the full catalogue by size, open any piece for a closer look, and send a direct
+            inquiry if something speaks to you.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#gallery">Browse the collection</a>
+            <a class="button button-secondary" href="/#contact">Ask about a painting</a>
+          </div>
+        </div>
+      </section>
+    </header>
+
+    <main>
+      <section class="section" id="gallery" aria-labelledby="gallery-heading">
+        <div class="section-heading">
+          <div>
+            <p class="section-label">Gallery</p>
+            <h2 id="gallery-heading">The collection</h2>
+          </div>
+          <p class="section-note">Browse MJ's paintings by size. Open any piece for a closer look and send a direct inquiry if something speaks to you.</p>
+        </div>
+
+        <div class="gallery-filters" id="gallery-filters" role="group" aria-label="Filter works by size"></div>
+        <p class="gallery-results" id="gallery-results" aria-live="polite"></p>
+
+        <div class="gallery-grid" id="gallery-grid">
+          <!-- artwork-gallery:start -->
+          <!-- artwork-gallery:end -->
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="site-footer" aria-label="Footer">
+    <div class="site-footer-inner">
+      <nav class="site-footer-nav" aria-label="Footer navigation">
+        <a href="/">Home</a>
+        <a href="/gallery" aria-current="page">Gallery</a>
+        <a href="/books">Books</a>
+        <a href="/#contact">Enquire</a>
+      </nav>
+      <p class="site-footer-copy">&copy; MJ Art. Original paintings by MJ.</p>
+    </div>
+  </footer>
+
+  <dialog class="painting-dialog" id="painting-dialog" aria-labelledby="dialog-title">
+    <button class="dialog-close" id="dialog-close" aria-label="Close artwork details">Close</button>
+    <div class="dialog-image" id="dialog-image"></div>
+    <div class="dialog-copy">
+      <p class="section-label">Painting details</p>
+      <h2 id="dialog-title"></h2>
+      <dl class="detail-list">
+        <div>
+          <dt>Medium</dt>
+          <dd id="dialog-medium"></dd>
+        </div>
+        <div>
+          <dt>Size</dt>
+          <dd id="dialog-size"></dd>
+        </div>
+        <div>
+          <dt>Price</dt>
+          <dd id="dialog-price"></dd>
+        </div>
+        <div>
+          <dt>Status</dt>
+          <dd id="dialog-availability"></dd>
+        </div>
+      </dl>
+      <p id="dialog-description"></p>
+      <button class="button button-primary" id="dialog-inquire" type="button">Inquire about this painting</button>
+    </div>
+  </dialog>
+
+  <button type="button" id="back-to-top" class="back-to-top button button-primary" hidden>Back to Top</button>
+
+  <script type="module" src="./site-nav.js?v=three-page-nav"></script>
+  <script type="module" src="./script.js?v=gallery-natural-ratio"></script>
+</body>
+</html>

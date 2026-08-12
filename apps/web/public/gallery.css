@@ -1,0 +1,20 @@
+/* Gallery Expression page.
+   Layers on top of the shared warm-gallery system (styles.css). Reuses the
+   design tokens (--bg, --surface, --accent, --border, --shadow), the card
+   surface treatment, button styles, section rhythm, and the shared primary
+   navigation + footer. No new fonts and no dark-mode override. */
+
+/* The Gallery hero is a single copy column (no aside), so let it center and
+   breathe. */
+.gallery-hero-content {
+  grid-template-columns: 1fr;
+  max-width: 60ch;
+}
+
+/* The complete catalogue is dense, so a deliberate editorial rhythm paces it:
+   a steady 3/2/1 column grid with generous row gaps, and each card sits on the
+   shared surface. Natural artwork aspect ratios are preserved by the shared
+   .painting-image rule (no forced square, no crop). */
+.gallery-grid {
+  align-items: start;
+}

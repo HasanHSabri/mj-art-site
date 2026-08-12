@@ -6,6 +6,8 @@ import { dirname, join } from 'node:path';
 import {
   renderArtworkCard,
   renderArtworkCards,
+  renderArtworkPreviewCard,
+  renderArtworkPreviewCards,
   formatPriceDisplay,
   formatDimensionsDisplay,
   escapeHtml,
@@ -142,25 +144,34 @@ test('renderArtworkCard applies the contain-image class when requested', () => {
   assert.ok(contained.includes('class="painting-image painting-image-contained"'));
 });
 
-test('containImage contract: false/true render differently and class/CSS agree', () => {
+test('containImage contract: false/true render distinct classes; CSS never crops (natural ratio)', () => {
   const css = readFileSync(join(__dirname, '..', 'public', 'styles.css'), 'utf8');
-  // SSR emits a distinct class per mode.
+  // SSR still emits a distinct class per mode (the public projection carries
+  // the artist's containImage flag, preserved verbatim from the catalogue).
   const normal = renderArtworkCard(publicRecord({ containImage: false }));
   const contained = renderArtworkCard(publicRecord({ containImage: true }));
   assert.ok(!normal.includes('painting-image-contained'), 'default card omits the contained class');
   assert.ok(contained.includes('painting-image-contained'), 'containImage card carries the contained class');
   assert.notEqual(normal, contained, 'the two modes must produce different markup');
-  // CSS backs both modes: default cover on .painting-image img, contain only on
-  // the opt-in .painting-image-contained img selector.
-  const defaultImg = css.match(/\.painting-image img,[\s\S]*?object-fit:\s*cover/);
-  const containedImg = css.match(/\.painting-image-contained img,[\s\S]*?object-fit:\s*contain/);
-  assert.ok(defaultImg, 'CSS default card image uses object-fit: cover');
-  assert.ok(containedImg, 'CSS containImage selector uses object-fit: contain');
-  // The default .painting-image rule must NOT itself carry object-fit (the box
-  // reserves geometry; the img object-fit lives in the dedicated img rule).
+  // Natural artwork ratios / no crop: the card image keeps its own aspect
+  // ratio. SSR still emits intrinsic width/height pixel attrs (derived from
+  // the physical cm dimensions) so the box reserves its exact ratio before the
+  // lazy thumbnail loads, and CSS renders the image with height:auto (no
+  // forced square, no object-fit cover). Nothing in the painting-image rules
+  // may crop.
+  const imgRule = css.match(/\.painting-image img,\s*\.dialog-image img\s*\{([^}]*)\}/);
+  assert.ok(imgRule, 'a shared painting/dialog image rule must exist');
+  assert.match(imgRule[1], /height:\s*auto/, 'the card image keeps its natural ratio (height:auto)');
+  assert.doesNotMatch(imgRule[1], /object-fit:\s*cover/, 'no crop: never object-fit cover');
+  assert.doesNotMatch(imgRule[1], /object-fit:\s*contain/, 'no crop: never object-fit contain either');
+  // No painting-image rule of any kind crops.
+  assert.doesNotMatch(css, /\.painting-image[^{]*\{[^}]*object-fit:\s*cover/);
+  // The reserved box keeps overflow hidden so off-ratio overflow is clipped
+  // defensively, but the image itself is never forced into a square.
   const box = css.match(/\.painting-image\s*\{([^}]*)\}/);
   assert.ok(box);
-  assert.doesNotMatch(box[1], /object-fit/, 'the square media box rule carries no object-fit');
+  assert.match(box[1], /overflow:\s*hidden/, 'the media box keeps overflow hidden');
+  assert.doesNotMatch(box[1], /aspect-ratio:\s*1\s*\/\s*1/, 'no forced 1/1 square on the media box');
 });
 
 test('renderArtworkCard never emits the More works placeholder', () => {
@@ -199,4 +210,57 @@ test('SSR and client display helpers have price/dimension parity', () => {
 test('escapeHtml and escapeAttribute neutralise HTML metacharacters', () => {
   assert.equal(escapeHtml('<>&'), '&lt;&gt;&amp;');
   assert.equal(escapeAttribute('"x"'), '&quot;x&quot;');
+});
+
+// --- Home preview cards (anchor cards linking to /gallery) -----------------
+
+test('renderArtworkPreviewCard renders an anchor to /gallery, never a dialog button', () => {
+  const card = renderArtworkPreviewCard(publicRecord());
+  assert.match(card, /<a class="painting-card painting-preview-card" href="\/gallery"/);
+  // A preview card opens the gallery, not a dialog: no dialog data attributes,
+  // no role="button", no tabindex, no aria-haspopup.
+  assert.doesNotMatch(card, /role="button"/);
+  assert.doesNotMatch(card, /tabindex=/);
+  assert.doesNotMatch(card, /aria-haspopup/);
+  for (const attr of ['data-image', 'data-medium', 'data-size', 'data-description']) {
+    assert.doesNotMatch(card, new RegExp(attr), `preview card must not carry dialog ${attr}`);
+  }
+});
+
+test('renderArtworkPreviewCard exposes only public display values (title, price, status, thumb)', () => {
+  const r = publicRecord({ title: 'A "B" <C>' });
+  const card = renderArtworkPreviewCard(r);
+  // Title is escaped into the accessible label and the visible heading.
+  assert.match(card, /aria-label="View A &quot;B&quot; &lt;C&gt; in the gallery"/);
+  assert.match(card, /<h3>A "B" &lt;C&gt;<\/h3>/);
+  // Thumbnail is the lazy-loaded image; no internal fields leak.
+  assert.match(card, /<img src="\/artwork-uploaded\/artwork\/catalog\/mj-001\/thumb\.jpg"/);
+  assert.match(card, /loading="lazy"/);
+  assert.match(card, /decoding="async"/);
+  for (const needle of ['catalogNumber', 'sortOrder', 'provenance', 'sha256', 'driveFileId']) {
+    assert.equal(card.includes(needle), false, `preview card must not leak ${needle}`);
+  }
+});
+
+test('renderArtworkPreviewCard reserves the natural aspect ratio via intrinsic width/height attrs', () => {
+  const r = publicRecord({
+    dimensions: { widthCm: 40, heightCm: 30, orientation: 'Horizontal' }
+  });
+  const card = renderArtworkPreviewCard(r);
+  // Long edge (40cm) -> 600px; 30cm -> 450px. Attrs reserve the natural ratio.
+  assert.match(card, /width="600" height="450"/);
+});
+
+test('renderArtworkPreviewCards returns empty string for empty/absent input and joins many', () => {
+  assert.equal(renderArtworkPreviewCards([]), '');
+  assert.equal(renderArtworkPreviewCards(undefined), '');
+  assert.equal(renderArtworkPreviewCards(null), '');
+  const html = renderArtworkPreviewCards([
+    publicRecord({ id: 'mj-001', title: 'One' }),
+    publicRecord({ id: 'mj-002', title: 'Two' })
+  ]);
+  const anchorCount = (html.match(/<a class="painting-card painting-preview-card"/g) || []).length;
+  assert.equal(anchorCount, 2);
+  assert.ok(html.includes('One'));
+  assert.ok(html.includes('Two'));
 });

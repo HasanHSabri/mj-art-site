@@ -6,24 +6,26 @@ import { dirname, join } from 'node:path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(__dirname, '..', 'public');
-const indexHtml = readFileSync(join(publicDir, 'index.html'), 'utf8');
+// The painting <dialog> lives on the dedicated Gallery page (Home shows only
+// a 6-card preview linking to /gallery; it has no dialog).
+const galleryHtml = readFileSync(join(publicDir, 'gallery.html'), 'utf8');
 const stylesCss = readFileSync(join(publicDir, 'styles.css'), 'utf8');
 
 test('painting dialog is named via aria-labelledby pointing at the title', () => {
-  const dialogOpen = indexHtml.match(/<dialog\b[^>]*\bid="painting-dialog"[^>]*>/i);
+  const dialogOpen = galleryHtml.match(/<dialog\b[^>]*\bid="painting-dialog"[^>]*>/i);
   assert.ok(dialogOpen, '#painting-dialog opening tag exists');
   assert.ok(
     /aria-labelledby="dialog-title"/.test(dialogOpen[0]),
     '#painting-dialog must carry aria-labelledby="dialog-title"'
   );
   assert.ok(
-    /\bid="dialog-title"/.test(indexHtml),
+    /\bid="dialog-title"/.test(galleryHtml),
     'the referenced #dialog-title element must exist'
   );
 });
 
 test('dialog close control keeps an accessible name', () => {
-  const close = indexHtml.match(/<button\b[^>]*\bid="dialog-close"[^>]*>/i);
+  const close = galleryHtml.match(/<button\b[^>]*\bid="dialog-close"[^>]*>/i);
   assert.ok(close, '#dialog-close button exists');
   assert.ok(
     /aria-label="[^"]+"/.test(close[0]),

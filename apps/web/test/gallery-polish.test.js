@@ -7,8 +7,10 @@ import { dirname, join } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(__dirname, '..', 'public');
 const indexHtml = readFileSync(join(publicDir, 'index.html'), 'utf8');
+const galleryHtml = readFileSync(join(publicDir, 'gallery.html'), 'utf8');
 const stylesCss = readFileSync(join(publicDir, 'styles.css'), 'utf8');
 const scriptJs = readFileSync(join(publicDir, 'script.js'), 'utf8');
+const homeJs = readFileSync(join(publicDir, 'home.js'), 'utf8');
 
 function ruleBody(css, selector) {
   const re = new RegExp(
@@ -63,15 +65,20 @@ test('unified focus-visible indicator layers accent + on-accent across controls'
   }
 });
 
-test('mobile nav links meet a 44px minimum target height without overflow', () => {
-  const mq = stylesCss.match(/@media\s*\(\s*max-width:\s*640px\s*\)\s*\{([\s\S]*?)\}\s*$/);
-  assert.ok(mq, 'max-width: 640px media block must exist');
-  const linkBody = ruleBody(mq[1], '.topbar-links a');
-  assert.ok(linkBody, '.topbar-links a rule must exist in the mobile block');
-  const m = linkBody.match(/min-height:\s*(\d+(?:\.\d+)?)px/i);
-  assert.ok(m, 'mobile nav link must declare a min-height');
-  assert.ok(Number(m[1]) >= 44, `mobile nav link min-height must be >= 44px (got ${m[1]}px)`);
-  assert.match(linkBody, /display:\s*inline-flex/, 'link must use flex to centre content');
+test('mobile nav disclosure control and menu links meet a 44px minimum target height', () => {
+  // On narrow screens the inline .topbar-links are hidden and the native
+  // <details> disclosure becomes the single mobile menu. The summary and every
+  // menu link must each meet the 44px target minimum.
+  for (const sel of ['.site-nav-summary', '.site-nav-menu a']) {
+    const body = ruleBody(stylesCss, sel);
+    assert.ok(body, `${sel} rule must exist`);
+    const m = body.match(/min-height:\s*(\d+(?:\.\d+)?)px/i);
+    assert.ok(m, `${sel} must declare a min-height`);
+    assert.ok(Number(m[1]) >= 44, `${sel} min-height must be >= 44px (got ${m[1]}px)`);
+  }
+  // The disclosure menu links use flex to centre content, like the inline links.
+  const menuLink = ruleBody(stylesCss, '.site-nav-menu a');
+  assert.match(menuLink, /display:\s*flex/, 'menu link must use flex to centre content');
 });
 
 test('viewport meta enables viewport-fit=cover for iOS safe areas', () => {
@@ -98,23 +105,23 @@ test('reduced-motion CSS neutralizes hover translate on buttons and cards', () =
   );
 });
 
-test('reduced-motion decision is shared by back-to-top and the inquire scroll', () => {
+test('dedicated-page enquiry uses the existing mailto semantics (no scroll to a missing #contact)', () => {
+  // The Gallery page's dialog inquiry builds a mailto via the shared
+  // gallery-display.js#buildInquiryMailto (the same address/shape the Home
+  // contact form uses) instead of scrolling to a #contact section that does
+  // not exist on the dedicated page.
+  assert.match(scriptJs, /from '\.\/gallery-display\.js'/, 'gallery script imports the display helpers');
+  assert.match(scriptJs, /buildInquiryMailto/, 'gallery script uses the shared mailto builder');
   assert.match(
     scriptJs,
-    /const reducedMotion = \(\)\s*=>[\s\S]*?window\.matchMedia\(['"]\(prefers-reduced-motion: reduce\)['"]\)/,
-    'a single module-scope reducedMotion helper must drive both motion paths'
+    /dialogInquire\.addEventListener\(\s*['"]click['"][\s\S]*?buildInquiryMailto/,
+    'the dialog inquire action calls buildInquiryMailto'
   );
-  assert.match(
-    scriptJs,
-    /scrollIntoView\(\s*\{\s*behavior:\s*reducedMotion\(\)\s*\?\s*['"]auto['"]\s*:\s*['"]smooth['"]/,
-    'inquire scroll must honor the same reducedMotion decision as back-to-top'
-  );
-  const backToTopDefs = (scriptJs.match(/const reducedMotion/g) || []).length;
-  assert.equal(
-    backToTopDefs,
-    1,
-    'reducedMotion must be declared exactly once at module scope (not duplicated in back-to-top)'
-  );
+  // No smooth-scroll to a local contact section on the Gallery page.
+  assert.doesNotMatch(scriptJs, /scrollIntoView/, 'no scrollIntoView on the dedicated gallery page');
+  // Reduced-motion scrolling for Back to Top lives once in the shared module.
+  const backToTopJs = readFileSync(join(publicDir, 'back-to-top.js'), 'utf8');
+  assert.match(backToTopJs, /prefers-reduced-motion: reduce/);
 });
 
 test('dialog keeps Tab focus cycling within its visible enabled controls', () => {
@@ -155,13 +162,14 @@ test('contact form is labelled by its heading and exposes a polite status region
 });
 
 test('submit handler announces the mailto handoff before navigating', () => {
+  // The contact form lives on the Home page; home.js wires it.
   assert.match(
-    scriptJs,
+    homeJs,
     /contactStatus\.textContent\s*=\s*['"]Opening your email app\.\.\.['"]/,
     'must set the status message before the mailto handoff'
   );
-  const statusIdx = scriptJs.indexOf('Opening your email app');
-  const mailtoIdx = scriptJs.indexOf('window.location.href = buildInquiryMailto');
+  const statusIdx = homeJs.indexOf('Opening your email app');
+  const mailtoIdx = homeJs.indexOf('window.location.href = buildInquiryMailto');
   assert.ok(
     statusIdx > -1 && mailtoIdx > -1 && statusIdx < mailtoIdx,
     'status must be set before the mailto navigation'
@@ -226,14 +234,18 @@ test('gallery has explicit 3 -> 2 at 1024 -> 1 column breakpoints', () => {
   );
 });
 
-test('gallery media reserves deterministic geometry before lazy images load', () => {
+test('gallery media reserves deterministic natural-ratio geometry before lazy images load', () => {
   const media = ruleBody(stylesCss, '.painting-image');
-  assert.match(media, /aspect-ratio:\s*1\s*\/\s*1/);
-  assert.match(media, /overflow:\s*hidden/);
-  // Default card media fills the reserved square with cover; only the opt-in
-  // containImage class switches to contain so non-square originals are not cropped.
-  assert.match(stylesCss, /\.painting-image img,[\s\S]*?object-fit:\s*cover/, 'default artwork fills the square media box (cover)');
-  assert.match(stylesCss, /\.painting-image-contained img,[\s\S]*?object-fit:\s*contain/, 'containImage artwork uses contain (never distorted)');
+  assert.match(media, /overflow:\s*hidden/, 'the media box keeps overflow hidden');
+  // Natural artwork ratios: no forced 1/1 square. SSR emits intrinsic
+  // width/height pixel attrs (derived from the physical cm dimensions) so the
+  // box reserves its exact aspect-ratio before the lazy thumbnail loads.
+  assert.doesNotMatch(media, /aspect-ratio:\s*1\s*\/\s*1/, 'no forced square on the media box');
+  // The image keeps its natural ratio (height: auto) and is never cropped.
+  const imgRule = stylesCss.match(/\.painting-image img,\s*\.dialog-image img\s*\{([^}]*)\}/);
+  assert.ok(imgRule, 'a shared painting/dialog image rule must exist');
+  assert.match(imgRule[1], /height:\s*auto/, 'the image keeps its natural ratio (height:auto)');
+  assert.doesNotMatch(imgRule[1], /object-fit:\s*cover/, 'no crop: never object-fit cover');
 });
 
 test('testimonial placeholders are replaced by one permission-bound empty state', () => {

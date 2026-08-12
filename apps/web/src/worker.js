@@ -5,7 +5,7 @@ import {
   sortByOrder,
   validateArtworkList
 } from './artwork-schema.js';
-import { renderArtworkCards } from './gallery-ssr.js';
+import { renderArtworkCards, renderArtworkPreviewCards } from './gallery-ssr.js';
 import {
   BOOK_CODES,
   BOOK_EOI_STATUSES,
@@ -37,6 +37,10 @@ import {
 const ARTWORKS_KEY = 'artworks.json';
 const SESSION_COOKIE = 'mj_art_admin';
 const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
+// Home renders exactly the first N public artworks (in the artist's sortOrder)
+// as a preview that links to /gallery. The complete catalogue lives on the
+// dedicated Gallery page.
+const HOME_PREVIEW_COUNT = 6;
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -61,6 +65,20 @@ export function isBooksPage(pathname) {
     pathname === '/books' ||
     pathname === '/books.html' ||
     /^\/books\/+$/.test(pathname)
+  );
+}
+
+// The Worker owns every Gallery page URL the same way it owns Books. The
+// canonical page is /gallery; the raw /gallery.html asset and any
+// trailing-slash variant (single or repeated) permanently redirect to /gallery
+// so the canonical SSR page is the only URL served and direct refresh/HEAD on
+// /gallery always hit the Worker. Anything else (e.g. /api/...) is left alone.
+// Pure + exported so the route contract is unit-tested directly.
+export function isGalleryPage(pathname) {
+  return (
+    pathname === '/gallery' ||
+    pathname === '/gallery.html' ||
+    /^\/gallery\/+$/.test(pathname)
   );
 }
 
@@ -128,6 +146,26 @@ async function routeRequest(request, env) {
   if (url.pathname === '/' || url.pathname === '/index.html') {
     if (!getLike) return methodNotAllowed('GET, HEAD');
     return servePublicIndex(request, env);
+  }
+
+    // Gallery public page. The Worker owns every Gallery URL so the raw
+    // gallery.html asset is never served directly (the canonical SSR page is),
+    // and so every alias canonicalizes to a single URL. GET /gallery serves the
+    // SSR page: the complete R2-backed public catalogue, projected and ordered
+    // by the artist's sortOrder, rendered once with no client catalogue fetch.
+    // GET /gallery.html, /gallery/, and repeated trailing slashes (/gallery//,
+    // ...) are permanently redirected to /gallery. Any other method on a
+    // Gallery URL is an explicit JSON 405 and NEVER falls through to static
+    // assets. The dedicated-page enquiry uses existing mailto semantics.
+  if (isGalleryPage(url.pathname)) {
+    if (url.pathname !== '/gallery') {
+      if (getLike) {
+        return Response.redirect(new URL('/gallery', request.url).toString(), 301);
+      }
+      return methodNotAllowed('GET, HEAD');
+    }
+    if (!getLike) return methodNotAllowed('GET, HEAD');
+    return serveGalleryPage(request, env);
   }
 
     // Books public page. The Worker owns every Books URL so the raw books.html
@@ -295,19 +333,34 @@ async function handleAdminArtworks(env) {
   return jsonResponse(sortByOrder(catalog.records));
 }
 
-async function servePublicIndex(request, env) {
-  const indexUrl = new URL('/index.html', request.url);
-  const asset = await env.ASSETS.fetch(indexUrl);
+// Render an SSR artwork-gallery page (Home preview or full Gallery). Reads
+// the persisted catalogue from R2 once, projects it to the public shape in the
+// artist's sortOrder, optionally truncates it to a preview count, renders the
+// cards into the page's `<!-- artwork-gallery:start -->...:end -->` marker, and
+// returns the composed HTML. The client never fetches /api/artworks or rebuilds
+// the grid. Missing metadata yields an empty gallery container (accessible
+// empty state), never legacy cards; invalid metadata yields 500.
+//
+// previewCount: when omitted/null the FULL catalogue is rendered (the Gallery
+// page). When a number, only the first N public records are rendered (the Home
+// page preview, in the artist's sortOrder).
+async function renderSsrGalleryPage(request, env, assetPath, previewCount = null) {
+  const assetUrl = new URL(assetPath, request.url);
+  const asset = await env.ASSETS.fetch(assetUrl);
   const html = await asset.text();
 
   const catalog = await readStoredCatalog(env);
-  // SSR renders canonical public records exactly once. The client enhances
-  // these cards in place (filters, dialog) and never fetches /api/artworks or
-  // rebuilds the grid. Missing/invalid metadata yields an empty gallery
-  // container (accessible empty state), never legacy cards.
-  const galleryHtml = catalog.state === 'present'
-    ? renderArtworkCards(toPublicList(catalog.records))
-    : '';
+  let galleryHtml = '';
+  if (catalog.state === 'present') {
+    const publicRecords = toPublicList(catalog.records);
+    if (previewCount == null) {
+      // Full Gallery page: every public record, as interactive dialog cards.
+      galleryHtml = renderArtworkCards(publicRecords);
+    } else {
+      // Home preview: the first N records as anchor cards linking to /gallery.
+      galleryHtml = renderArtworkPreviewCards(publicRecords.slice(0, previewCount));
+    }
+  }
 
   const status = catalog.state === 'invalid' ? 500 : 200;
   const rendered = html.replace(
@@ -322,6 +375,22 @@ async function servePublicIndex(request, env) {
       'content-type': 'text/html; charset=UTF-8'
     }
   });
+}
+
+// GET / -- Home page. SSR preview of exactly the first 6 public artworks in
+// the artist's sortOrder, linking clearly to /gallery. The full catalogue lives
+// on the dedicated /gallery page; Home never renders it.
+async function servePublicIndex(request, env) {
+  return renderSsrGalleryPage(request, env, '/index.html', HOME_PREVIEW_COUNT);
+}
+
+// GET /gallery -- dedicated Gallery page. SSR of the COMPLETE R2-backed public
+// catalogue (every record, projected and ordered by the artist's sortOrder),
+// with the client-side filters, dialog, and mailto enquiry enhancing the
+// server-rendered cards in place. Missing/invalid metadata is handled exactly
+// like Home (empty state / 500); the client never fetches the catalogue.
+async function serveGalleryPage(request, env) {
+  return renderSsrGalleryPage(request, env, '/gallery.html', null);
 }
 
 // Unique, unambiguous marker in public/books.html that the Worker replaces with

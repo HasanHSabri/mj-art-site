@@ -1,10 +1,16 @@
-// Public gallery client (progressive enhancement).
+// Public Gallery page client (progressive enhancement).
 //
 // ES module. Reads the server-rendered cards once and enhances them in place:
 // builds the accessible size filter bar (with real counts), wires card/dialog
-// interaction, manages the ?size=<key> query state, and powers the inquiry
-// mailto. It NEVER fetches /api/artworks, wipes the grid, or rebuilds cards.
-// Empty SSR state (no cards) renders an accessible empty message.
+// interaction, manages the ?size=<key> query state, and powers the artwork
+// inquiry mailto. It NEVER fetches /api/artworks, wipes the grid, or rebuilds
+// cards. Empty SSR state (no cards) renders an accessible empty message.
+//
+// The dedicated Gallery page has no contact form of its own: the dialog's
+// "Inquire about this painting" action uses the existing mailto semantics
+// (gallery-display.js#buildInquiryMailto, the same address and shape the Home
+// contact form uses) rather than scrolling to a #contact section that does not
+// exist on this page.
 
 import {
   SIZE_FILTERS,
@@ -42,10 +48,6 @@ const dialogDescription = document.getElementById('dialog-description');
 const dialogImage = document.getElementById('dialog-image');
 const dialogInquire = document.getElementById('dialog-inquire');
 
-const inquiryForm = document.getElementById('inquiry-form');
-const paintingNameInput = document.getElementById('painting-name');
-const contactStatus = document.getElementById('contact-status');
-
 const dialogImageElement = document.createElement('img');
 dialogImageElement.alt = '';
 dialogImage.appendChild(dialogImageElement);
@@ -56,6 +58,9 @@ let activeFilter = ALL_KEY;
 init();
 
 function init() {
+  // Always power Back to Top on the Gallery page.
+  initBackToTop({ dialog });
+
   // Empty SSR state: surface an accessible empty message and stop. There is no
   // legacy/fallback data path.
   if (cards.length === 0) {
@@ -150,7 +155,6 @@ function applyFilter(key, updateUrl) {
 function openPaintingDialog(card) {
   const { title, medium, size, price, availability, description, image } = card.dataset;
 
-  paintingNameInput.value = title || '';
   dialogTitle.textContent = title || '';
   dialogMedium.textContent = medium || 'Not specified';
   dialogSize.textContent = size || 'Dimensions to be confirmed';
@@ -203,42 +207,16 @@ dialog.addEventListener('keydown', (event) => {
   }
 });
 
+// Dedicated-page enquiry: use the existing mailto semantics (the same address
+// and builder the Home contact form uses), with the painting title in the
+// subject. The Gallery page has no local contact section to scroll to.
 dialogInquire.addEventListener('click', () => {
-  paintingNameInput.value = paintingNameInput.value || selectedDialogTitle();
-  dialog.close();
-  document.getElementById('contact').scrollIntoView({
-    behavior: reducedMotion() ? 'auto' : 'smooth',
-    block: 'start'
-  });
-  paintingNameInput.focus();
-});
-
-function selectedDialogTitle() {
-  return dialogTitle.textContent || '';
-}
-
-inquiryForm.addEventListener('submit', (event) => {
-  event.preventDefault();
-
-  const name = document.getElementById('customer-name').value.trim();
-  const customerEmail = document.getElementById('customer-email').value.trim();
-  const painting = paintingNameInput.value.trim();
-  const message = document.getElementById('message').value.trim();
-
-  if (contactStatus) {
-    contactStatus.textContent = 'Opening your email app...';
-  }
-
+  const title = dialogTitle.textContent || '';
   window.location.href = buildInquiryMailto({
     email: CONTACT_EMAIL,
-    name,
-    customerEmail,
-    painting,
-    message
+    name: '',
+    customerEmail: '',
+    painting: title,
+    message: ''
   });
 });
-
-// Fixed "Back to Top" control. Shared implementation (./back-to-top.js): the
-// home page passes its painting <dialog> so the control also hides while the
-// dialog is open and re-syncs on the dialog 'toggle' event, exactly as before.
-initBackToTop({ dialog });

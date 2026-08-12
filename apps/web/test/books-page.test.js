@@ -143,7 +143,7 @@ test('no-JS text requires JS + Turnstile and links only to the gallery (no email
   const noscript = booksHtml.match(/<noscript>([\s\S]*?)<\/noscript>/)[1];
   assert.match(noscript, /JavaScript/i);
   assert.match(noscript, /gallery/i);
-  assert.match(noscript, /href="\/#gallery"/);
+  assert.match(noscript, /href="\/gallery"/);
   assert.equal(noscript.includes('mailto:'), false, 'no email fallback in the books noscript');
 });
 
@@ -184,33 +184,28 @@ test('copy is honest that online buying is undecided', () => {
 // 4. Navigation: Books is current page; section links are root-absolute
 // ===========================================================================
 
-test('Books chapter-nav links carry aria-current="page" in the static markup', () => {
-  const matches = booksHtml.match(/href="\/books"[^>]*aria-current="page"/g);
-  assert.ok(matches && matches.length >= 2, 'both rail and menu Books links are marked current page');
-});
-
-test('chapter-nav section links point to root-absolute home anchors', () => {
-  const nav = booksHtml.match(/<nav[^>]*class="[^"]*chapter-nav[^"]*"[\s\S]*?<\/nav>/)[0];
-  assert.match(nav, /href="\/#gallery"/);
-  assert.match(nav, /href="\/#story"/);
-  assert.match(nav, /href="\/#testimonials"/);
+test('Books is the current page in the shared topbar nav (aria-current="page")', () => {
+  const nav = booksHtml.match(/<nav[^>]*class="[^"]*topbar[^"]*"[\s\S]*?<\/nav>/)[0];
+  assert.match(nav, /href="\/books"[^>]*aria-current="page"/, 'the topbar Books link is the current page');
+  // The shared nav order is Home | Gallery | Books | Enquire.
+  assert.match(nav, /href="\/"/);
+  assert.match(nav, /href="\/gallery"/);
   assert.match(nav, /href="\/#contact"/);
-  // No bare in-page anchors (those would strand a Books visitor).
-  assert.equal(/href="#gallery"/.test(nav), false);
 });
 
-test('the topbar brand links home and section links are root-absolute', () => {
+test('the topbar brand links home and the Books link is root-absolute', () => {
   const topbar = booksHtml.match(/<nav[^>]*class="[^"]*topbar[^"]*"[\s\S]*?<\/nav>/)[0];
   assert.match(topbar, /class="brand" href="\/"/);
-  assert.match(topbar, /href="\/#gallery"/);
-  assert.match(topbar, /href="\/#story"/);
-  assert.match(topbar, /href="\/#contact"/);
+  assert.match(topbar, /href="\/books"/);
+  // No bare in-page section anchors that would strand a Books visitor.
+  assert.equal(/href="#gallery"/.test(topbar), false);
+  assert.equal(/href="#contact"/.test(topbar), false);
 });
 
-test('Books page provides #top as the Back to Top target and loads chapter-nav + books.js', () => {
+test('Books page provides #top as the Back to Top target and loads site-nav + books.js', () => {
   assert.match(booksHtml, /\bid="top"/);
   assert.match(booksHtml, /<button[^>]*id="back-to-top"/);
-  assert.match(booksHtml, /<script[^>]*src="\.\/chapter-nav\.js/);
+  assert.match(booksHtml, /<script[^>]*src="\.\/site-nav\.js/);
   assert.match(booksHtml, /<script[^>]*src="\.\/books\.js/);
 });
 

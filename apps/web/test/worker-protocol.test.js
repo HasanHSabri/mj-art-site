@@ -52,7 +52,7 @@ function makeEnv({ allowedHosts = 'localhost', environment = 'local' } = {}) {
           return new Response('Method not allowed.', { status: 405 });
         }
         const file = url.pathname === '/' ? '/index.html' : url.pathname;
-        if (['/index.html', '/books.html', '/admin.html', '/favicon.svg', '/styles.css'].includes(file)) {
+        if (['/index.html', '/gallery.html', '/books.html', '/admin.html', '/favicon.svg', '/styles.css'].includes(file)) {
           const body = readFileSync(path.join(PUBLIC, file.slice(1)));
           const type = file.endsWith('.html')
             ? 'text/html; charset=UTF-8'
@@ -117,7 +117,7 @@ test('CSP permits only self, Google Fonts, and Cloudflare Turnstile sources', ()
 
 test('HEAD matches GET status and headers with an empty body for pages, APIs, and static assets', async () => {
   const env = makeEnv();
-  for (const pathname of ['/', '/index.html', '/books', '/api/health', '/api/artworks', '/admin.html', '/favicon.svg', '/styles.css']) {
+  for (const pathname of ['/', '/index.html', '/gallery', '/books', '/api/health', '/api/artworks', '/admin.html', '/favicon.svg', '/styles.css']) {
     await assertHeadMatchesGet(pathname, env);
   }
 });
@@ -154,6 +154,7 @@ test('known-route 405 responses carry exact Allow and OPTIONS has no CORS', asyn
     ['/', 'POST', 'GET, HEAD'],
     ['/api/health', 'POST', 'GET, HEAD'],
     ['/api/artworks', 'DELETE', 'GET, HEAD'],
+    ['/gallery', 'PATCH', 'GET, HEAD'],
     ['/books', 'PATCH', 'GET, HEAD'],
     ['/api/admin/login', 'GET', 'POST'],
     ['/api/admin/logout', 'GET', 'POST'],
@@ -258,6 +259,20 @@ test('Books alias/redirect HEAD matches the GET 301 status, Location, and has an
     const get = await worker.fetch(request(alias), env);
     const head = await worker.fetch(request(alias, { method: 'HEAD' }), env);
     assert.equal(get.status, 301, `${alias} GET redirects`);
+    assert.equal(head.status, get.status, `${alias} HEAD status matches GET`);
+    assert.equal(head.headers.get('location'), get.headers.get('location'), `${alias} HEAD Location matches GET`);
+    assert.equal(await head.text(), '', `${alias} HEAD body is empty`);
+    assert.equal(head.headers.get('content-security-policy'), CONTENT_SECURITY_POLICY, `${alias} HEAD keeps central headers`);
+  }
+});
+
+test('Gallery alias/redirect HEAD matches the GET 301 status, Location, and has an empty body', async () => {
+  const env = makeEnv();
+  for (const alias of ['/gallery.html', '/gallery/', '/gallery//']) {
+    const get = await worker.fetch(request(alias), env);
+    const head = await worker.fetch(request(alias, { method: 'HEAD' }), env);
+    assert.equal(get.status, 301, `${alias} GET redirects`);
+    assert.equal(get.headers.get('location'), 'http://localhost/gallery', `${alias} GET Location`);
     assert.equal(head.status, get.status, `${alias} HEAD status matches GET`);
     assert.equal(head.headers.get('location'), get.headers.get('location'), `${alias} HEAD Location matches GET`);
     assert.equal(await head.text(), '', `${alias} HEAD body is empty`);
