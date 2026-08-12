@@ -112,6 +112,15 @@ export function findBookEntry(data, book) {
   return data.books.find((b) => b && b.book === book) || null;
 }
 
+// Validate a ?book=<code> query value against the canonical allowlist. Returns
+// the canonical book value when valid, or '' when absent/invalid, so an invalid
+// or missing value leaves existing behaviour unchanged.
+export function parseBookQuery(value) {
+  if (typeof value !== 'string') return '';
+  const v = value.trim();
+  return BOOK_VALUES.includes(v) ? v : '';
+}
+
 function toInt(value) {
   if (typeof value === 'number' && Number.isInteger(value)) return value;
   if (typeof value === 'string' && /^\d+$/.test(value.trim())) {
@@ -152,6 +161,11 @@ function init() {
     }
   });
   initBackToTop();
+
+  // Preselect the book radio from a validated ?book=<canonical> param; keep it
+  // in sync on back/forward without forcing focus so direct URLs/history work.
+  applyBookPreselection(form, { focus: true });
+  window.addEventListener('popstate', () => applyBookPreselection(form, { focus: false }));
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -221,6 +235,28 @@ function readElements(form) {
 function readRadio(form, name) {
   const checked = form.querySelector(`input[name="${name}"]:checked`);
   return checked ? checked.value : '';
+}
+
+// Preselect the book radio from a validated ?book=<canonical> param. On the
+// initial load (opts.focus === true) the selected radio also receives focus so
+// keyboard users land on the form; on history navigation focus is left to the
+// browser so back/forward are not harmed. An invalid/missing value is a no-op.
+function applyBookPreselection(form, opts) {
+  const focus = opts && opts.focus === true;
+  const params = new URLSearchParams(window.location.search);
+  const book = parseBookQuery(params.get('book'));
+  if (!book) return false;
+  const radio = form.querySelector(`input[name="book"][value="${book}"]`);
+  if (!radio) return false;
+  if (!radio.checked) radio.checked = true;
+  if (focus) {
+    try {
+      radio.focus({ preventScroll: true });
+    } catch {
+      radio.focus();
+    }
+  }
+  return true;
 }
 
 // Fetch and render the live counters. Loading/empty/error states are surfaced

@@ -11,6 +11,7 @@ import {
   counterValue,
   counterText,
   pluralize,
+  parseBookQuery,
   BOOK_VALUES,
   FORMAT_VALUES,
   MIN_QUANTITY,
@@ -80,6 +81,33 @@ test('counters start with a non-numeric placeholder (no fake counts)', () => {
     assert.ok(copies, `${book} copies hook must exist`);
     assert.equal(copies[1].trim(), '&mdash;', `${book} copies placeholder must be an em dash, not a number`);
   }
+});
+
+// ===========================================================================
+// 1b. Book-specific register-interest CTAs (validated ?book=<code>#books-form)
+// ===========================================================================
+
+test('each book panel carries an honest register-interest CTA using the ?book=<code>#books-form contract', () => {
+  const panels = booksHtml.match(/<article class="books-panel"[\s\S]*?<\/article>/g);
+  assert.ok(panels && panels.length === 2, 'there must be exactly two book panels');
+  const [bio, kids] = panels;
+  // Biography CTA: canonical code + honest, tiny label.
+  assert.match(bio, /href="\?book=biography#books-form"/, 'Biography CTA uses the canonical same-page contract');
+  assert.match(bio, />Register interest in Biography</, 'Biography CTA label is honest and tiny');
+  // Children's Book CTA: canonical code + honest, tiny label.
+  assert.match(kids, /href="\?book=childrens#books-form"/, "Children's Book CTA uses the canonical same-page contract");
+  assert.match(kids, /Register interest in Children&rsquo;s Book/, "Children's Book CTA label is honest and tiny");
+  // The hash target must exist so the same-page contract lands at the form.
+  assert.match(booksHtml, /<section[^>]*id="books-form"/, 'the #books-form anchor section must exist');
+});
+
+test('book panel CTAs reuse existing button visual language and claim nothing invented', () => {
+  const panels = booksHtml.match(/<article class="books-panel"[\s\S]*?<\/article>/g);
+  for (const panel of panels) {
+    assert.match(panel, /class="button button-secondary"/, 'CTA reuses the existing secondary button language');
+  }
+  // No invented purchase/price/reservation claims introduced by the CTAs.
+  assert.doesNotMatch(booksHtml, /Register interest[^<]*(buy|price|pre-?order|reserv)/i);
 });
 
 // ===========================================================================
@@ -398,6 +426,19 @@ test('pluralize picks singular vs plural by count', () => {
   assert.equal(pluralize(3, 'person', 'people'), 'people');
 });
 
+test('parseBookQuery returns the canonical value for valid codes and empty otherwise', () => {
+  // Both canonical codes preselect; invalid/missing/miscased values leave the
+  // existing behaviour unchanged (strict allowlist match).
+  assert.equal(parseBookQuery('biography'), 'biography');
+  assert.equal(parseBookQuery('childrens'), 'childrens');
+  assert.equal(parseBookQuery('  biography  '), 'biography', 'surrounding whitespace is trimmed');
+  assert.equal(parseBookQuery('novel'), '', 'an unknown code must not preselect');
+  assert.equal(parseBookQuery('Biography'), '', 'a miscased code must not preselect (strict allowlist match)');
+  assert.equal(parseBookQuery(''), '', 'an empty value must not preselect');
+  assert.equal(parseBookQuery(null), '', 'a null value must not preselect');
+  assert.equal(parseBookQuery(undefined), '', 'an undefined value must not preselect');
+});
+
 // ===========================================================================
 // 7. books.js source contract (no fallback paths; official Turnstile; token field)
 // ===========================================================================
@@ -464,6 +505,32 @@ test('books.js Back to Top uses the shared module (no duplicated logic)', () => 
   assert.match(backToTopJs, /getElementById\('back-to-top'\)/);
   assert.match(backToTopJs, /getElementById\('top'\)/);
   assert.match(backToTopJs, /addEventListener\('scroll',\s*sync,\s*\{\s*passive:\s*true\s*\}\)/);
+});
+
+// ===========================================================================
+// 7b. ?book= preselection source contract (validated, history-synced, no payload drift)
+// ===========================================================================
+
+test('books.js preselects the book radio from a validated ?book= param and syncs on history navigation', () => {
+  // A pure validator gates preselection; an arbitrary code is never trusted.
+  assert.match(
+    booksJs,
+    /function applyBookPreselection[\s\S]*?parseBookQuery\(/,
+    'preselection must validate the param via parseBookQuery (BOOK_VALUES allowlist)'
+  );
+  // The selected radio is checked (preselection) ...
+  assert.match(booksJs, /radio\.checked\s*=\s*true/);
+  // ... and focused on initial load so keyboard users land on the form, without
+  // forcing a second scroll (the hash lands the form; focus uses preventScroll).
+  assert.match(booksJs, /radio\.focus\(/);
+  assert.match(booksJs, /preventScroll:\s*true/);
+  // Back/forward keeps the radio in sync with the URL without forcing focus.
+  assert.match(
+    booksJs,
+    /addEventListener\(\s*['"]popstate['"]\s*,\s*\(\)\s*=>\s*applyBookPreselection\(\s*form,\s*\{\s*focus:\s*false\s*\}\s*\)/
+  );
+  // The init path wires the initial-load preselection.
+  assert.match(booksJs, /applyBookPreselection\(\s*form,\s*\{\s*focus:\s*true\s*\}\s*\)/);
 });
 
 // ===========================================================================

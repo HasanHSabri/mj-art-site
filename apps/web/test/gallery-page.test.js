@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import { renderArtworkCard } from '../src/gallery-ssr.js';
+import { buildInquiryMailto } from '../public/gallery-display.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(__dirname, '..', 'public');
@@ -95,4 +96,30 @@ test('gallery dialog inquiry builds a mailto with the painting title (existing m
   );
   // Never scrolls to a local #contact (there is none on the gallery page).
   assert.doesNotMatch(scriptJs, /getElementById\(['"]contact['"]\)/);
+});
+
+test('gallery inquiry click assigns the exact encoded mailto URL (no real mail client needed)', () => {
+  // The handler assigns the builder's exact return to window.location.href.
+  assert.match(
+    scriptJs,
+    /window\.location\.href\s*=\s*buildInquiryMailto\(\s*\{[\s\S]*?painting:\s*title[\s\S]*?\}\s*\)/,
+    'the inquire click must assign the mailto URL to window.location.href'
+  );
+  // Reproduce the exact builder call the handler makes and assert the fully
+  // encoded mailto URL byte-for-byte. This proves the click hands the browser a
+  // valid mailto: with the painting title encoded, without a real mail client.
+  const url = buildInquiryMailto({
+    email: 'mjdonnellan73@gmail.com',
+    name: '',
+    customerEmail: '',
+    painting: 'Still Waters',
+    message: ''
+  });
+  assert.equal(
+    url,
+    'mailto:mjdonnellan73@gmail.com?subject=Painting%20inquiry%3A%20Still%20Waters&body=Hello%2C%0A%0AMy%20name%20is%20.%0AMy%20email%20is%20.%0A%0AI%20would%20like%20to%20ask%20about%3A%20Still%20Waters%0A%0A',
+    'the mailto URL must be the exact, fully-encoded contract'
+  );
+  // The painting title is never injected raw; everything after the host is encoded.
+  assert.doesNotMatch(url.slice(url.indexOf('?')), /Still Waters/, 'the title must be encoded, never raw');
 });

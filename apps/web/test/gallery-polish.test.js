@@ -20,20 +20,36 @@ function ruleBody(css, selector) {
   return m ? m[1] : null;
 }
 
-test('skip-to-gallery link is the first body child and targets #gallery', () => {
+test('skip-to-content link is the first body child and targets the Story section', () => {
   const bodyStart = indexHtml.indexOf('<body>');
   assert.ok(bodyStart > -1, '<body> exists');
   const skipMatch = indexHtml
     .slice(bodyStart)
     .match(/<body>\s*<a\b[^>]*\bclass="[^"]*skip-link[^"]*"[^>]*>([\s\S]*?)<\/a>/i);
   assert.ok(skipMatch, 'a skip-link must be the first element inside <body>');
-  assert.match(skipMatch[0], /href="#gallery"/, 'skip-link must target #gallery');
-  assert.match(
+  assert.match(skipMatch[0], /href="#story"/, 'skip-link must target the first main content section (#story)');
+  assert.equal(
     skipMatch[1].trim(),
-    /^Skip to gallery$/i,
-    'skip-link must carry descriptive visible text'
+    'Skip to content',
+    'skip-link must read "Skip to content" so keyboard users skip to content'
   );
-  assert.ok(/\bid="gallery"/.test(indexHtml), '#gallery target must exist');
+  assert.ok(/\bid="story"/.test(indexHtml), '#story target must exist');
+});
+
+test('Home main sections follow the approved order: story, gallery preview, books preview, testimonials, contact', () => {
+  // After the hero the first <main> section is the full Story, then the
+  // six-artwork Gallery preview, then books preview, testimonials, and contact.
+  const mainMatch = indexHtml.match(/<main>([\s\S]*?)<\/main>/);
+  assert.ok(mainMatch, '<main> must exist');
+  const main = mainMatch[1];
+  const ids = ['story', 'gallery', 'books-preview', 'testimonials', 'contact'];
+  let last = -1;
+  for (const id of ids) {
+    const idx = main.indexOf(`id="${id}"`);
+    assert.ok(idx > -1, `section #${id} must exist in <main>`);
+    assert.ok(idx > last, `section #${id} must appear after the previous approved section`);
+    last = idx;
+  }
 });
 
 test('primary navigation exposes an accessible name', () => {
