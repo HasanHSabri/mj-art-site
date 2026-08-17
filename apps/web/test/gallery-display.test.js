@@ -4,15 +4,22 @@ import {
   SIZE_FILTERS,
   MISC_KEY,
   ALL_KEY,
-  ALLOWED_SIZE_QUERY_VALUES,
+  FEATURED_KEY,
+  FEATURED_COUNT,
+  PAGE_SIZE,
+  ALLOWED_FILTER_KEYS,
   FILTER_LABELS,
   filterLabel,
   cardSizeKey,
   isVisible,
   countBySize,
-  parseSizeQuery,
-  sizeQuery,
+  countMatching,
+  clampShown,
+  selectCardVisibility,
+  parseGalleryQuery,
+  galleryQuery,
   resultSummary,
+  loadMoreLabel,
   formatPriceDisplay,
   formatDimensionsDisplay,
   buildInquiryMailto
@@ -54,21 +61,27 @@ test('SIZE_FILTERS has exactly the 11 canonical sizes in display order', () => {
 test('filter constants are stable sentinels', () => {
   assert.equal(MISC_KEY, 'miscellaneous');
   assert.equal(ALL_KEY, 'all');
+  assert.equal(FEATURED_KEY, 'featured');
+  assert.equal(FEATURED_COUNT, 10);
+  assert.equal(PAGE_SIZE, 12);
 });
 
-test('ALLOWED_SIZE_QUERY_VALUES allowlists all + 11 sizes + misc only', () => {
-  assert.ok(ALLOWED_SIZE_QUERY_VALUES.has(ALL_KEY));
-  assert.ok(ALLOWED_SIZE_QUERY_VALUES.has(MISC_KEY));
-  for (const size of SIZE_FILTERS) assert.ok(ALLOWED_SIZE_QUERY_VALUES.has(size));
-  assert.equal(ALLOWED_SIZE_QUERY_VALUES.size, SIZE_FILTERS.length + 2);
-  assert.equal(ALLOWED_SIZE_QUERY_VALUES.has('40x20'), false);
-  assert.equal(ALLOWED_SIZE_QUERY_VALUES.has('catalogue'), false);
+test('ALLOWED_FILTER_KEYS allowlists featured + all + 11 sizes + misc only', () => {
+  assert.ok(ALLOWED_FILTER_KEYS.has(FEATURED_KEY));
+  assert.ok(ALLOWED_FILTER_KEYS.has(ALL_KEY));
+  assert.ok(ALLOWED_FILTER_KEYS.has(MISC_KEY));
+  for (const size of SIZE_FILTERS) assert.ok(ALLOWED_FILTER_KEYS.has(size));
+  assert.equal(ALLOWED_FILTER_KEYS.size, SIZE_FILTERS.length + 3);
+  assert.equal(ALLOWED_FILTER_KEYS.has('40x20'), false);
+  assert.equal(ALLOWED_FILTER_KEYS.has('catalogue'), false);
 });
 
-test('filterLabel renders friendly labels for all/misc and passthrough for sizes', () => {
+test('filterLabel renders friendly labels for featured/all/misc and passthrough for sizes', () => {
+  assert.equal(filterLabel(FEATURED_KEY), 'Featured');
   assert.equal(filterLabel(ALL_KEY), 'All');
   assert.equal(filterLabel(MISC_KEY), 'Miscellaneous');
   assert.equal(filterLabel('40x30'), '40x30');
+  assert.equal(FILTER_LABELS[FEATURED_KEY], 'Featured');
   assert.equal(FILTER_LABELS[ALL_KEY], 'All');
   assert.equal(FILTER_LABELS[MISC_KEY], 'Miscellaneous');
 });
@@ -117,31 +130,133 @@ test('countBySize initialises every group to zero for empty input', () => {
   for (const k of [...SIZE_FILTERS, MISC_KEY]) assert.equal(counts[k], 0);
 });
 
-test('parseSizeQuery accepts allowlisted values and falls back to All', () => {
-  assert.equal(parseSizeQuery('all'), ALL_KEY);
-  assert.equal(parseSizeQuery('miscellaneous'), MISC_KEY);
-  assert.equal(parseSizeQuery('40x30'), '40x30');
-  assert.equal(parseSizeQuery('  40x30  '), '40x30');
-  assert.equal(parseSizeQuery('40X30'), '40x30');
-  assert.equal(parseSizeQuery('bogus'), ALL_KEY);
-  assert.equal(parseSizeQuery(''), ALL_KEY);
-  assert.equal(parseSizeQuery(null), ALL_KEY);
-  assert.equal(parseSizeQuery(undefined), ALL_KEY);
-  assert.equal(parseSizeQuery(42), ALL_KEY);
+// --- Featured selection + batched reveal -----------------------------------
+
+test('countMatching: featured is capped at the first 10, all/size count matches', () => {
+  const cards = realCatalogueDescriptors();
+  assert.equal(countMatching(cards, FEATURED_KEY), 10);
+  assert.equal(countMatching(cards, ALL_KEY), 86);
+  assert.equal(countMatching(cards, '20x20'), 37);
+  assert.equal(countMatching(cards, MISC_KEY), 11);
+  // Fewer cards than the featured window: featured is everything available.
+  assert.equal(countMatching(cards.slice(0, 6), FEATURED_KEY), 6);
+  assert.equal(countMatching([], FEATURED_KEY), 0);
+  assert.equal(countMatching(null, ALL_KEY), 0);
 });
 
-test('sizeQuery yields clean All URL and ?size= for groups', () => {
-  assert.equal(sizeQuery(ALL_KEY), '');
-  assert.equal(sizeQuery('40x30'), '?size=40x30');
-  assert.equal(sizeQuery(MISC_KEY), '?size=miscellaneous');
-  assert.equal(sizeQuery('bogus'), '');
+test('selectCardVisibility: featured is exactly the first 10 in artist order', () => {
+  const cards = realCatalogueDescriptors();
+  const visibility = selectCardVisibility(cards, FEATURED_KEY, 10);
+  assert.equal(visibility.length, 86);
+  assert.equal(visibility.filter(Boolean).length, 10);
+  // The first 10 DOM positions (the artist's sortOrder) and nothing else.
+  for (let i = 0; i < 86; i++) assert.equal(visibility[i], i < 10);
 });
 
-test('resultSummary uses singular/plural noun forms', () => {
-  assert.equal(resultSummary(0), '0 paintings shown');
-  assert.equal(resultSummary(1), '1 painting shown');
-  assert.equal(resultSummary(37), '37 paintings shown');
+test('selectCardVisibility: all/size show the first `shown` matching works', () => {
+  const cards = realCatalogueDescriptors();
+  const all12 = selectCardVisibility(cards, ALL_KEY, 12);
+  assert.equal(all12.filter(Boolean).length, 12);
+  for (let i = 0; i < 86; i++) assert.equal(all12[i], i < 12);
+
+  const all24 = selectCardVisibility(cards, ALL_KEY, 24);
+  assert.equal(all24.filter(Boolean).length, 24);
+
+  // A size filter counts only matching cards, in order.
+  const size12 = selectCardVisibility(cards, '20x20', 12);
+  let seen = 0;
+  for (let i = 0; i < cards.length; i++) {
+    const matches = cards[i].sizeCategory === '20x20';
+    if (matches) seen += 1;
+    assert.equal(size12[i], matches && seen <= 12, `card ${i}`);
+  }
+  assert.equal(size12.filter(Boolean).length, 12);
+
+  // Final batch: only the remaining matching works show.
+  const size37 = selectCardVisibility(cards, '20x20', 37);
+  assert.equal(size37.filter(Boolean).length, 37);
 });
+
+test('selectCardVisibility guards non-array input', () => {
+  assert.deepEqual(selectCardVisibility(undefined, FEATURED_KEY, 10), []);
+  assert.deepEqual(selectCardVisibility(null, ALL_KEY, 12), []);
+});
+
+// --- URL state: parse + serialize + clamp ----------------------------------
+
+test('clampShown floors to batch multiples, never below the initial batch, caps at total', () => {
+  assert.equal(clampShown(12), 12);
+  assert.equal(clampShown(24), 24);
+  assert.equal(clampShown(36), 36);
+  assert.equal(clampShown(50), 48, 'non-multiples floor to the batch grid');
+  assert.equal(clampShown(5), 12, 'below the initial batch clamps up to 12');
+  assert.equal(clampShown(0), 12);
+  assert.equal(clampShown(-3), 12);
+  assert.equal(clampShown(NaN), 12);
+  assert.equal(clampShown('24'), 24, 'numeric strings parse');
+  assert.equal(clampShown('  24  '), 24);
+  assert.equal(clampShown('bogus'), 12);
+  assert.equal(clampShown(null), 12);
+  assert.equal(clampShown(undefined), 12);
+  // Total clamping (small groups, final batches).
+  assert.equal(clampShown(24, 16), 16, 'caps at the matching total');
+  assert.equal(clampShown(12, 1), 1, 'a single-match group shows one');
+  assert.equal(clampShown(12, 0), 0, 'an empty group shows none');
+  assert.equal(clampShown(200, 86), 86);
+});
+
+test('parseGalleryQuery: absent/invalid size resolves to the Featured default', () => {
+  assert.deepEqual(parseGalleryQuery(''), { filter: FEATURED_KEY, shown: FEATURED_COUNT });
+  assert.deepEqual(parseGalleryQuery('?'), { filter: FEATURED_KEY, shown: FEATURED_COUNT });
+  assert.deepEqual(parseGalleryQuery('?size=featured'), { filter: FEATURED_KEY, shown: FEATURED_COUNT });
+  assert.deepEqual(parseGalleryQuery('?size=bogus'), { filter: FEATURED_KEY, shown: FEATURED_COUNT });
+  assert.deepEqual(parseGalleryQuery('?size='), { filter: FEATURED_KEY, shown: FEATURED_COUNT });
+  assert.deepEqual(parseGalleryQuery(null), { filter: FEATURED_KEY, shown: FEATURED_COUNT });
+  // shown never applies to Featured.
+  assert.deepEqual(parseGalleryQuery('?size=featured&shown=36'), { filter: FEATURED_KEY, shown: FEATURED_COUNT });
+});
+
+test('parseGalleryQuery: all/sizes/misc parse case-insensitively and keep legacy links working', () => {
+  assert.deepEqual(parseGalleryQuery('?size=all'), { filter: ALL_KEY, shown: 12 });
+  assert.deepEqual(parseGalleryQuery('?size=40x30'), { filter: '40x30', shown: 12 });
+  assert.deepEqual(parseGalleryQuery('?size=40X30'), { filter: '40x30', shown: 12 });
+  assert.deepEqual(parseGalleryQuery('?size=miscellaneous'), { filter: MISC_KEY, shown: 12 });
+  // Legacy deep link with a batch.
+  assert.deepEqual(parseGalleryQuery('?size=all&shown=24'), { filter: ALL_KEY, shown: 24 });
+  assert.deepEqual(parseGalleryQuery('?size=all&shown=50'), { filter: ALL_KEY, shown: 48 });
+  assert.deepEqual(parseGalleryQuery('?size=all&shown=bogus'), { filter: ALL_KEY, shown: 12 });
+  assert.deepEqual(parseGalleryQuery('?size=20x20&shown=99'), { filter: '20x20', shown: 96 });
+});
+
+test('galleryQuery serializes canonical URLs: clean Featured, size+shown otherwise', () => {
+  assert.equal(galleryQuery(FEATURED_KEY, 10), '');
+  assert.equal(galleryQuery('bogus', 12), '');
+  assert.equal(galleryQuery(ALL_KEY, 12), '?size=all');
+  assert.equal(galleryQuery(ALL_KEY, 24), '?size=all&shown=24');
+  assert.equal(galleryQuery('40x30', 12), '?size=40x30');
+  assert.equal(galleryQuery('40x30', 24), '?size=40x30&shown=24');
+  assert.equal(galleryQuery(MISC_KEY, 24), '?size=miscellaneous&shown=24');
+});
+
+// --- Status + load more labels ---------------------------------------------
+
+test('resultSummary reads "Showing X of Y paintings" with singular/plural noun', () => {
+  assert.equal(resultSummary(0, 0), 'Showing 0 of 0 paintings');
+  assert.equal(resultSummary(1, 1), 'Showing 1 of 1 painting');
+  assert.equal(resultSummary(12, 86), 'Showing 12 of 86 paintings');
+  assert.equal(resultSummary(10, 10), 'Showing 10 of 10 paintings');
+});
+
+test('loadMoreLabel carries next/remaining semantics and null when complete', () => {
+  assert.equal(loadMoreLabel(12, 86), 'Show 12 more (74 remaining)');
+  assert.equal(loadMoreLabel(74, 86), 'Show 12 more (12 remaining)');
+  assert.equal(loadMoreLabel(80, 86), 'Show 6 more (6 remaining)');
+  assert.equal(loadMoreLabel(86, 86), null);
+  assert.equal(loadMoreLabel(90, 86), null);
+  assert.equal(loadMoreLabel(37, 37), null);
+});
+
+// --- Public display formatting (unchanged parity with SSR) ------------------
 
 test('formatPriceDisplay formats AUD as A$ and enquiry fallback', () => {
   assert.equal(formatPriceDisplay(null), 'Price on enquiry');
@@ -163,7 +278,7 @@ test('formatDimensionsDisplay shows dimensions and orientation, never rotation',
   );
 });
 
-test('buildInquiryMailto encodes subject and body and targets the contact email', () => {
+test('buildInquiryMailto encodes the enquiry subject and body and targets the contact email', () => {
   const url = buildInquiryMailto({
     email: 'mjdonnellan73@gmail.com',
     name: 'Jane Smith',
@@ -175,7 +290,7 @@ test('buildInquiryMailto encodes subject and body and targets the contact email'
   assert.ok(url.includes('&body='));
   // User-supplied free text must be percent-encoded (no raw spaces in query).
   assert.equal(url.includes('Jane Smith'), false);
-  assert.ok(url.includes(encodeURIComponent('Painting inquiry: Spirit beneath the Ashes')));
+  assert.ok(url.includes(encodeURIComponent('Painting enquiry: Spirit beneath the Ashes')));
   assert.ok(url.includes(encodeURIComponent('I love this piece!')));
 });
 

@@ -301,6 +301,103 @@ test('validateBookEoiPayload enforces book/format allowlists', () => {
   assert.equal(validateBookEoiPayload({ ...validPayload(), format: 'ebook' }).ok, true);
 });
 
+// --- Optional legacy format (visitor control removed) ------------------------
+
+test('validateBookEoiPayload treats an ABSENT format as a valid omission', () => {
+  const { format, ...withoutFormat } = validPayload();
+  const r = validateBookEoiPayload(withoutFormat);
+  assert.equal(r.ok, true, 'an omitted format is valid (legacy-optional)');
+  assert.equal(r.fields.format, null, 'omission carries null (persisted as internal unsure)');
+  // All other fields still validate exactly as before.
+  assert.equal(r.fields.book, 'biography');
+  assert.equal(r.fields.email, 'jane.example@example.com');
+});
+
+test('validateBookEoiPayload rejects null/empty/invalid SUPPLIED formats', () => {
+  for (const bad of [null, '', 'audiobook', 'hardcover ', 42, {}]) {
+    const r = validateBookEoiPayload({ ...validPayload(), format: bad });
+    assert.equal(r.ok, false, `supplied format ${JSON.stringify(bad)} must be rejected`);
+    assert.equal(r.status, 400);
+    assert.equal(r.silent, undefined, 'a bad format is a real 400, not a silent trap');
+  }
+});
+
+test('validateBookEoiPayload accepts every valid legacy format code from older clients', () => {
+  for (const good of ['hardcover', 'paperback', 'ebook', 'unsure']) {
+    const r = validateBookEoiPayload({ ...validPayload(), format: good });
+    assert.equal(r.ok, true, `legacy format ${good} stays accepted`);
+    assert.equal(r.fields.format, good);
+  }
+});
+
+test('a full worker round-trip with an omitted format inserts with the internal unsure default', async () => {
+  // The INSERT resolves an omitted format server-side via
+  // COALESCE($7, 'unsure'): no schema migration, NOT NULL/CHECK stay satisfied.
+  const sql = makeSql((text) => {
+    if (/SELECT id, status/.test(text)) return [];
+    if (/^INSERT INTO mj_eoi/.test(text)) return [];
+    throw new Error('unexpected SQL: ' + text);
+  });
+  const env = makeEnv({ sql });
+  const { format, ...withoutFormat } = validPayload();
+  const res = await worker.fetch(jsonPost('/api/books/eoi', withoutFormat), env);
+  assert.equal(res.status, 200);
+  const ins = sql.calls.find((c) => /^INSERT/.test(c.text));
+  assert.ok(ins);
+  assert.match(
+    ins.text,
+    /COALESCE\(\$7,\s*\$8\)/,
+    'insert coalesces the (possibly null) format with the parameterized default'
+  );
+  assert.equal(ins.params[6], null, 'the omitted format is sent as a SQL null');
+  assert.equal(ins.params[7], 'unsure', 'the internal default is the existing unsure code');
+});
+
+test('a resubmission with an omitted format preserves the historical value', async () => {
+  // The UPDATE maps an omitted format to COALESCE($4, format_code): a returning
+  // visitor who never saw a format control keeps whatever they chose before.
+  const id = crypto.randomUUID();
+  const sql = makeSql((text) => {
+    if (/SELECT id, status/.test(text)) return [{ id, status: 'new' }];
+    if (/^UPDATE mj_eoi/.test(text)) return [];
+    throw new Error('unexpected SQL: ' + text);
+  });
+  const env = makeEnv({ sql });
+  const { format, ...withoutFormat } = validPayload();
+  const res = await worker.fetch(jsonPost('/api/books/eoi', withoutFormat), env);
+  assert.equal(res.status, 200);
+  const upd = sql.calls.find((c) => /^UPDATE/.test(c.text));
+  assert.ok(upd);
+  assert.match(upd.text, /format_code = COALESCE\(\$4, format_code\)/, 'update preserves a historical format');
+  assert.equal(upd.params[3], null, 'the omitted format is sent as a SQL null');
+});
+
+test('a resubmission with an explicit legacy format still updates it', async () => {
+  const id = crypto.randomUUID();
+  const sql = makeSql((text) => {
+    if (/SELECT id, status/.test(text)) return [{ id, status: 'new' }];
+    if (/^UPDATE mj_eoi/.test(text)) return [];
+    throw new Error('unexpected SQL: ' + text);
+  });
+  const env = makeEnv({ sql });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload({ format: 'ebook' })), env);
+  assert.equal(res.status, 200);
+  const upd = sql.calls.find((c) => /^UPDATE/.test(c.text));
+  assert.equal(upd.params[3], 'ebook', 'an explicit legacy format reaches the update');
+});
+
+test('the stored schema contract is unchanged (format_code stays NOT NULL with its CHECK)', () => {
+  // No migration: the expected catalog still models format_code as a required
+  // text column constrained to the four legacy codes.
+  const formatCol = EXPECTED_LIVE_CATALOG.columns.find((c) => c.name === 'format_code');
+  assert.deepEqual(formatCol, { name: 'format_code', dataType: 'text', nullable: false, default: null });
+  const check = EXPECTED_LIVE_CATALOG.constraints.find((c) => c.name === 'book_eoi_format_code_check');
+  assert.equal(
+    check.definition,
+    "CHECK ((format_code = ANY (ARRAY['hardcover'::text, 'paperback'::text, 'ebook'::text, 'unsure'::text])))"
+  );
+});
+
 test('validateBookEoiPayload requires consent to be exactly the boolean true', () => {
   // Missing consent -> silent trap (generic ok, no stored fields), NOT a 400.
   const { book, format, quantity, name, email, turnstileToken } = validPayload();

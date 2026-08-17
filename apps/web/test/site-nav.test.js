@@ -31,6 +31,43 @@ function disclosureLinksHrefs(html) {
   return (m[0].match(/href="([^"]+)"/g) || []).map((s) => s.slice(6, -1));
 }
 
+// --- Shared wordmark + current-page treatment ------------------------------
+
+test('every public page brands the header wordmark as MJ Arts, with no logo/icon', () => {
+  for (const [name, html] of [['home', indexHtml], ['gallery', galleryHtml], ['books', booksHtml]]) {
+    assert.match(
+      html,
+      /<a class="brand" href="\/" aria-label="MJ Arts home">MJ Arts<\/a>/,
+      `${name} header wordmark is MJ Arts`
+    );
+    assert.match(html, /&copy; MJ Arts\. Original paintings by MJ\./, `${name} footer wordmark`);
+    assert.doesNotMatch(html, /<img[^>]*class="[^"]*brand/, `${name} adds no logo`);
+    assert.doesNotMatch(html, /<svg[^>]*class="[^"]*brand/, `${name} adds no icon`);
+  }
+});
+
+test('current-page treatment is restrained weight + 2px underline, not colour alone', () => {
+  const m = stylesCss.match(
+    /\.topbar-links a\[aria-current="page"\],\s*\n\.site-nav-menu a\[aria-current="page"\]\s*\{([^}]*)\}/
+  );
+  assert.ok(m, 'the shared aria-current rule must exist');
+  assert.match(m[1], /font-weight:\s*600/, 'heavier weight');
+  assert.match(m[1], /text-decoration:\s*underline/, 'an underline shape');
+  assert.match(m[1], /text-decoration-thickness:\s*2px/, 'a deliberate 2px underline');
+  // The old accidental highlight (side bar + tinted fill) is gone.
+  assert.doesNotMatch(m[1], /box-shadow/, 'no inset side bar');
+  assert.doesNotMatch(m[1], /background/, 'no tinted fill');
+});
+
+test('keyboard focus stays visually distinct from the current-page treatment', () => {
+  // The unified :focus-visible ring applies to every nav link, so focus never
+  // relies on (or collides with) the active underline alone.
+  assert.ok(stylesCss.includes('.topbar a:focus-visible'));
+  assert.ok(stylesCss.includes('.site-nav-menu a:focus-visible'));
+  const block = stylesCss.match(/\.button:focus-visible[\s\S]*?\{([^}]*)\}/);
+  assert.match(block[1], /outline:\s*3px solid var\(--accent\)/);
+});
+
 // --- Shared nav: order, hrefs, current page, on every page ----------------
 
 test('every public page exposes the shared topbar with the four links in order', () => {

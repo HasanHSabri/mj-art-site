@@ -5,12 +5,12 @@
    chapter navigator. No new fonts and no dark-mode override. */
 
 .books-hero-content {
-  grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.9fr);
-  align-items: stretch;
+  grid-template-columns: 1fr;
+  max-width: 60ch;
 }
 
-/* Concise hero aside card: a single warm callout, not a busy stack. */
-.books-hero-card,
+/* Concise single-column hero: the copy and the Follow the books action, no
+   aside panel. */
 .books-panel,
 .books-eoi-form {
   border: 1px solid var(--border);
@@ -20,19 +20,9 @@
   box-shadow: var(--shadow);
 }
 
-.books-hero-card {
-  padding: 28px;
-}
-
-.hero-card-label,
 .books-counter-value,
 .books-counters dt {
   color: var(--muted);
-}
-
-.books-hero-note {
-  margin: 10px 0 0;
-  line-height: 1.6;
 }
 
 .books-section,
@@ -40,8 +30,9 @@
   margin-top: 28px;
 }
 
-/* Two typographic book panels, side by side, collapsing to one column. There is
-   deliberately NO cover art: titles/prices/dates are not announced yet. */
+/* Two book cards, side by side, collapsing to one column. Each opens with the
+   intentional portrait cover reserve (styled in the shared styles.css), then
+   the title, description, live counters, and CTA. */
 .books-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -54,6 +45,10 @@
   gap: 10px;
   align-content: start;
   padding: 28px;
+}
+
+.books-panel .book-cover-reserve {
+  margin-top: 6px;
 }
 
 .books-panel-text {
@@ -244,7 +239,6 @@
 }
 
 @media (max-width: 640px) {
-  .books-hero-card,
   .books-panel,
   .books-eoi-form {
     padding: 20px;

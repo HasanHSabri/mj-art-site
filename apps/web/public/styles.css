@@ -126,7 +126,6 @@ h3 {
 .intro-panel,
 .painting-card,
 .testimonials-grid blockquote,
-.testimonials-empty,
 .contact-form,
 .contact-card,
 .painting-dialog {
@@ -206,7 +205,6 @@ label {
   margin-top: 28px;
 }
 
-.hero-tags,
 .placeholder-list {
   display: flex;
   flex-wrap: wrap;
@@ -214,7 +212,6 @@ label {
   margin-top: 20px;
 }
 
-.hero-tags span,
 .placeholder-list span {
   display: inline-flex;
   align-items: center;
@@ -257,18 +254,19 @@ label {
   background: rgba(255, 255, 255, 0.4);
 }
 
-/* Fixed "Back to Top" control. Centered horizontally with auto margins
-   (left/right: 0 + margin-inline: auto), never with a transform, so the
-   generic .button:hover nudge (translateY) cannot break center alignment.
+/* Fixed "Back to Top" control, anchored to the bottom-right safe side so it
+   never sits over the centered forms, CTAs, or consent text (back-to-top.js
+   additionally hides it whenever a form/footer/avoid zone actually enters its
+   placement region). Anchored with right/bottom only -- never a transform, so
+   the generic .button:hover nudge (translateY) cannot break placement.
    bottom clears the iOS safe area; [hidden] wins over .button's display. */
 .back-to-top {
   position: fixed;
-  left: 0;
-  right: 0;
+  left: auto;
+  right: max(20px, env(safe-area-inset-right, 0px));
   bottom: calc(env(safe-area-inset-bottom, 0px) + 16px);
-  margin-inline: auto;
   width: fit-content;
-  max-width: calc(100% - 32px);
+  max-width: calc(100% - 40px);
   z-index: 40;
 }
 
@@ -349,14 +347,15 @@ label {
 }
 
 /* Current page is marked statically per-page with aria-current="page" and is
-   conveyed with shape AND weight, never colour alone: a leading accent bar +
-   heavier type + soft fill. */
+   conveyed with weight AND shape, never colour alone: a heavier weight plus a
+   deliberate 2px underline. Restrained by design: no fill, no side bars. */
 .topbar-links a[aria-current="page"],
 .site-nav-menu a[aria-current="page"] {
   font-weight: 600;
-  color: var(--accent-deep);
-  box-shadow: inset 3px 0 0 var(--accent);
-  background: rgba(154, 92, 75, 0.12);
+  color: var(--text);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 8px;
 }
 
 .site-footer {
@@ -400,6 +399,7 @@ label {
 .dialog-close:focus-visible,
 .filter-chip:focus-visible,
 .topbar a:focus-visible,
+.home-section-nav a:focus-visible,
 .inline-link:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -557,8 +557,9 @@ textarea:focus-visible,
 
 .filter-chip[aria-pressed="true"] {
   background: var(--accent);
-  border-color: transparent;
+  border: 2px solid var(--accent-deep);
   color: var(--on-accent);
+  font-weight: 600;
 }
 
 .painting-card[hidden] {
@@ -629,6 +630,45 @@ textarea:focus-visible,
   max-width: 64ch;
 }
 
+/* Story intro column: eyebrow + heading, with an intentional portrait reserve
+   beneath. The reserve is a quiet, decorative placeholder -- a tonal field with
+   crop marks -- that reads as deliberate composition and can later accept a
+   real portrait image. Purely decorative: aria-hidden in the markup. */
+.portrait-reserve {
+  position: relative;
+  margin-top: 28px;
+  width: min(100%, 320px);
+  aspect-ratio: 3 / 4;
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at 32% 24%, rgba(255, 226, 204, 0.5), transparent 58%),
+    linear-gradient(160deg, rgba(255, 250, 246, 0.88), rgba(243, 232, 225, 0.66));
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.portrait-reserve::before,
+.portrait-reserve::after {
+  content: '';
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  border: 0 solid rgba(108, 70, 52, 0.34);
+}
+
+.portrait-reserve::before {
+  top: 12px;
+  left: 12px;
+  border-top-width: 1px;
+  border-left-width: 1px;
+}
+
+.portrait-reserve::after {
+  right: 12px;
+  bottom: 12px;
+  border-right-width: 1px;
+  border-bottom-width: 1px;
+}
+
 .artist-story {
   display: grid;
   gap: 18px;
@@ -648,28 +688,35 @@ textarea:focus-visible,
 }
 
 .placeholder-copy,
-.testimonials-placeholder blockquote,
-.testimonials-empty,
 .contact-card {
   background: rgba(255, 250, 246, 0.82);
 }
 
+/* A single genuine testimonial, set as an editorial pull-quote at a readable
+   measure. The grid stays one column so future testimonials simply stack. */
 .testimonials-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
+  justify-items: center;
   margin-top: 20px;
 }
 
-.testimonials-grid blockquote,
-.testimonials-empty {
+.testimonials-grid blockquote {
   margin: 0;
-  padding: 24px;
-  font-size: 1.05rem;
+  padding: 30px 28px 24px;
+  max-width: 62ch;
+  font-family: "Cormorant Garamond", serif;
+  font-size: 1.5rem;
+  line-height: 1.3;
 }
 
-.testimonials-placeholder blockquote,
-.testimonials-empty {
+.testimonials-grid cite {
+  display: block;
+  margin-top: 14px;
+  font-family: "Hanken Grotesk", sans-serif;
+  font-style: normal;
+  font-size: 0.9rem;
+  font-weight: 500;
   color: var(--muted);
-  font-style: italic;
 }
 
 .contact-form {
@@ -726,6 +773,99 @@ textarea {
 
 .books-preview-section {
   margin-top: 28px;
+}
+
+/* Home secondary section navigator (Story / Testimonials / Enquire). It is
+   secondary to the primary topbar: never a second primary nav. On narrow and
+   tablet screens it is a compact wrapped row above the first section; on wide
+   screens it becomes a slim sticky vertical rail in the left margin beside the
+   page's content column. Active state = weight + 2px underline (shape, not
+   colour alone), mirroring the primary nav's current-page treatment. */
+.home-section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  margin-top: 28px;
+}
+
+.home-section-nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+.home-section-nav a:hover {
+  color: var(--text);
+}
+
+.home-section-nav a[aria-current="true"] {
+  color: var(--text);
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 8px;
+}
+
+@media (min-width: 1100px) {
+  .home-main {
+    display: grid;
+    grid-template-columns: 172px minmax(0, 1fr);
+    gap: 44px;
+    align-items: start;
+  }
+
+  .home-main > section {
+    grid-column: 2;
+  }
+
+  .home-section-nav {
+    /* A sticky grid item is constrained to its grid area, so the rail spans
+       the whole (implicit) column: it stays sticky for the full page length,
+       not just the first section's row. Unused spanned rows are zero-height. */
+    grid-column: 1;
+    grid-row: 1 / span 100;
+    position: sticky;
+    top: 24px;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 2px;
+    padding: 8px 0 8px 16px;
+    border-left: 1px solid var(--border);
+  }
+}
+
+/* Intentional portrait-oriented cover reserve for each book card. A quiet
+   tonal field with a soft falloff toward the left edge -- deliberately a book
+   shape, ready to be replaced by a real cover image later. Decorative only:
+   aria-hidden in the markup, no text, no icon, no image. */
+.book-cover-reserve {
+  position: relative;
+  width: min(100%, 210px);
+  aspect-ratio: 3 / 4;
+  margin: 4px auto 8px;
+  border-radius: 6px 14px 14px 6px;
+  background:
+    linear-gradient(90deg, rgba(154, 92, 75, 0.12), rgba(154, 92, 75, 0) 16%),
+    linear-gradient(180deg, rgba(255, 250, 246, 0.92), rgba(242, 230, 223, 0.78));
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* Gallery: compact featured intro sits between the section heading and the
+   filter bar, so the Featured / size / All controls are the first interactive
+   row of the collection. */
+.gallery-featured-note {
+  margin: 20px 0 0;
+  max-width: 68ch;
+  color: var(--muted);
+}
+
+.gallery-load-more-row {
+  display: flex;
+  justify-content: center;
+  margin-top: 26px;
 }
 
 .painting-dialog {
@@ -833,6 +973,12 @@ textarea {
   .site-nav-summary {
     min-width: 44px;
     min-height: 44px;
+  }
+
+  /* Book cover reserves stay modest on small screens (no excessive blank
+     height): a narrower cap keeps the portrait box compact. */
+  .book-cover-reserve {
+    width: min(100%, 180px);
   }
 
   .hero-copy,

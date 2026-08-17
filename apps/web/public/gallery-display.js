@@ -1,13 +1,17 @@
 // Pure, dependency-free client helpers for the public gallery.
 //
 // No DOM, no network. Imported by script.js (an ES module) and imported by
-// node:test directly. Concerns: size filter definitions, query-string parsing,
-// card size-key derivation, visibility predicate, results status text, public
-// display formatting, and inquiry mailto. The client enhances SSR cards in
+// node:test directly. Concerns: filter definitions (Featured + All + sizes +
+// miscellaneous), deterministic featured selection, batched reveal ("load
+// more"), query-string parse/serialize with validation and clamping, card
+// size-key derivation, visibility selection, results status text, public
+// display formatting, and enquiry mailto. The client enhances SSR cards in
 // place; it never fetches /api/artworks or rebuilds the grid.
 
 // Exact canonical catalogue size groups, in display order. Miscellaneous is a
-// single additional group. "all" is the no-filter state.
+// single additional group. "all" is the no-filter state and "featured" is the
+// curated default: the first 10 public records in the artist's existing
+// sortOrder (the SSR card order) -- deterministic, no invented metadata.
 export const SIZE_FILTERS = [
   '20x20',
   '20x25',
@@ -23,13 +27,27 @@ export const SIZE_FILTERS = [
 ];
 export const MISC_KEY = 'miscellaneous';
 export const ALL_KEY = 'all';
+export const FEATURED_KEY = 'featured';
 
-// Allowlist of every accepted ?size=<value>. Anything else resolves to "all".
-export const ALLOWED_SIZE_QUERY_VALUES = new Set([ALL_KEY, ...SIZE_FILTERS, MISC_KEY]);
+// Featured shows exactly the first FEATURED_COUNT cards in artist order; the
+// Featured filter has no "load more". All/size filters reveal PAGE_SIZE cards
+// at a time (first PAGE_SIZE matching works initially, then +PAGE_SIZE per
+// Load more activation; no infinite scroll).
+export const FEATURED_COUNT = 10;
+export const PAGE_SIZE = 12;
+
+// Allowlist of every accepted ?size=<value>: featured + all + 11 sizes + misc.
+export const ALLOWED_FILTER_KEYS = new Set([
+  FEATURED_KEY,
+  ALL_KEY,
+  ...SIZE_FILTERS,
+  MISC_KEY
+]);
 
 // Human-readable labels for the filter bar. Sizes render as-is; misc and all
 // use friendly labels.
 export const FILTER_LABELS = {
+  [FEATURED_KEY]: 'Featured',
   [ALL_KEY]: 'All',
   [MISC_KEY]: 'Miscellaneous'
 };
@@ -47,7 +65,8 @@ export function cardSizeKey(card) {
   return SIZE_FILTERS.includes(card.sizeCategory) ? card.sizeCategory : ALL_KEY;
 }
 
-// True when a card with filter key `sizeKey` is visible under filter `key`.
+// True when a card with filter key `sizeKey` matches filter `key` (Featured is
+// handled positionally by selectCardVisibility, not by key).
 export function isVisible(key, sizeKey) {
   if (key === ALL_KEY) return true;
   return key === sizeKey;
@@ -65,25 +84,100 @@ export function countBySize(cards) {
   return counts;
 }
 
-// Parse and validate a ?size= query value. Non-strings and unknown values
-// resolve to ALL_KEY (invalid -> All). Case-insensitive.
-export function parseSizeQuery(value) {
-  if (typeof value !== 'string') return ALL_KEY;
-  const key = value.trim().toLowerCase();
-  return ALLOWED_SIZE_QUERY_VALUES.has(key) ? key : ALL_KEY;
+// Number of cards the given filter can ever show: Featured is capped at
+// FEATURED_COUNT; All is everything; a size key counts its matching cards.
+export function countMatching(cards, key) {
+  if (!Array.isArray(cards)) return 0;
+  if (key === FEATURED_KEY) return Math.min(cards.length, FEATURED_COUNT);
+  return cards.filter((card) => key === ALL_KEY || cardSizeKey(card) === key).length;
 }
 
-// The query string (with leading "?") that represents `key`, or '' for All so
-// the URL stays clean. Callers use history.replaceState without navigation.
-export function sizeQuery(key) {
-  if (key === ALL_KEY || !ALLOWED_SIZE_QUERY_VALUES.has(key)) return '';
-  return `?size=${key}`;
+// Clamp a `shown` value to a valid batch state: positive integers only, floored
+// to a PAGE_SIZE multiple (12/24/36...), never below PAGE_SIZE, and never above
+// `total` when a total is supplied. Invalid input (NaN, strings that are not
+// integers, <= 0) resolves to PAGE_SIZE.
+export function clampShown(value, total = Number.POSITIVE_INFINITY) {
+  let n;
+  if (typeof value === 'number') n = value;
+  else if (typeof value === 'string' && /^\d+$/.test(value.trim())) n = Number(value.trim());
+  else n = NaN;
+  if (!Number.isFinite(n)) n = PAGE_SIZE;
+  n = Math.floor(n / PAGE_SIZE) * PAGE_SIZE;
+  if (n < PAGE_SIZE) n = PAGE_SIZE;
+  if (Number.isFinite(total)) n = Math.min(n, Math.max(total, 0));
+  return n;
 }
 
-// Results status text for the aria-live region, e.g. "37 paintings shown".
-export function resultSummary(visibleCount) {
-  const noun = visibleCount === 1 ? 'painting' : 'paintings';
-  return `${visibleCount} ${noun} shown`;
+// Pure visibility selection over SSR card descriptors (in artist/DOM order).
+// Returns a boolean per card:
+//   - Featured: the first FEATURED_COUNT cards in order, nothing else.
+//   - All/size: the first `shown` MATCHING cards in order (Featured excluded).
+export function selectCardVisibility(cards, key, shown) {
+  const out = [];
+  if (!Array.isArray(cards)) return out;
+  let matchIndex = 0;
+  for (let i = 0; i < cards.length; i++) {
+    let visible = false;
+    if (key === FEATURED_KEY) {
+      visible = i < FEATURED_COUNT;
+    } else {
+      const sizeKey = cardSizeKey(cards[i]);
+      if (key === ALL_KEY || sizeKey === key) {
+        visible = matchIndex < shown;
+        matchIndex += 1;
+      }
+    }
+    out.push(visible);
+  }
+  return out;
+}
+
+// Parse a gallery URL search string ('' | '?size=...&shown=...') into the
+// canonical filter state. Absent size -> Featured (the default). 'featured',
+// 'all', a size key, or 'miscellaneous' are accepted case-insensitively; any
+// other value is invalid and falls back to Featured. Legacy '?size=<size>'
+// links keep working unchanged. `shown` only applies to All/size states and is
+// clamped by clampShown (total-clamping is the caller's job: it knows the
+// matching count).
+export function parseGalleryQuery(search) {
+  const params = new URLSearchParams(typeof search === 'string' ? search : '');
+  const rawSize = params.get('size');
+  let key = FEATURED_KEY;
+  if (typeof rawSize === 'string' && rawSize.length > 0) {
+    const normalized = rawSize.trim().toLowerCase();
+    if (ALLOWED_FILTER_KEYS.has(normalized)) key = normalized;
+  }
+  if (key === FEATURED_KEY) return { filter: FEATURED_KEY, shown: FEATURED_COUNT };
+  return { filter: key, shown: clampShown(params.get('shown')) };
+}
+
+// Serialize filter state to a canonical query string (with leading '?' or ''
+// for the clean default). Featured is the clean URL; All/size carry
+// ?size=<key>, and `shown` is included only once it exceeds the initial batch
+// so URLs stay minimal. Callers append window.location.hash themselves.
+export function galleryQuery(key, shown) {
+  if (key === FEATURED_KEY || !ALLOWED_FILTER_KEYS.has(key)) return '';
+  const params = new URLSearchParams();
+  params.set('size', key);
+  const batchShown = clampShown(shown);
+  if (batchShown > PAGE_SIZE) params.set('shown', String(batchShown));
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+// Results status text for the aria-live region: "Showing X of Y paintings".
+export function resultSummary(shown, total) {
+  const noun = Number(total) === 1 ? 'painting' : 'paintings';
+  return `Showing ${shown} of ${total} ${noun}`;
+}
+
+// Accessible Load more label carrying next/remaining semantics, e.g.
+// "Show 12 more (62 remaining)". Returns null when nothing remains.
+export function loadMoreLabel(shown, total, batchSize = PAGE_SIZE) {
+  const remaining = Number(total) - Number(shown);
+  if (remaining <= 0) return null;
+  const next = Math.min(batchSize, remaining);
+  return `Show ${next} more (${remaining} remaining)`;
 }
 
 // Format a public price object. AUD is prefixed A$. null -> "Price on enquiry".
@@ -104,10 +198,10 @@ export function formatDimensionsDisplay(dimensions) {
   return `${widthCm} x ${heightCm} cm · ${orientation}`;
 }
 
-// Build a mailto: URL for an artwork inquiry. All user fields are URL-encoded.
+// Build a mailto: URL for an artwork enquiry. All user fields are URL-encoded.
 export function buildInquiryMailto({ email, name, customerEmail, painting, message }) {
   const safeEmail = String(email || '').trim();
-  const subject = encodeURIComponent(`Painting inquiry: ${painting}`);
+  const subject = encodeURIComponent(`Painting enquiry: ${painting}`);
   const body = encodeURIComponent(
     `Hello,\n\nMy name is ${name}.\nMy email is ${customerEmail}.\n\nI would like to ask about: ${painting}\n\n${message}`
   );

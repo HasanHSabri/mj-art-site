@@ -22,8 +22,16 @@
 // Allowlists & limits
 // ---------------------------------------------------------------------------
 
+// Canonical book/format values MUST match the backend allowlists. These are the
+// non-secret contract values, not operator data. `format` is a LEGACY field:
+// the visitor form no longer sends it, but the public allowlist still accepts
+// it from older clients (absent = omission; any supplied value must be one of
+// these codes). Internal storage maps an omitted format to 'unsure' to satisfy
+// the existing NOT NULL/CHECK constraints -- no schema migration.
 export const BOOK_CODES = new Set(['biography', 'childrens']);
 export const FORMAT_CODES = new Set(['hardcover', 'paperback', 'ebook', 'unsure']);
+// The internal format_code persisted when a submission omits `format`.
+export const DEFAULT_FORMAT_CODE = 'unsure';
 export const BOOK_EOI_STATUSES = new Set(['new', 'contacted', 'withdrawn']);
 
 export const MIN_QUANTITY = 1;
@@ -179,9 +187,17 @@ export function validateBookEoiPayload(body) {
     return { ok: false, status: 400, error: 'Invalid book selection.' };
   }
 
-  const format = body.format;
-  if (typeof format !== 'string' || !FORMAT_CODES.has(format)) {
-    return { ok: false, status: 400, error: 'Invalid format selection.' };
+  // Optional legacy `format`: ABSENT validates as an omission (fields.format
+  // carries null; the insert persists the internal 'unsure' and a resubmit
+  // preserves the historical value). Any SUPPLIED value -- including null,
+  // empty, or unknown -- must be a canonical legacy code or the request is a
+  // real 400.
+  let format = null;
+  if (body.format !== undefined) {
+    if (typeof body.format !== 'string' || !FORMAT_CODES.has(body.format)) {
+      return { ok: false, status: 400, error: 'Invalid format selection.' };
+    }
+    format = body.format;
   }
 
   const quantity = body.quantity;
@@ -420,7 +436,7 @@ export async function insertBookEoi(sql, row) {
   await sql(
     'INSERT INTO mj_eoi.book_eoi ' +
       '(id, book_code, email_hash, pii_ciphertext, pii_iv, quantity, format_code, status, created_at, updated_at) ' +
-      'VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())',
+      'VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, $8), $9, now(), now())',
     [
       row.id,
       row.bookCode,
@@ -428,7 +444,8 @@ export async function insertBookEoi(sql, row) {
       row.piiCiphertext,
       row.piiIv,
       row.quantity,
-      row.formatCode,
+      row.formatCode == null ? null : row.formatCode,
+      DEFAULT_FORMAT_CODE,
       'new'
     ]
   );
@@ -436,14 +453,24 @@ export async function insertBookEoi(sql, row) {
 
 // Re-submission of an existing (book,email): refresh encrypted PII, quantity,
 // format, and reactivate a withdrawn interest back to 'new'. The row id is
-// preserved so existing ciphertext AAD stays valid before re-encryption.
+// preserved so existing ciphertext AAD stays valid before re-encryption. An
+// omitted format (null) preserves the historical format_code via COALESCE; an
+// explicit legacy format still updates it as before.
 export async function updateBookEoiOnResubmit(sql, id, row) {
   await sql(
     'UPDATE mj_eoi.book_eoi SET ' +
-      'pii_ciphertext = $1, pii_iv = $2, quantity = $3, format_code = $4, ' +
+      'pii_ciphertext = $1, pii_iv = $2, quantity = $3, format_code = COALESCE($4, format_code), ' +
       'status = CASE WHEN status = $5 THEN $6 ELSE status END, updated_at = now() ' +
       'WHERE id = $7',
-    [row.piiCiphertext, row.piiIv, row.quantity, row.formatCode, 'withdrawn', 'new', id]
+    [
+      row.piiCiphertext,
+      row.piiIv,
+      row.quantity,
+      row.formatCode == null ? null : row.formatCode,
+      'withdrawn',
+      'new',
+      id
+    ]
   );
 }
 

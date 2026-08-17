@@ -1,0 +1,17 @@
+/* Gallery no-JS restoration.
+
+   Loaded ONLY from gallery.html's <noscript> block, so it applies solely
+   when scripting is disabled. The SSR Gallery keeps the complete catalogue
+   in the HTML but emits cards beyond the Featured window with the `hidden`
+   attribute so the JS-enhanced Featured view paints with no flash. Without
+   JS nothing ever removes that attribute, so this narrowly scoped author
+   override re-displays every SSR card for no-JS visitors. The `!important`
+   is required to beat the shared author rule `.painting-card[hidden] {
+   display: none; }` in styles.css; JS visitors never load this file, so the
+   Featured no-flash behaviour and the client's hidden-toggle contract are
+   untouched. Grid layout, aspect ratios, and every other rule are unchanged
+   (display: block is the natural grid-child fallback). */
+
+#gallery-grid .painting-card[hidden] {
+  display: block !important;
+}

@@ -1,13 +1,20 @@
 // Public Gallery page client (progressive enhancement).
 //
 // ES module. Reads the server-rendered cards once and enhances them in place:
-// builds the accessible size filter bar (with real counts), wires card/dialog
-// interaction, manages the ?size=<key> query state, and powers the artwork
-// inquiry mailto. It NEVER fetches /api/artworks, wipes the grid, or rebuilds
-// cards. Empty SSR state (no cards) renders an accessible empty message.
+// builds the accessible filter bar (Featured + All + sizes with real counts),
+// manages the batched reveal (first 12 matching, then +12 per Load more; no
+// infinite scroll), wires card/dialog interaction, manages the
+// ?size=<key>&shown=<n> query state with pushState/popstate, and powers the
+// artwork enquiry mailto. It NEVER fetches /api/artworks, wipes the grid, or
+// rebuilds cards. Empty SSR state (no cards) renders an accessible empty
+// message.
+//
+// SSR already renders only the first FEATURED_COUNT cards un-hidden (the rest
+// carry `hidden`), so the default Featured view paints with no flash even
+// before this module runs and stays complete for no-JS visitors and indexing.
 //
 // The dedicated Gallery page has no contact form of its own: the dialog's
-// "Inquire about this painting" action uses the existing mailto semantics
+// "Enquire about this painting" action uses the existing mailto semantics
 // (gallery-display.js#buildInquiryMailto, the same address and shape the Home
 // contact form uses) rather than scrolling to a #contact section that does not
 // exist on this page.
@@ -16,26 +23,27 @@ import {
   SIZE_FILTERS,
   MISC_KEY,
   ALL_KEY,
-  ALLOWED_SIZE_QUERY_VALUES,
-  cardSizeKey,
+  FEATURED_KEY,
+  PAGE_SIZE,
   countBySize,
+  countMatching,
   filterLabel,
-  isVisible,
-  parseSizeQuery,
-  sizeQuery,
+  selectCardVisibility,
+  parseGalleryQuery,
+  galleryQuery,
+  clampShown,
   resultSummary,
+  loadMoreLabel,
   buildInquiryMailto
 } from './gallery-display.js';
 import { initBackToTop } from './back-to-top.js';
 
 const CONTACT_EMAIL = 'mjdonnellan73@gmail.com';
 
-const reducedMotion = () =>
-  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
 const galleryGrid = document.getElementById('gallery-grid');
 const filterBar = document.getElementById('gallery-filters');
 const resultsStatus = document.getElementById('gallery-results');
+const loadMoreButton = document.getElementById('gallery-load-more');
 
 const dialog = document.getElementById('painting-dialog');
 const dialogClose = document.getElementById('dialog-close');
@@ -53,7 +61,14 @@ dialogImageElement.alt = '';
 dialogImage.appendChild(dialogImageElement);
 
 const cards = Array.from(galleryGrid.querySelectorAll('.painting-card'));
-let activeFilter = ALL_KEY;
+const cardDescriptors = cards.map((card) => ({
+  category: card.dataset.category,
+  sizeCategory: card.dataset.sizeCategory
+}));
+
+// Current filter state: { filter: featured|all|<size>|miscellaneous, shown }.
+// Featured always shows the deterministic first-10 selection (shown === 10).
+let activeState = { filter: FEATURED_KEY, shown: 10 };
 
 init();
 
@@ -68,7 +83,8 @@ function init() {
     return;
   }
 
-  // Keyboard/card activation + dialog wiring on every SSR card.
+  // Keyboard/card activation + dialog wiring on every SSR card (including
+  // currently hidden ones: revealing them never needs re-wiring).
   for (const card of cards) {
     card.addEventListener('click', () => openPaintingDialog(card));
     card.addEventListener('keydown', (event) => {
@@ -80,8 +96,20 @@ function init() {
   }
 
   buildFilterBar();
-  activeFilter = parseSizeQuery(new URLSearchParams(window.location.search).get('size'));
-  applyFilter(activeFilter, false);
+  loadMoreButton.addEventListener('click', () => {
+    const total = countMatching(cardDescriptors, activeState.filter);
+    applyState(
+      { filter: activeState.filter, shown: clampShown(activeState.shown + PAGE_SIZE, total) },
+      { updateUrl: true }
+    );
+  });
+
+  applyState(readStateFromUrl(), { updateUrl: false });
+
+  // Back/Forward: reapply whatever the URL says, without rewriting it.
+  window.addEventListener('popstate', () => {
+    applyState(readStateFromUrl(), { updateUrl: false });
+  });
 }
 
 function renderEmptyState() {
@@ -89,51 +117,66 @@ function renderEmptyState() {
     resultsStatus.textContent = 'No artworks are available yet.';
   }
   if (filterBar) filterBar.hidden = true;
+  if (loadMoreButton) loadMoreButton.hidden = true;
 }
 
-// Build the accessible filter bar (All + 11 sizes + Miscellaneous) with real
-// counts from the SSR card data attrs.
+// Build the accessible filter bar (Featured + All + 11 sizes + Miscellaneous)
+// with real counts from the SSR card data attrs. Featured is the curated
+// selection (its count is the live status line's job, not the chip's).
 function buildFilterBar() {
   if (!filterBar) return;
   filterBar.replaceChildren();
 
-  const cardDescriptors = cards.map((card) => ({
-    category: card.dataset.category,
-    sizeCategory: card.dataset.sizeCategory
-  }));
   const counts = countBySize(cardDescriptors);
 
-  const keys = [ALL_KEY, ...SIZE_FILTERS, MISC_KEY];
+  const keys = [FEATURED_KEY, ALL_KEY, ...SIZE_FILTERS, MISC_KEY];
   for (const key of keys) {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'filter-chip';
     button.dataset.size = key;
-    button.setAttribute('aria-pressed', String(key === activeFilter));
-    const count = counts[key] || 0;
-    button.textContent = `${filterLabel(key)} (${count})`;
-    button.addEventListener('click', () => applyFilter(key, true));
+    button.setAttribute('aria-pressed', String(key === activeState.filter));
+    if (key === FEATURED_KEY) {
+      button.textContent = filterLabel(key);
+    } else {
+      const count = counts[key] || 0;
+      button.textContent = `${filterLabel(key)} (${count})`;
+    }
+    button.addEventListener('click', () => {
+      const total = countMatching(cardDescriptors, key);
+      const shown = key === FEATURED_KEY ? total : clampShown(PAGE_SIZE, total);
+      applyState({ filter: key, shown }, { updateUrl: true });
+    });
     filterBar.appendChild(button);
   }
 }
 
-// Apply a size filter: toggle the `hidden` attribute on each card (no DOM
-// removal/reorder), update aria-pressed on chips, refresh the live status, and
-// sync the URL query via replaceState (no navigation).
-function applyFilter(key, updateUrl) {
-  if (!ALLOWED_SIZE_QUERY_VALUES.has(key)) key = ALL_KEY;
-  activeFilter = key;
-  let visible = 0;
-
-  for (const card of cards) {
-    const sizeKey = cardSizeKey({
-      category: card.dataset.category,
-      sizeCategory: card.dataset.sizeCategory
-    });
-    const show = isVisible(key, sizeKey);
-    card.hidden = !show;
-    if (show) visible += 1;
+// Read the canonical filter state from the current URL, clamping `shown`
+// against the real matching count for the parsed filter.
+function readStateFromUrl() {
+  const parsed = parseGalleryQuery(window.location.search);
+  if (parsed.filter === FEATURED_KEY) {
+    return { filter: FEATURED_KEY, shown: countMatching(cardDescriptors, FEATURED_KEY) };
   }
+  const total = countMatching(cardDescriptors, parsed.filter);
+  return { filter: parsed.filter, shown: clampShown(parsed.shown, total) };
+}
+
+// Apply a filter state: toggle the `hidden` attribute on each card (hidden
+// cards leave the accessibility tree and focus order), update aria-pressed on
+// chips, refresh the live status and the Load more control, and push the URL
+// for user actions (popstate reapplies without rewriting).
+function applyState(next, opts) {
+  const key = next.filter;
+  const total = countMatching(cardDescriptors, key);
+  const shown =
+    key === FEATURED_KEY ? total : clampShown(next.shown, total);
+  activeState = { filter: key, shown };
+
+  const visibility = selectCardVisibility(cardDescriptors, key, shown);
+  cards.forEach((card, index) => {
+    card.hidden = !visibility[index];
+  });
 
   if (filterBar) {
     for (const button of filterBar.querySelectorAll('.filter-chip')) {
@@ -142,13 +185,22 @@ function applyFilter(key, updateUrl) {
   }
 
   if (resultsStatus) {
-    resultsStatus.textContent = resultSummary(visible);
+    resultsStatus.textContent = resultSummary(Math.min(shown, total), total);
   }
 
-  if (updateUrl) {
-    const query = sizeQuery(key);
-    const url = `${window.location.pathname}${query}${window.location.hash}`;
-    window.history.replaceState(null, '', url);
+  if (loadMoreButton) {
+    const label = loadMoreLabel(shown, total);
+    if (label === null) {
+      loadMoreButton.hidden = true;
+    } else {
+      loadMoreButton.hidden = false;
+      loadMoreButton.textContent = label;
+    }
+  }
+
+  if (opts && opts.updateUrl) {
+    const url = `${window.location.pathname}${galleryQuery(key, shown)}${window.location.hash}`;
+    window.history.pushState(null, '', url);
   }
 }
 

@@ -5,7 +5,7 @@ import {
   sortByOrder,
   validateArtworkList
 } from './artwork-schema.js';
-import { renderArtworkCards, renderArtworkPreviewCards } from './gallery-ssr.js';
+import { renderArtworkCards, renderArtworkPreviewCards, SSR_FEATURED_COUNT } from './gallery-ssr.js';
 import {
   BOOK_CODES,
   BOOK_EOI_STATUSES,
@@ -355,7 +355,10 @@ async function renderSsrGalleryPage(request, env, assetPath, previewCount = null
     const publicRecords = toPublicList(catalog.records);
     if (previewCount == null) {
       // Full Gallery page: every public record, as interactive dialog cards.
-      galleryHtml = renderArtworkCards(publicRecords);
+      // Only the first SSR_FEATURED_COUNT render un-hidden: the default
+      // Featured view paints with no flash under strict CSP while the complete
+      // catalogue stays in the SSR HTML (the client reveals the rest).
+      galleryHtml = renderArtworkCards(publicRecords, SSR_FEATURED_COUNT);
     } else {
       // Home preview: the first N records as anchor cards linking to /gallery.
       galleryHtml = renderArtworkPreviewCards(publicRecords.slice(0, previewCount));

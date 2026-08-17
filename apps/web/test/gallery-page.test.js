@@ -107,7 +107,8 @@ test('gallery inquiry click assigns the exact encoded mailto URL (no real mail c
   );
   // Reproduce the exact builder call the handler makes and assert the fully
   // encoded mailto URL byte-for-byte. This proves the click hands the browser a
-  // valid mailto: with the painting title encoded, without a real mail client.
+  // valid mailto: with the painting title encoded (and the Australian
+  // enquiry subject), without a real mail client.
   const url = buildInquiryMailto({
     email: 'mjdonnellan73@gmail.com',
     name: '',
@@ -117,7 +118,7 @@ test('gallery inquiry click assigns the exact encoded mailto URL (no real mail c
   });
   assert.equal(
     url,
-    'mailto:mjdonnellan73@gmail.com?subject=Painting%20inquiry%3A%20Still%20Waters&body=Hello%2C%0A%0AMy%20name%20is%20.%0AMy%20email%20is%20.%0A%0AI%20would%20like%20to%20ask%20about%3A%20Still%20Waters%0A%0A',
+    'mailto:mjdonnellan73@gmail.com?subject=Painting%20enquiry%3A%20Still%20Waters&body=Hello%2C%0A%0AMy%20name%20is%20.%0AMy%20email%20is%20.%0A%0AI%20would%20like%20to%20ask%20about%3A%20Still%20Waters%0A%0A',
     'the mailto URL must be the exact, fully-encoded contract'
   );
   // The painting title is never injected raw; everything after the host is encoded.

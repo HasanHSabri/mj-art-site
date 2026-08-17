@@ -39,7 +39,7 @@ test('skip-to-content link is the first body child and targets the Story section
 test('Home main sections follow the approved order: story, gallery preview, books preview, testimonials, contact', () => {
   // After the hero the first <main> section is the full Story, then the
   // six-artwork Gallery preview, then books preview, testimonials, and contact.
-  const mainMatch = indexHtml.match(/<main>([\s\S]*?)<\/main>/);
+  const mainMatch = indexHtml.match(/<main[^>]*>([\s\S]*?)<\/main>/);
   assert.ok(mainMatch, '<main> must exist');
   const main = mainMatch[1];
   const ids = ['story', 'gallery', 'books-preview', 'testimonials', 'contact'];
@@ -264,11 +264,18 @@ test('gallery media reserves deterministic natural-ratio geometry before lazy im
   assert.doesNotMatch(imgRule[1], /object-fit:\s*cover/, 'no crop: never object-fit cover');
 });
 
-test('testimonial placeholders are replaced by one permission-bound empty state', () => {
+test('testimonials hold exactly one genuine card (no empty/permission placeholder)', () => {
   assert.doesNotMatch(indexHtml, /Add a short quote|Add another line/i);
-  const emptyStates = indexHtml.match(/class="testimonials-empty"/g) || [];
-  assert.equal(emptyStates.length, 1);
-  assert.match(indexHtml, /Additional testimonials will be shared here only with permission\./);
+  // The single genuine Jenny testimonial remains; the permission empty card
+  // was removed with the micro-adjustment.
+  assert.doesNotMatch(indexHtml, /testimonials-empty/);
+  assert.equal(
+    indexHtml.includes('Additional testimonials will be shared here only with permission'),
+    false
+  );
+  const quotes = indexHtml.match(/<blockquote>/g) || [];
+  assert.equal(quotes.length, 1, 'exactly one testimonial card');
+  assert.match(indexHtml, /<cite>Jenny<\/cite>/);
 });
 
 test('public page links the self-hosted SVG favicon and has no inline styles', () => {

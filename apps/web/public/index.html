@@ -7,20 +7,20 @@
   <title>MJ Art</title>
   <meta
     name="description"
-    content="A warm and elegant art home page with a first look at MJ's paintings, the artist's story, upcoming books, and a simple painting inquiry flow."
+    content="Art shaped by courage, faith, and hope: MJ's paintings, her story, two books in progress, and a simple painting enquiry flow."
   >
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=three-page-nav">
+  <link rel="stylesheet" href="./styles.css?v=micro-adjust">
 </head>
 <body>
   <a class="skip-link" href="#story">Skip to content</a>
   <div class="page-shell">
     <header class="hero">
       <nav class="topbar" aria-label="Primary navigation">
-        <a class="brand" href="/" aria-label="MJ home">MJ</a>
+        <a class="brand" href="/" aria-label="MJ Arts home">MJ Arts</a>
         <div class="topbar-links site-nav-links">
           <a href="/" aria-current="page">Home</a>
           <a href="/gallery">Gallery</a>
@@ -40,17 +40,13 @@
 
       <section class="hero-content" id="top">
         <div class="hero-copy">
-          <p class="eyebrow">Original paintings for homes, gifts, and collectors</p>
-          <h1>MJ's paintings, gathered into a simple and personal online gallery.</h1>
+          <p class="eyebrow">Art shaped by courage, faith, and hope</p>
+          <h1>Colour, courage, and a story still unfolding.</h1>
           <p class="hero-text">
-            A warm first home for MJ's art: browse a first look at recent paintings, read the story
-            behind the work, and send a direct inquiry if something speaks to you.
+            Living with Multiple Sclerosis changed the rhythm of MJ&rsquo;s life, but it also opened an
+            unexpected path into art. Guided by faith and a love of colour, she paints through the
+            difficult days, the hopeful ones, and all the beautifully imperfect moments in between.
           </p>
-          <div class="hero-tags" aria-label="Site highlights">
-            <span>Original works</span>
-            <span>Direct inquiries</span>
-            <span>Two books in progress</span>
-          </div>
           <div class="hero-actions">
             <a class="button button-primary" href="/gallery">Browse the full collection</a>
             <a class="button button-secondary" href="#contact">Ask about a painting</a>
@@ -70,11 +66,18 @@
       </section>
     </header>
 
-    <main>
+    <main class="home-main">
+      <nav class="home-section-nav" aria-label="Sections">
+        <a href="#story">Story</a>
+        <a href="#testimonials">Testimonials</a>
+        <a href="#contact">Enquire</a>
+      </nav>
+
       <section class="section story-layout" id="story">
-        <div>
-          <p class="section-label">Artist story</p>
-          <h2>Painting as expression, connection, and continuity.</h2>
+        <div class="story-intro">
+          <p class="section-label">MJ&rsquo;s story</p>
+          <h2>When life changed, creativity opened a new way forward.</h2>
+          <div class="portrait-reserve" aria-hidden="true"></div>
         </div>
         <div class="story-copy artist-story">
           <blockquote class="artist-quote">
@@ -98,9 +101,9 @@
             brushstroke, something stirred inside me: a hidden beauty, a voice I didn't know I had.
           </p>
           <p>
-            The act of splashing paint, layering textures, watching colors collide became my therapy. It was
-            messy, wild, freeing, and slowly, I began to see parts of myself I didn't know existed. Strength.
-            Resilience. Wonder.
+            The act of splashing paint, layering textures, watching colours collide became my therapy. It
+            was messy, wild, freeing, and slowly, I began to see parts of myself I didn't know existed.
+            Strength. Resilience. Wonder.
           </p>
           <p>
             Each piece I create is a mirror of life itself. Some days, the canvas reflects my frustration,
@@ -124,7 +127,7 @@
             <p class="section-label">Gallery</p>
             <h2 id="gallery-heading">A first look at the collection</h2>
           </div>
-          <p class="section-note">A preview of MJ's paintings, ordered as the artist hangs them. Open the full gallery to filter by size, study each piece up close, and send a direct inquiry.</p>
+          <p class="section-note">A preview of MJ's paintings, ordered as the artist hangs them. Open the full gallery to filter by size, study each piece up close, and send a direct enquiry.</p>
         </div>
 
         <div class="gallery-grid" id="gallery-grid">
@@ -143,25 +146,27 @@
             <p class="section-label">Books</p>
             <h2 id="books-preview-heading">Two books, readying for launch.</h2>
           </div>
-          <p class="section-note">A biography and a children's book are being prepared. This is an expression of interest, not a payment or a commitment to buy. Titles, covers, and prices are not announced yet.</p>
+          <p class="section-note">Two deeply personal books are being prepared. Visit the Books page to read about each one and join the free update list.</p>
         </div>
 
         <div class="books-grid">
           <article class="books-panel">
+            <div class="book-cover-reserve" aria-hidden="true"></div>
             <p class="section-label">Book one</p>
-            <h3>Biography</h3>
-            <p class="books-panel-text">A biography, currently being prepared for launch.</p>
+            <h3>Frayed Not Broken</h3>
+            <p class="books-panel-text">An honest and personal reflection on life with Multiple Sclerosis&mdash;its fragility, its unexpected strength, and the faith and hope that continue to carry MJ forward.</p>
           </article>
 
           <article class="books-panel">
+            <div class="book-cover-reserve" aria-hidden="true"></div>
             <p class="section-label">Book two</p>
-            <h3>Children&rsquo;s Book</h3>
-            <p class="books-panel-text">A children&rsquo;s book, currently being prepared for launch.</p>
+            <h3>MJ and the Wobbly Days</h3>
+            <p class="books-panel-text">A gentle children&rsquo;s story about meeting uncertain and wobbly days with courage, kindness, and hope.</p>
           </article>
         </div>
 
         <p class="gallery-preview-cta">
-          <a class="button button-secondary" href="/books">Register your interest in the books</a>
+          <a class="button button-secondary" href="/books">Follow the books</a>
         </p>
       </section>
 
@@ -173,12 +178,11 @@
           </div>
         </div>
 
-        <div class="testimonials-grid testimonials-placeholder">
+        <div class="testimonials-grid">
           <blockquote>
             "MJ's artwork are all one of a kind. They're beautiful and draw you in - I have one that reminds me of my family's beach holidays, and I have ones that help me to pray. They're also great as unique and meaningful birthday gifts!"
             <cite>Jenny</cite>
           </blockquote>
-          <p class="testimonials-empty">Additional testimonials will be shared here only with permission.</p>
         </div>
       </section>
 
@@ -209,7 +213,7 @@
               Message
               <textarea id="message" name="message" rows="5" placeholder="Hi, I would love to ask about this painting..." required></textarea>
             </label>
-            <button class="button button-primary" type="submit">Create email inquiry</button>
+            <button class="button button-primary" type="submit">Create email enquiry</button>
             <p class="contact-status" id="contact-status" role="status" aria-live="polite"></p>
             <noscript>
               <p class="contact-noscript">
@@ -233,13 +237,14 @@
         <a href="/books">Books</a>
         <a href="/#contact">Enquire</a>
       </nav>
-      <p class="site-footer-copy">&copy; MJ Art. Original paintings by MJ.</p>
+      <p class="site-footer-copy">&copy; MJ Arts. Original paintings by MJ.</p>
     </div>
   </footer>
 
   <button type="button" id="back-to-top" class="back-to-top button button-primary" hidden>Back to Top</button>
 
   <script type="module" src="./site-nav.js?v=three-page-nav"></script>
+  <script type="module" src="./home-section-nav.js?v=micro-adjust"></script>
   <script type="module" src="./home.js?v=three-page-home"></script>
 </body>
 </html>

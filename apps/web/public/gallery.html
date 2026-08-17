@@ -7,21 +7,24 @@
   <title>Gallery &mdash; MJ Art</title>
   <meta
     name="description"
-    content="The complete MJ art gallery: every painting, filterable by size. Open any piece for a closer look and send a direct inquiry."
+    content="MJ's complete art gallery: every painting, filterable by size. Open any piece for a closer look and send a direct enquiry."
   >
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=three-page-nav">
-  <link rel="stylesheet" href="./gallery.css?v=gallery-natural-ratio">
+  <link rel="stylesheet" href="./styles.css?v=micro-adjust">
+  <link rel="stylesheet" href="./gallery.css?v=micro-adjust">
+  <noscript>
+    <link rel="stylesheet" href="/gallery-noscript.css?v=nojs-gallery-restore">
+  </noscript>
 </head>
 <body>
   <a class="skip-link" href="#gallery">Skip to gallery</a>
   <div class="page-shell">
     <header class="hero">
       <nav class="topbar" aria-label="Primary navigation">
-        <a class="brand" href="/" aria-label="MJ home">MJ</a>
+        <a class="brand" href="/" aria-label="MJ Arts home">MJ Arts</a>
         <div class="topbar-links site-nav-links">
           <a href="/">Home</a>
           <a href="/gallery" aria-current="page">Gallery</a>
@@ -41,11 +44,12 @@
 
       <section class="hero-content gallery-hero-content" id="top">
         <div class="hero-copy">
-          <p class="eyebrow">The complete collection</p>
-          <h1>Every painting, gathered in one place.</h1>
+          <p class="eyebrow">MJ&rsquo;s gallery</p>
+          <h1>Every painting carries a piece of the journey.</h1>
           <p class="hero-text">
-            Browse the full catalogue by size, open any piece for a closer look, and send a direct
-            inquiry if something speaks to you.
+            Explore colour, texture, faith, frustration, joy, and the unexpected beauty MJ has
+            discovered while learning to live differently. Each work is original, personal, and
+            created one expressive layer at a time.
           </p>
           <div class="hero-actions">
             <a class="button button-primary" href="#gallery">Browse the collection</a>
@@ -62,16 +66,21 @@
             <p class="section-label">Gallery</p>
             <h2 id="gallery-heading">The collection</h2>
           </div>
-          <p class="section-note">Browse MJ's paintings by size. Open any piece for a closer look and send a direct inquiry if something speaks to you.</p>
+          <p class="section-note">Browse MJ's paintings by size. Open any piece for a closer look and send a direct enquiry if something speaks to you.</p>
         </div>
 
+        <p class="gallery-featured-note">Featured opens the collection with ten works in MJ&rsquo;s chosen order; choose a size or All to explore everything.</p>
         <div class="gallery-filters" id="gallery-filters" role="group" aria-label="Filter works by size"></div>
-        <p class="gallery-results" id="gallery-results" aria-live="polite"></p>
+        <p class="gallery-results" id="gallery-results" role="status" aria-live="polite"></p>
 
         <div class="gallery-grid" id="gallery-grid">
           <!-- artwork-gallery:start -->
           <!-- artwork-gallery:end -->
         </div>
+
+        <p class="gallery-load-more-row">
+          <button type="button" id="gallery-load-more" class="button button-secondary" hidden></button>
+        </p>
       </section>
     </main>
   </div>
@@ -84,7 +93,7 @@
         <a href="/books">Books</a>
         <a href="/#contact">Enquire</a>
       </nav>
-      <p class="site-footer-copy">&copy; MJ Art. Original paintings by MJ.</p>
+      <p class="site-footer-copy">&copy; MJ Arts. Original paintings by MJ.</p>
     </div>
   </footer>
 
@@ -113,13 +122,13 @@
         </div>
       </dl>
       <p id="dialog-description"></p>
-      <button class="button button-primary" id="dialog-inquire" type="button">Inquire about this painting</button>
+      <button class="button button-primary" id="dialog-inquire" type="button">Enquire about this painting</button>
     </div>
   </dialog>
 
   <button type="button" id="back-to-top" class="back-to-top button button-primary" hidden>Back to Top</button>
 
   <script type="module" src="./site-nav.js?v=three-page-nav"></script>
-  <script type="module" src="./script.js?v=gallery-natural-ratio"></script>
+  <script type="module" src="./script.js?v=micro-adjust"></script>
 </body>
 </html>

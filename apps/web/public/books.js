@@ -7,6 +7,8 @@
 //   - robustly submit the EOI to POST /api/books/eoi, handling 400/413/429/503
 //     and generic errors WITHOUT leaking server detail, preventing duplicate
 //     submits, and resetting Turnstile + refreshing counters after success
+//     (the payload carries no preferred-format key: an omitted format is a
+//     server-side omission)
 //   - power the page's "Back to Top" control (shared implementation; targets
 //     the Books page top)
 //
@@ -23,19 +25,19 @@ import { initBackToTop } from './back-to-top.js';
 export const MIN_QUANTITY = 1;
 export const MAX_QUANTITY = 10;
 
-// Canonical book/format values MUST match the backend allowlists. These are the
-// non-secret contract values, not operator data.
+// Canonical book values MUST match the backend allowlist. These are the
+// non-secret contract values, not operator data. The visitor form no longer
+// sends a preferred format: the payload omits the key entirely (the server
+// treats an absent format as an omission and stores its internal default).
 export const BOOK_VALUES = ['biography', 'childrens'];
-export const FORMAT_VALUES = ['hardcover', 'paperback', 'ebook', 'unsure'];
 
 // Build the exact JSON payload to POST. Consent is required and sent as the
 // boolean true (matches the server-side strict check). A non-empty honeypot is
 // forwarded so the backend can accept it silently as a bot trap. Returns null
-// when a client-side guard fails (book/format/consent/token missing).
+// when a client-side guard fails (book/consent/token missing).
 export function buildEoiPayload(values) {
   const v = values || {};
   const book = typeof v.book === 'string' ? v.book : '';
-  const format = typeof v.format === 'string' ? v.format : '';
   const quantity = toInt(v.quantity);
   const name = typeof v.name === 'string' ? v.name.trim() : '';
   const email = typeof v.email === 'string' ? v.email.trim() : '';
@@ -43,7 +45,6 @@ export function buildEoiPayload(values) {
   const turnstileToken = typeof v.turnstileToken === 'string' ? v.turnstileToken : '';
 
   if (!BOOK_VALUES.includes(book)) return null;
-  if (!FORMAT_VALUES.includes(format)) return null;
   if (quantity === null || quantity < MIN_QUANTITY || quantity > MAX_QUANTITY) return null;
   if (name.length === 0) return null;
   if (email.length === 0) return null;
@@ -52,7 +53,6 @@ export function buildEoiPayload(values) {
 
   const payload = {
     book,
-    format,
     quantity,
     name,
     email,
@@ -173,7 +173,6 @@ function init() {
 
     const payload = buildEoiPayload({
       book: readRadio(els.form, 'book'),
-      format: els.format ? els.format.value : '',
       quantity: els.quantity ? els.quantity.value : '',
       name: els.name ? els.name.value : '',
       email: els.email ? els.email.value : '',
@@ -219,7 +218,6 @@ function init() {
 function readElements(form) {
   return {
     form,
-    format: document.getElementById('books-format'),
     quantity: document.getElementById('books-quantity'),
     name: document.getElementById('books-name'),
     email: document.getElementById('books-email'),

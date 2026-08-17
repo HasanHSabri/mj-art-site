@@ -14,6 +14,15 @@ const DIMS_TBC = 'Dimensions to be confirmed';
 const MEDIUM_UNSPECIFIED = 'Not specified';
 const UNKNOWN_TITLE = 'Artwork';
 
+// The Gallery page's default "Featured" state shows exactly the first 10
+// public records in the artist's sortOrder. The SSR emits cards beyond this
+// count with the `hidden` attribute so the enhanced UI paints the Featured
+// view with no flash (strict CSP: no inline script) while the complete
+// catalogue stays in the HTML for no-JS visitors and indexing. This constant
+// is the server mirror of public/gallery-display.js#FEATURED_COUNT; parity is
+// unit-tested.
+export const SSR_FEATURED_COUNT = 10;
+
 // Format a public price object. Always AUD, prefixed A$ to disambiguate
 // currency. null -> "Price on enquiry". A note is appended in parentheses.
 export function formatPriceDisplay(price) {
@@ -56,8 +65,11 @@ export function escapeAttribute(value) {
   return escapeHtml(value).replaceAll('"', '&quot;');
 }
 
-// Render a single SSR artwork card from a projected public record.
-export function renderArtworkCard(artwork) {
+// Render a single SSR artwork card from a projected public record. Cards
+// beyond the Featured window pass initiallyVisible=false and render with the
+// `hidden` attribute (removed from layout and the a11y/focus tree until the
+// client reveals them).
+export function renderArtworkCard(artwork, initiallyVisible = true) {
   const title = artwork.title || UNKNOWN_TITLE;
   const medium = artwork.medium ? artwork.medium : MEDIUM_UNSPECIFIED;
   const dimensionsDisplay = formatDimensionsDisplay(artwork.dimensions);
@@ -74,8 +86,9 @@ export function renderArtworkCard(artwork) {
     : 'painting-image';
   const { width, height } = intrinsicSize(artwork.dimensions);
   const sizeAttrs = width != null ? ` width="${width}" height="${height}"` : '';
+  const hiddenAttr = initiallyVisible ? '' : ' hidden';
 
-  return `          <article class="painting-card" role="button" tabindex="0" aria-haspopup="dialog" aria-label="View details for ${escapeAttribute(title)}" data-title="${escapeAttribute(title)}" data-medium="${escapeAttribute(medium)}" data-size="${escapeAttribute(dimensionsDisplay)}" data-price="${escapeAttribute(priceDisplay)}" data-availability="${escapeAttribute(availability)}" data-description="${escapeAttribute(description)}" data-image="${escapeAttribute(fullImage)}" data-size-category="${escapeAttribute(sizeCategory)}" data-category="${escapeAttribute(category)}">
+  return `          <article class="painting-card" role="button" tabindex="0" aria-haspopup="dialog" aria-label="View details for ${escapeAttribute(title)}" data-title="${escapeAttribute(title)}" data-medium="${escapeAttribute(medium)}" data-size="${escapeAttribute(dimensionsDisplay)}" data-price="${escapeAttribute(priceDisplay)}" data-availability="${escapeAttribute(availability)}" data-description="${escapeAttribute(description)}" data-image="${escapeAttribute(fullImage)}" data-size-category="${escapeAttribute(sizeCategory)}" data-category="${escapeAttribute(category)}"${hiddenAttr}>
             <div class="${imageClass}"><img src="${escapeAttribute(thumbnail)}" alt="${escapeAttribute(title)}" loading="lazy" decoding="async"${sizeAttrs}></div>
             <div class="painting-card-body">
               <h3>${escapeHtml(title)}</h3>
@@ -87,9 +100,16 @@ export function renderArtworkCard(artwork) {
 
 // Render the full SSR gallery fragment (cards joined by blank lines). Empty
 // input yields an empty string; the Worker renders an accessible empty state.
-export function renderArtworkCards(artworks) {
+// initiallyVisibleCount (default: all visible) hides every card at or beyond
+// that index with `hidden` -- the Gallery page passes SSR_FEATURED_COUNT so
+// the default Featured view paints without a flash.
+export function renderArtworkCards(artworks, initiallyVisibleCount = null) {
   if (!Array.isArray(artworks) || artworks.length === 0) return '';
-  return artworks.map(renderArtworkCard).join('\n\n');
+  const limit =
+    Number.isInteger(initiallyVisibleCount) && initiallyVisibleCount >= 0
+      ? initiallyVisibleCount
+      : artworks.length;
+  return artworks.map((artwork, index) => renderArtworkCard(artwork, index < limit)).join('\n\n');
 }
 
 // Render a Home preview card. The Home page shows exactly the first few public

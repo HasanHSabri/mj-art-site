@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
 import { validateArtworkList, toPublicList } from '../src/artwork-schema.js';
-import { renderArtworkCards } from '../src/gallery-ssr.js';
+import { renderArtworkCards, SSR_FEATURED_COUNT } from '../src/gallery-ssr.js';
 import { countBySize, cardSizeKey } from '../public/gallery-display.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -41,6 +41,19 @@ test('SSR renders exactly 86 cards from the projected real catalogue', () => {
   const html = renderArtworkCards(toPublicList(catalog));
   const cards = extractCards(html);
   assert.equal(cards.length, 86);
+});
+
+test('SSR with the featured window renders all 86 cards, only the first 10 un-hidden', () => {
+  // The Worker renders /gallery with SSR_FEATURED_COUNT so the default
+  // Featured view paints with no flash: every card stays in the HTML (no-JS
+  // and indexing), cards beyond the window carry `hidden`.
+  const html = renderArtworkCards(toPublicList(catalog), SSR_FEATURED_COUNT);
+  const cards = extractCards(html);
+  assert.equal(cards.length, 86);
+  assert.equal((html.match(/\shidden>/g) || []).length, 86 - SSR_FEATURED_COUNT);
+  for (let i = 0; i < cards.length; i++) {
+    assert.equal(/\shidden>/.test(cards[i]), i >= SSR_FEATURED_COUNT, `card ${i}`);
+  }
 });
 
 test('SSR per-size filter counts match the real catalogue', () => {
