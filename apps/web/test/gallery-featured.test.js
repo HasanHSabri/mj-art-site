@@ -6,7 +6,7 @@ import { dirname, resolve } from 'node:path';
 
 import { toPublicList } from '../src/artwork-schema.js';
 import { renderArtworkCards, SSR_FEATURED_COUNT } from '../src/gallery-ssr.js';
-import { FEATURED_COUNT, PAGE_SIZE } from '../public/gallery-display.js';
+import { FEATURED_COUNT, PAGE_SIZE, loadMoreLabel } from '../public/gallery-display.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolve(here, '..', 'public');
@@ -16,6 +16,14 @@ const catalog = JSON.parse(readFileSync(resolve(here, '../../../catalog/catalog.
 
 function extractCards(html) {
   return html.match(/<article class="painting-card"[\s\S]*?<\/article>/g) || [];
+}
+
+function cssRuleBody(css, selector) {
+  const re = new RegExp(
+    `${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{([^}]*)\\}`
+  );
+  const m = css.match(re);
+  return m ? m[1] : null;
 }
 
 // ===========================================================================
@@ -68,6 +76,48 @@ test('the gallery page declares the featured intro, filters, live status, and lo
   assert.match(btn, /type="button"/);
   assert.match(btn, /class="button button-secondary"/);
   assert.match(/\bhidden\b/.test(btn + galleryHtml.match(/id="gallery-load-more"[^>]*>/)[0]).toString(), /./);
+});
+
+// Regression: the scoped hidden override for the Load more control. The shared
+// .button rule declares display: inline-flex, which beats the UA's [hidden]
+// default, so the Featured and final-batch hidden states need an explicit
+// page-scoped rule while the shown state keeps the flex button.
+test('#gallery-load-more[hidden] is display:none in the scoped gallery.css; the shown state keeps the flex button', () => {
+  const galleryCss = readFileSync(resolve(publicDir, 'gallery.css'), 'utf8');
+  const stylesCss = readFileSync(resolve(publicDir, 'styles.css'), 'utf8');
+
+  // Source: the override lives in the page-scoped gallery.css only.
+  const scoped = cssRuleBody(galleryCss, '#gallery-load-more[hidden]');
+  assert.ok(scoped, '#gallery-load-more[hidden] must exist in the scoped gallery.css');
+  assert.match(scoped, /display:\s*none/, 'the hidden attribute must fully remove the control');
+  assert.equal(
+    cssRuleBody(stylesCss, '#gallery-load-more[hidden]'),
+    null,
+    'the override must stay out of the shared styles.css (gallery-scoped only)'
+  );
+
+  // Specificity: .button (0,1,0) declares inline-flex and therefore overrides
+  // the UA [hidden] rule; only the ID + attribute selector (1,1,0) wins. The
+  // shown state must keep the shared flex display (no bare ID display rule).
+  const button = cssRuleBody(stylesCss, '.button');
+  assert.ok(button, 'the shared .button rule must exist');
+  assert.match(button, /display:\s*inline-flex/, '.button renders the visible control as flex');
+  const bare = cssRuleBody(galleryCss, '#gallery-load-more');
+  if (bare !== null) {
+    assert.doesNotMatch(
+      bare,
+      /display\s*:/,
+      'no un-qualified ID display rule: the shown state keeps the .button flex display'
+    );
+  }
+
+  // Featured and final states hide via the attribute alone (label === null);
+  // partial batches un-hide into the shared flex display.
+  assert.match(scriptJs, /if \(label === null\) \{\s*loadMoreButton\.hidden = true;/);
+  assert.match(scriptJs, /loadMoreButton\.hidden = false;\s*loadMoreButton\.textContent = label;/);
+  assert.equal(loadMoreLabel(FEATURED_COUNT, FEATURED_COUNT), null, 'Featured: shown === total hides the control');
+  assert.equal(loadMoreLabel(86, 86), null, 'final batch: shown === total hides the control');
+  assert.match(loadMoreLabel(12, 86), /^Show 12 more \(74 remaining\)$/, 'partial batch keeps the control visible');
 });
 
 // ===========================================================================

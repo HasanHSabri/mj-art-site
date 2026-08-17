@@ -18,3 +18,13 @@
 .gallery-grid {
   align-items: start;
 }
+
+/* Load more hides through the hidden attribute alone (the Featured filter and
+   the final pagination batch both set loadMoreButton.hidden = true), but the
+   shared .button rule in styles.css declares display: inline-flex, which
+   overrides the UA's [hidden] { display: none }. The ID + attribute selector
+   wins that contest here in the scoped sheet; with the attribute absent the
+   shared flex button is untouched. */
+#gallery-load-more[hidden] {
+  display: none;
+}
