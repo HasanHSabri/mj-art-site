@@ -205,6 +205,30 @@ test('clampShown floors to batch multiples, never below the initial batch, caps 
   assert.equal(clampShown(200, 86), 86);
 });
 
+test('clampShown preserves the exact total for final partial batches (84->86, 36->37)', () => {
+  // The Load more handler math: shown + PAGE_SIZE reaching the total.
+  assert.equal(clampShown(84 + PAGE_SIZE, 86), 86, '84 -> 86 completes the 86-work All view');
+  assert.equal(clampShown(36 + PAGE_SIZE, 37), 37, '36 -> 37 completes the 37-work 20x20 view');
+  // applyState re-normalization must not floor a reached total back to the grid.
+  assert.equal(clampShown(86, 86), 86, 'a reached total stays exact, not floored to 84');
+  assert.equal(clampShown(37, 37), 37, 'a reached total stays exact, not floored to 36');
+  assert.equal(clampShown('86', 86), 86, 'numeric strings restore the exact total too');
+  // Below-total non-multiples keep the floor behaviour (no skipping forward).
+  assert.equal(clampShown(85, 86), 84);
+  assert.equal(clampShown(50, 86), 48);
+  assert.equal(clampShown(36, 37), 36);
+});
+
+test('clampShown stays safe for malformed and excess input alongside a total', () => {
+  assert.equal(clampShown('bogus', 86), 12, 'malformed resolves to the initial batch');
+  assert.equal(clampShown(null, 86), 12);
+  assert.equal(clampShown(undefined, 86), 12);
+  assert.equal(clampShown(-5, 86), 12, 'negative input clamps up to the initial batch');
+  assert.equal(clampShown(200, 86), 86, 'excess input clamps down to the total');
+  assert.equal(clampShown(200, 37), 37);
+  assert.equal(clampShown('999', 37), 37);
+});
+
 test('parseGalleryQuery: absent/invalid size resolves to the Featured default', () => {
   assert.deepEqual(parseGalleryQuery(''), { filter: FEATURED_KEY, shown: FEATURED_COUNT });
   assert.deepEqual(parseGalleryQuery('?'), { filter: FEATURED_KEY, shown: FEATURED_COUNT });
@@ -221,11 +245,14 @@ test('parseGalleryQuery: all/sizes/misc parse case-insensitively and keep legacy
   assert.deepEqual(parseGalleryQuery('?size=40x30'), { filter: '40x30', shown: 12 });
   assert.deepEqual(parseGalleryQuery('?size=40X30'), { filter: '40x30', shown: 12 });
   assert.deepEqual(parseGalleryQuery('?size=miscellaneous'), { filter: MISC_KEY, shown: 12 });
-  // Legacy deep link with a batch.
+  // Legacy deep link with a batch. parseGalleryQuery validates but defers
+  // batch flooring to the caller's total-aware clampShown, so exact-total
+  // values (86, 37) survive while sub-grid values (50, 99) stay raw here and
+  // floor/clamp once the matching total is known.
   assert.deepEqual(parseGalleryQuery('?size=all&shown=24'), { filter: ALL_KEY, shown: 24 });
-  assert.deepEqual(parseGalleryQuery('?size=all&shown=50'), { filter: ALL_KEY, shown: 48 });
+  assert.deepEqual(parseGalleryQuery('?size=all&shown=50'), { filter: ALL_KEY, shown: 50 });
   assert.deepEqual(parseGalleryQuery('?size=all&shown=bogus'), { filter: ALL_KEY, shown: 12 });
-  assert.deepEqual(parseGalleryQuery('?size=20x20&shown=99'), { filter: '20x20', shown: 96 });
+  assert.deepEqual(parseGalleryQuery('?size=20x20&shown=99'), { filter: '20x20', shown: 99 });
 });
 
 test('galleryQuery serializes canonical URLs: clean Featured, size+shown otherwise', () => {
@@ -236,6 +263,30 @@ test('galleryQuery serializes canonical URLs: clean Featured, size+shown otherwi
   assert.equal(galleryQuery('40x30', 12), '?size=40x30');
   assert.equal(galleryQuery('40x30', 24), '?size=40x30&shown=24');
   assert.equal(galleryQuery(MISC_KEY, 24), '?size=miscellaneous&shown=24');
+});
+
+test('parseGalleryQuery preserves an exact-total shown for direct deep links', () => {
+  // Direct ?size=all&shown=86 must restore all 86 (not floor to 84) once the
+  // caller applies the total-aware clamp.
+  assert.deepEqual(parseGalleryQuery('?size=all&shown=86'), { filter: ALL_KEY, shown: 86 });
+  assert.deepEqual(parseGalleryQuery('?size=20x20&shown=37'), { filter: '20x20', shown: 37 });
+  // Malformed/absent values stay safe at the initial batch.
+  assert.deepEqual(parseGalleryQuery('?size=all&shown=bogus'), { filter: ALL_KEY, shown: 12 });
+  assert.deepEqual(parseGalleryQuery('?size=all&shown='), { filter: ALL_KEY, shown: 12 });
+  assert.deepEqual(parseGalleryQuery('?size=all'), { filter: ALL_KEY, shown: 12 });
+  // End to end: parse then total-aware clamp restores the exact total.
+  const all86 = parseGalleryQuery('?size=all&shown=86');
+  assert.equal(clampShown(all86.shown, 86), 86);
+  const size37 = parseGalleryQuery('?size=20x20&shown=37');
+  assert.equal(clampShown(size37.shown, 37), 37);
+});
+
+test('galleryQuery serializes final partial batches exactly when the total is known', () => {
+  assert.equal(galleryQuery(ALL_KEY, 86, 86), '?size=all&shown=86', 'the 86-of-86 URL keeps shown=86');
+  assert.equal(galleryQuery('20x20', 37, 37), '?size=20x20&shown=37', 'the 37-of-37 URL keeps shown=37');
+  assert.equal(galleryQuery(ALL_KEY, 84, 86), '?size=all&shown=84');
+  assert.equal(galleryQuery(ALL_KEY, 12, 86), '?size=all');
+  assert.equal(galleryQuery('20x20', 24, 37), '?size=20x20&shown=24');
 });
 
 // --- Status + load more labels ---------------------------------------------

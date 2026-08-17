@@ -92,16 +92,26 @@ export function countMatching(cards, key) {
   return cards.filter((card) => key === ALL_KEY || cardSizeKey(card) === key).length;
 }
 
+// Validate a raw count input: numbers pass through (finite or not), numeric
+// strings parse, anything else is NaN. Shared by clampShown and
+// parseGalleryQuery so validation lives in exactly one place.
+function toFiniteCount(value) {
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) return Number(value.trim());
+  return NaN;
+}
+
 // Clamp a `shown` value to a valid batch state: positive integers only, floored
 // to a PAGE_SIZE multiple (12/24/36...), never below PAGE_SIZE, and never above
 // `total` when a total is supplied. Invalid input (NaN, strings that are not
-// integers, <= 0) resolves to PAGE_SIZE.
+// integers, <= 0) resolves to PAGE_SIZE. A value that reaches or exceeds
+// `total` returns exactly `total` even when it is not a PAGE_SIZE multiple, so
+// the final partial batch (e.g. 86 of 86, 37 of 37) is never floored back to
+// 84/36 by re-normalization.
 export function clampShown(value, total = Number.POSITIVE_INFINITY) {
-  let n;
-  if (typeof value === 'number') n = value;
-  else if (typeof value === 'string' && /^\d+$/.test(value.trim())) n = Number(value.trim());
-  else n = NaN;
+  let n = toFiniteCount(value);
   if (!Number.isFinite(n)) n = PAGE_SIZE;
+  if (Number.isFinite(total) && n >= total) return Math.max(total, 0);
   n = Math.floor(n / PAGE_SIZE) * PAGE_SIZE;
   if (n < PAGE_SIZE) n = PAGE_SIZE;
   if (Number.isFinite(total)) n = Math.min(n, Math.max(total, 0));
@@ -136,9 +146,11 @@ export function selectCardVisibility(cards, key, shown) {
 // canonical filter state. Absent size -> Featured (the default). 'featured',
 // 'all', a size key, or 'miscellaneous' are accepted case-insensitively; any
 // other value is invalid and falls back to Featured. Legacy '?size=<size>'
-// links keep working unchanged. `shown` only applies to All/size states and is
-// clamped by clampShown (total-clamping is the caller's job: it knows the
-// matching count).
+// links keep working unchanged. `shown` only applies to All/size states: it is
+// validated here (numeric string or the PAGE_SIZE fallback) but NOT floored to
+// the batch grid, so an exact-total deep link (e.g. shown=86 of 86) survives;
+// batch flooring and total clamping are the caller's job via clampShown with
+// the real matching count.
 export function parseGalleryQuery(search) {
   const params = new URLSearchParams(typeof search === 'string' ? search : '');
   const rawSize = params.get('size');
@@ -148,18 +160,21 @@ export function parseGalleryQuery(search) {
     if (ALLOWED_FILTER_KEYS.has(normalized)) key = normalized;
   }
   if (key === FEATURED_KEY) return { filter: FEATURED_KEY, shown: FEATURED_COUNT };
-  return { filter: key, shown: clampShown(params.get('shown')) };
+  const parsed = toFiniteCount(params.get('shown'));
+  return { filter: key, shown: Number.isFinite(parsed) ? parsed : PAGE_SIZE };
 }
 
 // Serialize filter state to a canonical query string (with leading '?' or ''
 // for the clean default). Featured is the clean URL; All/size carry
 // ?size=<key>, and `shown` is included only once it exceeds the initial batch
-// so URLs stay minimal. Callers append window.location.hash themselves.
-export function galleryQuery(key, shown) {
+// so URLs stay minimal. Pass the matching `total` so a final partial batch
+// (e.g. 86 of 86) serializes exactly instead of flooring to 84. Callers append
+// window.location.hash themselves.
+export function galleryQuery(key, shown, total = Number.POSITIVE_INFINITY) {
   if (key === FEATURED_KEY || !ALLOWED_FILTER_KEYS.has(key)) return '';
   const params = new URLSearchParams();
   params.set('size', key);
-  const batchShown = clampShown(shown);
+  const batchShown = clampShown(shown, total);
   if (batchShown > PAGE_SIZE) params.set('shown', String(batchShown));
   const query = params.toString();
   return query ? `?${query}` : '';

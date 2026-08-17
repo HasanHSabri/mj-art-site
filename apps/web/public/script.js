@@ -199,7 +199,7 @@ function applyState(next, opts) {
   }
 
   if (opts && opts.updateUrl) {
-    const url = `${window.location.pathname}${galleryQuery(key, shown)}${window.location.hash}`;
+    const url = `${window.location.pathname}${galleryQuery(key, shown, total)}${window.location.hash}`;
     window.history.pushState(null, '', url);
   }
 }
