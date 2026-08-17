@@ -817,16 +817,20 @@ textarea {
     align-items: start;
   }
 
-  .home-main > section {
+  .home-content {
+    display: flow-root;
     grid-column: 2;
   }
 
   .home-section-nav {
-    /* A sticky grid item is constrained to its grid area, so the rail spans
-       the whole (implicit) column: it stays sticky for the full page length,
-       not just the first section's row. Unused spanned rows are zero-height. */
+    /* A sticky grid item is constrained to its grid area. The rail and the
+       .home-content wrapper are the grid's only two items, so one natural
+       row makes the rail's area exactly as tall as the real content: sticky
+       for the full page length. No artificial row spans -- spanning ~100
+       implicit rows with a 44px grid row-gap injected thousands of px of
+       blank space before the footer. */
     grid-column: 1;
-    grid-row: 1 / span 100;
+    grid-row: 1;
     position: sticky;
     top: 24px;
     flex-direction: column;

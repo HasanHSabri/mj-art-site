@@ -108,18 +108,28 @@ test('home main becomes the sticky-rail grid on wide screens; a wrapped row belo
     'a slim left rail column beside the content column'
   );
   assert.match(block, /\.home-section-nav\s*\{[^}]*position:\s*sticky/, 'the rail is sticky');
-  assert.match(
-    block,
-    /grid-row:\s*1\s*\/\s*span\s*\d+/,
-    'the rail spans the whole column height (a sticky grid item is constrained to its grid area)'
-  );
-  assert.match(block, /\.home-main\s*>?\s*section\s*\{[^}]*grid-column:\s*2/, 'sections live in the content column');
+  assert.match(block, /\.home-content\s*\{[^}]*grid-column:\s*2/, 'the content wrapper lives in the content column');
 
   // Base (narrow) form: a compact horizontal wrapped row, not a grid rail.
   const base = ruleBody(stylesCss, '.home-section-nav');
   assert.ok(base);
   assert.match(base, /display:\s*flex/, 'the base nav is a flex row');
   assert.match(base, /flex-wrap:\s*wrap/, 'the base nav wraps');
+});
+
+test('home rail keeps natural page flow: no artificial row span or fixed min-height', () => {
+  // Regression: `.home-section-nav { grid-row: 1 / span 100 }` made the grid
+  // create ~100 implicit rows; the 44px row-gap between them injected
+  // thousands of px of blank space between the last section and the footer.
+  // The rail must ride one natural row beside a .home-content wrapper.
+  const mq = stylesCss.match(/@media\s*\(\s*min-width:\s*1100px\s*\)\s*\{([\s\S]*?)\}\s*\}/);
+  assert.ok(mq);
+  const block = mq[1];
+  assert.doesNotMatch(block, /grid-row:\s*[^;}]*span\s*\d+/i, 'no artificial grid-row span');
+  assert.doesNotMatch(stylesCss, /span\s+100/, 'the old span-100 hack is gone');
+  assert.doesNotMatch(block, /min-height:\s*[3-9]\d{2,}/, 'no large fixed min-height propping the layout');
+  // Exactly one natural grid row: the rail is placed on row 1 only.
+  assert.match(block, /\.home-section-nav\s*\{[^}]*grid-row:\s*1\s*;/, 'the rail sits on the single first row');
 });
 
 test('home secondary nav active and focus states are shape+weight, not colour alone', () => {
@@ -149,6 +159,27 @@ test('home-section-nav.js is syntax-checked by build/lint/type-check', () => {
     );
   }
   assert.match(indexHtml, /src="\.\/home-section-nav\.js/, 'home loads the module');
+});
+
+test('home markup wraps all sections in one .home-content flow beside the rail', () => {
+  const main = indexHtml.match(/<main class="home-main">([\s\S]*?)<\/main>/);
+  assert.ok(main, 'the .home-main element exists');
+  const inner = main[1];
+  const wrapperAt = inner.indexOf('<div class="home-content">');
+  assert.ok(wrapperAt !== -1, 'a .home-content wrapper exists inside main');
+  assert.equal(
+    (inner.match(/<div class="home-content">/g) || []).length,
+    1,
+    'exactly one content wrapper'
+  );
+  const beforeWrapper = inner.slice(0, wrapperAt);
+  assert.match(beforeWrapper, /<nav class="home-section-nav"/, 'the rail nav precedes the wrapper');
+  assert.doesNotMatch(beforeWrapper, /<section/, 'no section is a direct grid child of main');
+  // All five Home sections (story, gallery preview, books preview,
+  // testimonials, contact) flow inside the wrapper, and the wrapper closes
+  // just before </main>: the page ends where the content ends.
+  assert.equal((inner.match(/<section/g) || []).length, 5, 'all five sections live inside the wrapper');
+  assert.match(inner, /<\/section>\s*<\/div>\s*$/, 'the wrapper closes after the last section, at the end of main');
 });
 
 // --- pure helpers -----------------------------------------------------------
