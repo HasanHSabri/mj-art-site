@@ -150,7 +150,7 @@ function assertBooksFailureSurface(elements) {
   assert.equal(elements.get('books-error').hidden, false, 'the persistent panel error is visible');
   assert.match(elements.get('books-error').textContent, /Could not load book interest/);
   const tileValues = elements.get('books-tiles').children.map((tile) => tile.children[1].textContent);
-  assert.deepEqual(tileValues, ['0 interested', '0 interested', '0 submissions', '0 submissions', '0', '0', '0', '0']);
+  assert.deepEqual(tileValues, ['0 interested', '0 interested', '0 submissions', '0 submissions', '0', '0', '0', '0', '0']);
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +241,8 @@ test('buildSummaryTiles returns the exact canonical tile set when the reported t
     today: { submissions: 2, copies: 4 },
     last7Days: { submissions: 5, copies: 9 },
     byStatus: { new: 4, contacted: 2, withdrawn: 1 },
-    total: 7
+    total: 7,
+    overallContacts: 6
   });
   assert.deepEqual(tiles, [
     { kind: 'book', key: 'biography', label: 'Biography', value: 3, secondary: 7 },
@@ -251,16 +252,17 @@ test('buildSummaryTiles returns the exact canonical tile set when the reported t
     { kind: 'status', key: 'new', label: 'New', value: 4 },
     { kind: 'status', key: 'contacted', label: 'Contacted', value: 2 },
     { kind: 'status', key: 'withdrawn', label: 'Withdrawn', value: 1 },
-    { kind: 'total', key: 'total', label: 'Total', value: 7 }
+    { kind: 'total', key: 'total', label: 'Interest records', value: 7 },
+    { kind: 'distinct', key: 'overallContacts', label: 'Distinct contacts', value: 6 }
   ]);
 });
 
 test('buildSummaryTiles returns the exact all-zero tile set for null or absent summaries', () => {
   for (const summary of [null, undefined]) {
     const tiles = buildSummaryTiles(summary);
-    assert.equal(tiles.length, 8);
-    assert.deepEqual(tiles.map((t) => t.key), ['biography', 'childrens', 'today', 'last7Days', 'new', 'contacted', 'withdrawn', 'total']);
-    assert.deepEqual(tiles.map((t) => t.value), Array(8).fill(0));
+    assert.equal(tiles.length, 9);
+    assert.deepEqual(tiles.map((t) => t.key), ['biography', 'childrens', 'today', 'last7Days', 'new', 'contacted', 'withdrawn', 'total', 'overallContacts']);
+    assert.deepEqual(tiles.map((t) => t.value), Array(9).fill(0));
     assert.deepEqual(tiles.filter((t) => 'secondary' in t).map((t) => t.secondary), [0, 0, 0, 0]);
   }
 });
@@ -277,10 +279,25 @@ test('buildSummaryTiles normalizes partial and malformed numeric fields', () => 
     books: { biography: { interestCount: '5', requestedCopies: 'not-a-number' } },
     today: { submissions: Infinity, copies: -2 },
     byStatus: { new: '3' },
-    total: Infinity
+    total: Infinity,
+    overallContacts: 'not-a-number'
   });
-  assert.deepEqual(tiles.map((t) => t.value), [5, 0, 0, 0, 3, 0, 0, 3]);
+  assert.deepEqual(tiles.map((t) => t.value), [5, 0, 0, 0, 3, 0, 0, 3, 0]);
   assert.deepEqual(tiles.filter((t) => 'secondary' in t).map((t) => t.secondary), [0, 0, 0, 0]);
+});
+
+test('the total/distinct tile pair keeps row-level and contact-level counting honestly labelled', () => {
+  const tiles = buildSummaryTiles({
+    byStatus: { new: 2, contacted: 0, withdrawn: 0 },
+    total: 2,
+    overallContacts: 1
+  });
+  const total = tiles.find((t) => t.kind === 'total');
+  const distinct = tiles.find((t) => t.kind === 'distinct');
+  assert.equal(total.label, 'Interest records', 'row-level count is labelled as records, not people');
+  assert.equal(total.value, 2, 'one two-book submission creates two interest rows');
+  assert.equal(distinct.label, 'Distinct contacts', 'contact-level count is separately labelled');
+  assert.equal(distinct.value, 1, 'the same person counts once across both books');
 });
 
 // ---------------------------------------------------------------------------
@@ -387,10 +404,10 @@ test('Books dashboard uses textContent for cell text and property assignment for
   assert.ok(/anchor\.href\s*=\s*href/.test(booksCode), 'the mailto href is assigned via a property, not interpolated HTML');
 });
 
-test('Books summary renderer exhaustively handles all four tile kinds without legacy undefined fields', () => {
+test('Books summary renderer exhaustively handles all five tile kinds without legacy undefined fields', () => {
   const renderer = booksCode.match(/function renderBooksTiles\(summary\)\s*\{([\s\S]*?)\n\}/);
   assert.ok(renderer, 'renderBooksTiles must exist');
-  for (const kind of ['book', 'window', 'status', 'total']) {
+  for (const kind of ['book', 'window', 'status', 'total', 'distinct']) {
     assert.match(renderer[1], new RegExp(`case ['"]${kind}['"]:`), `${kind} has an explicit renderer case`);
   }
   assert.match(renderer[1], /default:\s*throw new Error/, 'unknown kinds fail loudly');
@@ -398,7 +415,8 @@ test('Books summary renderer exhaustively handles all four tile kinds without le
   assert.match(renderer[1], /' interested'/);
   assert.match(renderer[1], /' submissions'/);
   assert.match(renderer[1], /'records'/);
-  assert.match(renderer[1], /'all records'/);
+  assert.match(renderer[1], /'one row per book interest'/);
+  assert.match(renderer[1], /'people, counted once across both books'/);
 });
 
 test('Books summary explains raw submission windows and active interest semantics', () => {

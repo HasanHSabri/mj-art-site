@@ -4,9 +4,15 @@
    surface treatment, button styles, section rhythm, and the persistent
    chapter navigator. No new fonts and no dark-mode override. */
 
+/* Full-width hero: the outer hero surface spans the whole content width (no
+   60ch cap and no companion column); the copy keeps its own readable measure
+   inside the card. */
 .books-hero-content {
   grid-template-columns: 1fr;
-  max-width: 60ch;
+}
+
+.books-hero-content .hero-text {
+  max-width: 66ch;
 }
 
 /* Concise single-column hero: the copy and the Follow the books action, no
@@ -20,35 +26,29 @@
   box-shadow: var(--shadow);
 }
 
-.books-counter-value,
-.books-counters dt {
-  color: var(--muted);
-}
-
 .books-section,
 .books-form-section {
   margin-top: 28px;
 }
 
-/* Two book cards, side by side, collapsing to one column. Each opens with the
-   intentional portrait cover reserve (styled in the shared styles.css), then
-   the title, description, live counters, and CTA. */
+/* Two book cards, side by side, collapsing to one column. A flex column keeps
+   the two cards the same height on desktop: the cover frame, heading, and
+   anticipation block sit at the top, flexible description content fills the
+   middle, and the CTA is anchored to the shared bottom edge via margin-top
+   auto (no fixed offsets). Mobile stacks naturally in one column. */
 .books-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
   margin-top: 20px;
+  align-items: stretch;
 }
 
 .books-panel {
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  align-content: start;
   padding: 28px;
-}
-
-.books-panel .book-cover-reserve {
-  margin-top: 6px;
 }
 
 .books-panel-text {
@@ -57,45 +57,33 @@
   max-width: 42ch;
 }
 
-/* Live interest / copies-of-interest counters per book. */
-.books-counters {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin: 14px 0 0;
-  padding: 0;
-}
-
-.books-counters div {
-  padding: 14px 16px;
+/* Anticipation block: a quiet availability badge plus the exact standing
+   invitation copy, at the same structural position in every card. */
+.book-availability {
+  margin: 4px 0 0;
+  justify-self: start;
+  align-self: flex-start;
+  padding: 5px 12px;
   border: 1px solid var(--border);
-  border-radius: 18px;
+  border-radius: 999px;
   background: rgba(255, 255, 255, 0.45);
-}
-
-.books-counters dt {
+  color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-size: 0.68rem;
   font-weight: 600;
 }
 
-.books-counters dd {
-  margin: 6px 0 0;
-}
-
-.books-counter-value {
-  display: block;
-  font-family: "Cormorant Garamond", serif;
-  font-size: 2.4rem;
-  line-height: 1;
-  color: var(--accent-deep);
-}
-
-.books-counters-status {
+.books-anticipation {
+  margin: 0;
   color: var(--muted);
-  font-size: 0.92rem;
-  margin: 10px 0 0;
+  font-size: 0.95rem;
+}
+
+/* CTA anchored to the card's bottom edge so both cards align on desktop. */
+.books-panel-cta {
+  margin: auto 0 0;
+  padding-top: 10px;
 }
 
 /* Centered, readable EOI form with a bounded measure. */
@@ -166,6 +154,31 @@
 
 .books-choice input {
   width: auto;
+}
+
+/* Per-book estimated-copies control. Hidden and disabled while its book is
+   unselected (removed from the a11y tree and tab order); revealed and enabled
+   when the checkbox is checked. The [hidden] guard is explicit because the
+   display:grid declaration would otherwise override the UA hidden default. */
+.books-qty {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  margin-left: 26px;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.books-qty[hidden] {
+  display: none;
+}
+
+.books-qty label {
+  color: var(--muted);
+  font-size: 0.92rem;
 }
 
 .books-consent {
@@ -244,16 +257,8 @@
     padding: 20px;
   }
 
-  .books-counters {
-    gap: 10px;
-  }
-}
-
-@media (max-width: 420px) {
-  /* Very narrow viewports: stack the two counter cells so each row never
-     overflows at 320px / 200% zoom. */
-  .books-counters {
-    grid-template-columns: 1fr;
+  .books-qty {
+    margin-left: 0;
   }
 }
 

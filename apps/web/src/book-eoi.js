@@ -8,8 +8,9 @@
 //     dedup; AES-256-GCM encryption of the canonical {name,email} JSON, with a
 //     random 12-byte IV and the row id as additional authenticated data)
 //   - a repository/query seam expressed against a parameterized SQL executor
-//     (the Neon `neon()` call-form `sql(text, params)`), with every statement
-//     fully-qualified to the mj_eoi schema
+//     (the Neon `neon()` call-form `sql(text, params)`), plus a batch
+//     transaction seam that submits statement descriptors as ONE atomic HTTP
+//     transaction; every statement is fully-qualified to the mj_eoi schema
 //
 // Security invariants enforced here and by the Worker:
 //   * Normalized email is never stored in plaintext. Only its HMAC hash (hex,
@@ -60,11 +61,15 @@ export const HONEYPOT_FIELDS = ['website', 'companyUrl', 'company'];
 // `consent` is validated server-side (must be the boolean true) but is NOT
 // part of the stored fields: it proves the submitter explicitly agreed to be
 // contacted, and is dropped after validation rather than persisted in the
-// encrypted PII blob.
+// encrypted PII blob. A submission carries EXACTLY ONE selection mechanism:
+// the legacy single-book shape (`book` + `quantity` + optional `format`) or the
+// multi-book shape (`interests`: 1-2 unique {book, quantity} entries). The
+// top-level `quantity`/`format` keys belong to the legacy shape only.
 const PUBLIC_ALLOWED_FIELDS = new Set([
   'book',
   'format',
   'quantity',
+  'interests',
   'name',
   'email',
   'consent',
@@ -140,8 +145,10 @@ export function canonicalizeName(raw) {
 // ---------------------------------------------------------------------------
 
 // Validate a decoded public submission object against the strict allowlist.
+// Both client shapes normalize to a canonical `interests` list (one entry per
+// selected book, each with its own quantity and a legacy format or null).
 // Returns one of:
-//   { ok: true, fields: { book, format, quantity, name, email, turnstileToken } }
+//   { ok: true, fields: { interests: [{book, quantity, format}], name, email, turnstileToken } }
 //   { ok: false, honeypot: true }                         // silent accept (bot)
 //   { ok: false, silent: true }                           // silent accept (missing/false consent)
 //   { ok: false, status: <number>, error: <message> }     // real client error
@@ -182,27 +189,82 @@ export function validateBookEoiPayload(body) {
     return { ok: false, status: 400, error: 'Consent is required to continue.' };
   }
 
-  const book = body.book;
-  if (typeof book !== 'string' || !BOOK_CODES.has(book)) {
-    return { ok: false, status: 400, error: 'Invalid book selection.' };
+  // Exactly one selection mechanism: the legacy single-book shape (`book`) or
+  // the multi-book shape (`interests`). The legacy quantity/format keys travel
+  // only with the single-book shape.
+  const hasBook = body.book !== undefined;
+  const hasInterests = body.interests !== undefined;
+  if (hasBook && hasInterests) {
+    return { ok: false, status: 400, error: 'Submit either one book or a list of interests, not both.' };
+  }
+  if (!hasBook && !hasInterests) {
+    return { ok: false, status: 400, error: 'Select at least one book.' };
   }
 
-  // Optional legacy `format`: ABSENT validates as an omission (fields.format
-  // carries null; the insert persists the internal 'unsure' and a resubmit
-  // preserves the historical value). Any SUPPLIED value -- including null,
-  // empty, or unknown -- must be a canonical legacy code or the request is a
-  // real 400.
-  let format = null;
-  if (body.format !== undefined) {
-    if (typeof body.format !== 'string' || !FORMAT_CODES.has(body.format)) {
-      return { ok: false, status: 400, error: 'Invalid format selection.' };
+  let interests;
+  if (hasBook) {
+    // Legacy single-book shape: validated exactly as before, then normalized
+    // into the canonical one-entry interests list (old clients keep working).
+    const book = body.book;
+    if (typeof book !== 'string' || !BOOK_CODES.has(book)) {
+      return { ok: false, status: 400, error: 'Invalid book selection.' };
     }
-    format = body.format;
-  }
 
-  const quantity = body.quantity;
-  if (!Number.isInteger(quantity) || quantity < MIN_QUANTITY || quantity > MAX_QUANTITY) {
-    return { ok: false, status: 400, error: 'Invalid quantity.' };
+    // Optional legacy `format`: ABSENT validates as an omission (a null format;
+    // the insert persists the internal 'unsure' and a resubmit preserves the
+    // historical value). Any SUPPLIED value -- including null, empty, or
+    // unknown -- must be a canonical legacy code or the request is a real 400.
+    let format = null;
+    if (body.format !== undefined) {
+      if (typeof body.format !== 'string' || !FORMAT_CODES.has(body.format)) {
+        return { ok: false, status: 400, error: 'Invalid format selection.' };
+      }
+      format = body.format;
+    }
+
+    const quantity = body.quantity;
+    if (!Number.isInteger(quantity) || quantity < MIN_QUANTITY || quantity > MAX_QUANTITY) {
+      return { ok: false, status: 400, error: 'Invalid quantity.' };
+    }
+
+    interests = [{ book, quantity, format }];
+  } else {
+    // Multi-book shape: 1-2 entries, each EXACTLY {book, quantity} with an
+    // allowlisted unique book and an integer quantity in the 1..10 window.
+    // The legacy format/quantity top-level keys are rejected alongside it.
+    if (body.quantity !== undefined || body.format !== undefined) {
+      return { ok: false, status: 400, error: 'Unexpected field in request.' };
+    }
+    if (!Array.isArray(body.interests)) {
+      return { ok: false, status: 400, error: 'Invalid book selection.' };
+    }
+    if (body.interests.length < 1 || body.interests.length > BOOK_CODES.size) {
+      return { ok: false, status: 400, error: 'Select at least one book.' };
+    }
+    const seen = new Set();
+    interests = [];
+    for (const entry of body.interests) {
+      if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+        return { ok: false, status: 400, error: 'Invalid book selection.' };
+      }
+      const keys = Object.keys(entry);
+      if (keys.length !== 2 || !('book' in entry) || !('quantity' in entry)) {
+        return { ok: false, status: 400, error: 'Invalid book selection.' };
+      }
+      const book = entry.book;
+      if (typeof book !== 'string' || !BOOK_CODES.has(book)) {
+        return { ok: false, status: 400, error: 'Invalid book selection.' };
+      }
+      if (seen.has(book)) {
+        return { ok: false, status: 400, error: 'Duplicate book selection.' };
+      }
+      seen.add(book);
+      const quantity = entry.quantity;
+      if (!Number.isInteger(quantity) || quantity < MIN_QUANTITY || quantity > MAX_QUANTITY) {
+        return { ok: false, status: 400, error: 'Invalid quantity.' };
+      }
+      interests.push({ book, quantity, format: null });
+    }
   }
 
   const name = canonicalizeName(body.name);
@@ -224,7 +286,7 @@ export function validateBookEoiPayload(body) {
     return { ok: false, status: 400, error: 'Verification token is missing.' };
   }
 
-  return { ok: true, fields: { book, format, quantity, name, email, turnstileToken } };
+  return { ok: true, fields: { interests, name, email, turnstileToken } };
 }
 
 // Validate an admin status-update body. Only { status } is accepted.
@@ -424,54 +486,161 @@ export function createNeonSqlExecutor(neonClient) {
   };
 }
 
-export async function findBookEoi(sql, bookCode, emailHash) {
+// Batch-transaction adapter for the same installed v1.1 HTTP driver. The neon
+// client's `transaction(arrayOfQueryPromises)` submits every statement as ONE
+// non-interactive HTTP batch that Postgres runs inside a single transaction:
+// any statement error (including the guarded final assertion) aborts and rolls
+// back the whole batch. Statements stay pure `{ text, params }` descriptors so
+// this module never touches the tagged-template call form; each descriptor is
+// converted with the driver's own parameterized `query()` entry point, which
+// returns a lazy NeonQueryPromise that only executes when submitted here.
+export function createNeonTransactionExecutor(neonClient) {
+  if (
+    !neonClient ||
+    typeof neonClient.query !== 'function' ||
+    typeof neonClient.transaction !== 'function'
+  ) {
+    throw new Error(
+      'createNeonTransactionExecutor: a neon client with .query(text, params) and .transaction(queries) methods is required'
+    );
+  }
+  return async function transaction(statements) {
+    return neonClient.transaction(
+      statements.map((statement) => neonClient.query(statement.text, statement.params || []))
+    );
+  };
+}
+
+// Existing (book,email) rows for ONE normalized contact across every selected
+// book, in a single read: `rows` maps book_code -> { id, status }. This is the
+// pre-transaction snapshot that decides which selected books INSERT (missing)
+// and which UPDATE (existing, id-guarded) inside the atomic batch.
+export async function findBookEoiByEmailHash(sql, emailHash, bookCodes) {
   const rows = await sql(
-    'SELECT id, status FROM mj_eoi.book_eoi WHERE book_code = $1 AND email_hash = $2',
-    [bookCode, emailHash]
+    'SELECT id, book_code, status FROM mj_eoi.book_eoi ' +
+      'WHERE email_hash = $1 AND book_code = ANY($2::text[])',
+    [emailHash, bookCodes]
   );
-  return Array.isArray(rows) && rows.length > 0 ? rows[0] : null;
+  return Array.isArray(rows) ? rows : [];
 }
 
-export async function insertBookEoi(sql, row) {
-  await sql(
-    'INSERT INTO mj_eoi.book_eoi ' +
-      '(id, book_code, email_hash, pii_ciphertext, pii_iv, quantity, format_code, status, created_at, updated_at) ' +
-      'VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, $8), $9, now(), now())',
-    [
-      row.id,
-      row.bookCode,
-      row.emailHash,
-      row.piiCiphertext,
-      row.piiIv,
-      row.quantity,
-      row.formatCode == null ? null : row.formatCode,
-      DEFAULT_FORMAT_CODE,
-      'new'
-    ]
-  );
+// Build the atomic per-submission batch as pure `{ text, params }` descriptors
+// (no driver types), one statement per selected book plus the guarded final
+// assertion:
+//   * a MISSING book INSERTs with ON CONFLICT DO NOTHING RETURNING id, so a
+//     concurrent writer never errors the batch -- it simply lands no row;
+//   * an EXISTING book UPDATEs by its guarded row id (RETURNING id), refreshing
+//     the encrypted PII + per-book quantity and reactivating a withdrawn
+//     interest; an omitted legacy format (null) preserves the historical
+//     format_code via COALESCE, and a missing-format INSERT persists the
+//     internal 'unsure' via the same COALESCE;
+//   * the final assertion divides by zero (SQLSTATE 22012) and aborts the whole
+//     transaction unless the table holds EXACTLY the expected
+//     (book_code, id, email_hash) pairs for this contact -- so a race that
+//     inserted a different row id for any selected book rolls back every write
+//     of this submission. Unselected books are never touched.
+export function buildEoiBatchStatements({ emailHash, rows }) {
+  const statements = [];
+  for (const row of rows) {
+    if (row.existing === true) {
+      statements.push({
+        text:
+          'UPDATE mj_eoi.book_eoi SET ' +
+          'pii_ciphertext = $1, pii_iv = $2, quantity = $3, format_code = COALESCE($4, format_code), ' +
+          'status = CASE WHEN status = $5 THEN $6 ELSE status END, updated_at = now() ' +
+          'WHERE id = $7 RETURNING id',
+        params: [
+          row.piiCiphertext,
+          row.piiIv,
+          row.quantity,
+          row.formatCode == null ? null : row.formatCode,
+          'withdrawn',
+          'new',
+          row.id
+        ]
+      });
+    } else {
+      statements.push({
+        text:
+          'INSERT INTO mj_eoi.book_eoi ' +
+          '(id, book_code, email_hash, pii_ciphertext, pii_iv, quantity, format_code, status, created_at, updated_at) ' +
+          'VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, $8), $9, now(), now()) ' +
+          'ON CONFLICT DO NOTHING RETURNING id',
+        params: [
+          row.id,
+          row.bookCode,
+          emailHash,
+          row.piiCiphertext,
+          row.piiIv,
+          row.quantity,
+          row.formatCode == null ? null : row.formatCode,
+          DEFAULT_FORMAT_CODE,
+          'new'
+        ]
+      });
+    }
+  }
+  statements.push({
+    text:
+      'SELECT 1 / ((SELECT COUNT(*) FROM mj_eoi.book_eoi ' +
+      'WHERE email_hash = $1 AND book_code = ANY($2::text[]) AND id = ANY($3::uuid[])) = $4)::int',
+    params: [emailHash, rows.map((r) => r.bookCode), rows.map((r) => r.id), rows.length]
+  });
+  return statements;
 }
 
-// Re-submission of an existing (book,email): refresh encrypted PII, quantity,
-// format, and reactivate a withdrawn interest back to 'new'. The row id is
-// preserved so existing ciphertext AAD stays valid before re-encryption. An
-// omitted format (null) preserves the historical format_code via COALESCE; an
-// explicit legacy format still updates it as before.
-export async function updateBookEoiOnResubmit(sql, id, row) {
-  await sql(
-    'UPDATE mj_eoi.book_eoi SET ' +
-      'pii_ciphertext = $1, pii_iv = $2, quantity = $3, format_code = COALESCE($4, format_code), ' +
-      'status = CASE WHEN status = $5 THEN $6 ELSE status END, updated_at = now() ' +
-      'WHERE id = $7',
-    [
-      row.piiCiphertext,
-      row.piiIv,
-      row.quantity,
-      row.formatCode == null ? null : row.formatCode,
-      'withdrawn',
-      'new',
-      id
-    ]
-  );
+// Retryable storage race classes: a unique-constraint violation (a concurrent
+// INSERT slipped past ON CONFLICT, e.g. a PK collision) or the guarded
+// assertion's division by zero (a concurrent writer landed a different row id
+// for one of the selected books). Anything else is a real failure.
+export const PG_UNIQUE_VIOLATION = '23505';
+export const PG_DIVISION_BY_ZERO = '22012';
+
+export function isEoiRaceError(error) {
+  return isUniqueViolation(error) || Boolean(error && error.code === PG_DIVISION_BY_ZERO);
+}
+
+// Bounded retries after the first attempt fails with a race error.
+export const EOI_MAX_TRANSACTION_RETRIES = 2;
+
+// Atomically persist one submission: 1-2 selected books for ONE contact.
+// The email is already HMAC-normalized (one hash shared by every row); the
+// contact {name,email} is AES-GCM encrypted separately per row with that row's
+// id as AAD, so the two rows of a two-book submission never share ciphertext.
+// Each attempt: re-read the existing ids, generate ids for missing books,
+// re-encrypt, and submit the whole batch as one HTTP transaction. On a race
+// error the batch rolled back, so the loop re-reads and retries (at most
+// EOI_MAX_TRANSACTION_RETRIES times); a persistent failure throws and the
+// Worker answers a generic 503. Returns the persisted { book, id } pairs.
+export async function persistBookEoiInterest({ sql, transaction, emailHash, selections, pii, encryptionKey }) {
+  const wants = selections.map((s) => ({ book: s.book, quantity: s.quantity, formatCode: s.format }));
+  let attemptsLeft = 1 + EOI_MAX_TRANSACTION_RETRIES;
+  for (;;) {
+    const existing = await findBookEoiByEmailHash(sql, emailHash, wants.map((w) => w.book));
+    const existingByBook = new Map(existing.map((r) => [r.book_code, r]));
+    const rows = [];
+    for (const want of wants) {
+      const existingRow = existingByBook.get(want.book);
+      const id = existingRow ? existingRow.id : crypto.randomUUID();
+      const { ciphertext, iv } = await encryptPii(encryptionKey, pii, id);
+      rows.push({
+        bookCode: want.book,
+        existing: Boolean(existingRow),
+        id,
+        piiCiphertext: ciphertext,
+        piiIv: iv,
+        quantity: want.quantity,
+        formatCode: want.formatCode
+      });
+    }
+    try {
+      await transaction(buildEoiBatchStatements({ emailHash, rows }));
+      return rows.map((r) => ({ book: r.bookCode, id: r.id }));
+    } catch (error) {
+      attemptsLeft -= 1;
+      if (attemptsLeft <= 0 || !isEoiRaceError(error)) throw error;
+    }
+  }
 }
 
 // Strict status-only update (admin). Returns true if a row was updated.
@@ -518,10 +687,14 @@ export async function listRecentBookEoi(sql, limit) {
 //     today: { submissions, copies },
 //     last7Days: { submissions, copies },
 //     byStatus: { new, contacted, withdrawn },
-//     total
+//     total,             // row-level: one row per (book, contact) interest
+//     overallContacts    // COUNT(DISTINCT email_hash): people, not rows
 //   }
 // Per-book "active" counts EXCLUDE withdrawn rows (status <> 'withdrawn'), so a
 // withdrawn interest no longer counts toward a book's active interest/copies.
+// `total` stays a row-level record count (one two-book submission creates two
+// interest rows); `overallContacts` counts distinct recorded contacts, so that
+// same submission counts once.
 export async function summarizeBookEoi(sql, windows) {
   const now = windows && windows.now ? new Date(windows.now) : new Date();
   if (Number.isNaN(now.getTime())) throw new Error('Invalid clock value for summary.');
@@ -541,7 +714,8 @@ export async function summarizeBookEoi(sql, windows) {
       'COUNT(*) FILTER (WHERE status = $6) AS status_new, ' +
       'COUNT(*) FILTER (WHERE status = $7) AS status_contacted, ' +
       'COUNT(*) FILTER (WHERE status = $2) AS status_withdrawn, ' +
-      'COUNT(*) AS total ' +
+      'COUNT(*) AS total, ' +
+      'COUNT(DISTINCT email_hash) AS overall_contacts ' +
       'FROM mj_eoi.book_eoi',
     ['biography', 'withdrawn', 'childrens', todayStart.toISOString(), sevenDaysAgo.toISOString(), 'new', 'contacted']
   );
@@ -559,7 +733,8 @@ export async function summarizeBookEoi(sql, windows) {
       contacted: num(r.status_contacted),
       withdrawn: num(r.status_withdrawn)
     },
-    total: num(r.total)
+    total: num(r.total),
+    overallContacts: num(r.overall_contacts)
   };
 }
 
@@ -1080,10 +1255,10 @@ export async function probeRuntimePrivileges(sql) {
 }
 
 // True only for a PostgreSQL unique-constraint violation (SQLSTATE 23505), used
-// to treat a concurrent-insert race as an idempotent success. The check is
-// strict to the driver error code: a message-substring match would be both too
-// broad (could match unrelated errors) and too narrow (neon HTTP errors surface
-// the code, not a stable message shape).
+// to classify a concurrent-insert race as a retryable storage error. The check
+// is strict to the driver error code: a message-substring match would be both
+// too broad (could match unrelated errors) and too narrow (neon HTTP errors
+// surface the code, not a stable message shape).
 export function isUniqueViolation(error) {
-  return Boolean(error && error.code === '23505');
+  return Boolean(error && error.code === PG_UNIQUE_VIOLATION);
 }

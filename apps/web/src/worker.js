@@ -14,6 +14,7 @@ import {
   DEFAULT_BOOK_EOI_LIMIT,
   TURNSTILE_ACTION,
   createNeonSqlExecutor,
+  createNeonTransactionExecutor,
   bookEoiSecretsOk,
   secretByteLength,
   MIN_SECRET_BYTES,
@@ -22,12 +23,8 @@ import {
   validateBookEoiPayload,
   validateStatusUpdate,
   hmacEmailHash,
-  encryptPii,
   decryptPii,
-  isUniqueViolation,
-  findBookEoi,
-  insertBookEoi,
-  updateBookEoiOnResubmit,
+  persistBookEoiInterest,
   updateBookEoiStatus,
   countBookInterest,
   listRecentBookEoi,
@@ -793,17 +790,41 @@ function base64UrlDecode(value) {
 // authenticated admin result rows are decrypted. All statements are
 // parameterized and fully-qualified to mj_eoi.book_eoi.
 
-// Build the Neon SQL executor for this request. The driver is imported lazily so
-// it is only loaded when a Books/DB route is actually hit (keeping the module
-// importable in environments where the package is absent, e.g. unit tests). The
-// raw neon() HTTP client is wrapped by createNeonSqlExecutor so the repository
-// seam stays the pure sql(text, params) form -- the neon client's plain
-// call-form is NOT used (see createNeonSqlExecutor for the 1.x compatibility
-// note). The BOOK_EOI_SQL env hook lets tests inject a fake executor.
-async function getBookEoiSql(env) {
-  if (env.BOOK_EOI_SQL) return env.BOOK_EOI_SQL;
+// Build the Neon SQL executor + batch-transaction executor for this request.
+// The driver is imported lazily so it is only loaded when a Books/DB route is
+// actually hit (keeping the module importable in environments where the package
+// is absent, e.g. unit tests). The raw neon() HTTP client is wrapped by
+// createNeonSqlExecutor / createNeonTransactionExecutor so the repository seams
+// stay the pure sql(text, params) and transaction(statements) forms -- the
+// neon client's plain call-form is NOT used (see createNeonSqlExecutor for the
+// 1.x compatibility note). The BOOK_EOI_SQL / BOOK_EOI_TRANSACTION env hooks
+// let tests inject fakes. Atomicity contract: when BOOK_EOI_SQL is injected,
+// the batch transaction must ALSO be injected explicitly -- a callable
+// BOOK_EOI_TRANSACTION or a transaction property bundled on the injected
+// executor. The Worker NEVER installs a sequential-statement fallback; the EOI
+// write path fails closed when no explicit transaction seam is available
+// (read-only routes only ever consume the sql seam).
+function injectedBookEoiTransaction(env) {
+  if (typeof env.BOOK_EOI_TRANSACTION === 'function') return env.BOOK_EOI_TRANSACTION;
+  if (env.BOOK_EOI_SQL && typeof env.BOOK_EOI_SQL.transaction === 'function') {
+    return env.BOOK_EOI_SQL.transaction;
+  }
+  return null;
+}
+
+async function getBookEoiExecutors(env) {
+  if (env.BOOK_EOI_SQL) {
+    return {
+      sql: env.BOOK_EOI_SQL,
+      transaction: injectedBookEoiTransaction(env)
+    };
+  }
   const { neon } = await import('@neondatabase/serverless');
-  return createNeonSqlExecutor(neon(env.NEON_DATABASE_URL));
+  const client = neon(env.NEON_DATABASE_URL);
+  return {
+    sql: createNeonSqlExecutor(client),
+    transaction: createNeonTransactionExecutor(client)
+  };
 }
 
 // Fail-closed config gate: every Books EOI secret/binding must be present AND
@@ -1029,7 +1050,7 @@ async function handleCreateBookEoi(request, env) {
     if (validation.honeypot || validation.silent) return jsonResponse({ ok: true });
     return jsonResponse({ error: validation.error }, validation.status || 400);
   }
-  const { book, format, quantity, name, email, turnstileToken } = validation.fields;
+  const { interests, name, email, turnstileToken } = validation.fields;
 
   const decision = await rateLimit(env, bookEoiRateLimitKey(request));
   if (!decision.allowed) {
@@ -1041,42 +1062,41 @@ async function handleCreateBookEoi(request, env) {
   if (!turnstile.ok) return jsonResponse({ error: 'Verification failed.' }, 400);
 
   try {
+    // One normalized contact: the email is HMAC-hashed once and shared by every
+    // selected book's row; the PII is re-encrypted per row with its own row id
+    // as AAD. The whole submission (1-2 INSERT/UPDATEs plus the guarded
+    // assertion) commits as one atomic HTTP transaction, with bounded retries
+    // on a concurrent-writer race. The public response stays the generic
+    // { ok: true }: no ids, no PII, no enumeration signal.
     const emailHash = await hmacEmailHash(env.BOOK_EOI_HMAC_KEY, email);
-    let sql;
+    let executors;
     try {
-      sql = await getBookEoiSql(env);
+      executors = await getBookEoiExecutors(env);
     } catch {
       return jsonResponse({ error: 'Service unavailable.' }, 503);
     }
 
-    const existing = await findBookEoi(sql, book, emailHash);
-    const id = existing ? existing.id : crypto.randomUUID();
-    const { ciphertext, iv } = await encryptPii(env.BOOK_EOI_ENCRYPTION_KEY, { name, email }, id);
-
-    if (existing) {
-      await updateBookEoiOnResubmit(sql, id, {
-        piiCiphertext: ciphertext,
-        piiIv: iv,
-        quantity,
-        formatCode: format
-      });
-    } else {
-      try {
-        await insertBookEoi(sql, {
-          id,
-          bookCode: book,
-          emailHash,
-          piiCiphertext: ciphertext,
-          piiIv: iv,
-          quantity,
-          formatCode: format
-        });
-      } catch (insertError) {
-        // Concurrent insert raced past the SELECT: the unique(book,email_hash)
-        // constraint makes this idempotent. Treat as a duplicate success.
-        if (!isUniqueViolation(insertError)) throw insertError;
-      }
+    // Atomicity contract: an EOI submission is processed ONLY through an
+    // explicit transaction seam (the Neon HTTP batch transaction in
+    // production, an explicitly injected fake in tests). There is no
+    // sequential-statement fallback: without the seam the route fails closed
+    // with a generic 503 before ANY database read or write.
+    if (typeof executors.transaction !== 'function') {
+      return jsonResponse({ ok: false, error: 'Service unavailable.' }, 503);
     }
+
+    await persistBookEoiInterest({
+      sql: executors.sql,
+      transaction: executors.transaction,
+      emailHash,
+      selections: interests.map((entry) => ({
+        book: entry.book,
+        quantity: entry.quantity,
+        format: entry.format
+      })),
+      pii: { name, email },
+      encryptionKey: env.BOOK_EOI_ENCRYPTION_KEY
+    });
 
     return jsonResponse({ ok: true });
   } catch {
@@ -1092,7 +1112,7 @@ async function handleBookInterest(env) {
   if (!bookEoiReadConfigOk(env)) return jsonResponse({ error: 'Service unavailable.' }, 503);
   let sql;
   try {
-    sql = await getBookEoiSql(env);
+    sql = (await getBookEoiExecutors(env)).sql;
   } catch {
     return jsonResponse({ error: 'Service unavailable.' }, 503);
   }
@@ -1135,7 +1155,7 @@ async function handleBookHealth(env) {
   }
   let sql;
   try {
-    sql = await getBookEoiSql(env);
+    sql = (await getBookEoiExecutors(env)).sql;
   } catch {
     return jsonResponse({ status: 'unavailable' }, 503);
   }
@@ -1158,7 +1178,7 @@ async function handleAdminListBookEoi(request, env) {
 
   let sql;
   try {
-    sql = await getBookEoiSql(env);
+    sql = (await getBookEoiExecutors(env)).sql;
   } catch {
     return jsonResponse({ error: 'Service unavailable.' }, 503);
   }
@@ -1197,7 +1217,7 @@ async function handleAdminListBookEoi(request, env) {
 async function handleAdminSummaryBookEoi(env) {
   let sql;
   try {
-    sql = await getBookEoiSql(env);
+    sql = (await getBookEoiExecutors(env)).sql;
   } catch {
     return jsonResponse({ error: 'Service unavailable.' }, 503);
   }
@@ -1240,7 +1260,7 @@ async function handleAdminPatchBookEoi(request, env, id) {
 
   let sql;
   try {
-    sql = await getBookEoiSql(env);
+    sql = (await getBookEoiExecutors(env)).sql;
   } catch {
     return jsonResponse({ error: 'Service unavailable.' }, 503);
   }

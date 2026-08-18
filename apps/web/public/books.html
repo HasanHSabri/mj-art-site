@@ -70,46 +70,32 @@
           </p>
         </div>
 
-        <p class="books-counters-status" id="books-counters-status" role="status" aria-live="polite"></p>
-
         <div class="books-grid">
           <article class="books-panel">
-            <div class="book-cover-reserve" aria-hidden="true"></div>
+            <div class="book-cover-frame">
+              <img class="book-cover" src="/images/frayed-not-broken-cover.jpg" width="797" height="1200" loading="lazy" decoding="async" alt="Cover of Frayed Not Broken">
+            </div>
             <p class="section-label">Book one</p>
             <h3>Frayed Not Broken</h3>
             <p class="books-panel-text">An honest and personal reflection on life with Multiple Sclerosis&mdash;its fragility, its unexpected strength, and the faith and hope that continue to carry MJ forward.</p>
-            <dl class="books-counters" data-book-counters="biography">
-              <div>
-                <dt>Interested</dt>
-                <dd class="books-counter-value" data-book-interest="biography">&mdash;</dd>
-              </div>
-              <div>
-                <dt>Copies of interest</dt>
-                <dd class="books-counter-value" data-book-copies="biography">&mdash;</dd>
-              </div>
-            </dl>
+            <p class="book-availability">Coming soon</p>
+            <p class="books-anticipation">Be among the first to know when it becomes available.</p>
             <p class="books-panel-cta">
-              <a class="button button-secondary" href="?book=biography#books-form">Register interest in Frayed Not Broken</a>
+              <a class="button button-secondary" href="?book=biography#books-form" aria-label="Join the update list for Frayed Not Broken">Join the update list</a>
             </p>
           </article>
 
           <article class="books-panel">
-            <div class="book-cover-reserve" aria-hidden="true"></div>
+            <div class="book-cover-frame">
+              <img class="book-cover" src="/images/mj-and-her-wobbly-days-cover.jpg" width="488" height="629" loading="lazy" decoding="async" alt="Cover of MJ and Her Wobbly Days">
+            </div>
             <p class="section-label">Book two</p>
-            <h3>MJ and the Wobbly Days</h3>
+            <h3>MJ and Her Wobbly Days</h3>
             <p class="books-panel-text">A gentle children&rsquo;s story about meeting uncertain and wobbly days with courage, kindness, and hope.</p>
-            <dl class="books-counters" data-book-counters="childrens">
-              <div>
-                <dt>Interested</dt>
-                <dd class="books-counter-value" data-book-interest="childrens">&mdash;</dd>
-              </div>
-              <div>
-                <dt>Copies of interest</dt>
-                <dd class="books-counter-value" data-book-copies="childrens">&mdash;</dd>
-              </div>
-            </dl>
+            <p class="book-availability">Coming soon</p>
+            <p class="books-anticipation">Be among the first to know when it becomes available.</p>
             <p class="books-panel-cta">
-              <a class="button button-secondary" href="?book=childrens#books-form">Register interest in MJ and the Wobbly Days</a>
+              <a class="button button-secondary" href="?book=childrens#books-form" aria-label="Join the update list for MJ and Her Wobbly Days">Join the update list</a>
             </p>
           </article>
         </div>
@@ -129,21 +115,24 @@
 
         <form class="books-eoi-form" id="books-eoi-form" aria-labelledby="books-form-heading" novalidate>
           <fieldset class="books-fieldset">
-            <legend>Which book are you interested in?</legend>
+            <legend>Which books are you interested in? Choose one or both.</legend>
             <label class="books-choice">
-              <input type="radio" name="book" value="biography" required>
+              <input type="checkbox" name="books" value="biography">
               <span>Frayed Not Broken</span>
             </label>
+            <div class="books-qty" data-qty-for="biography" hidden>
+              <label for="books-qty-biography">Estimated copies of Frayed Not Broken</label>
+              <input type="number" id="books-qty-biography" name="quantity-biography" min="1" max="10" step="1" value="1" inputmode="numeric" disabled>
+            </div>
             <label class="books-choice">
-              <input type="radio" name="book" value="childrens" required>
-              <span>MJ and the Wobbly Days</span>
+              <input type="checkbox" name="books" value="childrens">
+              <span>MJ and Her Wobbly Days</span>
             </label>
+            <div class="books-qty" data-qty-for="childrens" hidden>
+              <label for="books-qty-childrens">Estimated copies of MJ and Her Wobbly Days</label>
+              <input type="number" id="books-qty-childrens" name="quantity-childrens" min="1" max="10" step="1" value="1" inputmode="numeric" disabled>
+            </div>
           </fieldset>
-
-          <label>
-            Number of copies
-            <input type="number" id="books-quantity" name="quantity" min="1" max="10" step="1" value="1" inputmode="numeric" required>
-          </label>
 
           <label>
             Your name

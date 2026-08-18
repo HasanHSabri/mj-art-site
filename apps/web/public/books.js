@@ -1,19 +1,23 @@
 // Books Expression of Interest client (progressive enhancement, no framework).
 //
 // Responsibilities:
-//   - fetch and render live interest/copies counters from GET /api/books/interest
 //   - explicitly render the Cloudflare Turnstile widget (site key injected into
 //     the DOM by the Worker; never hardcoded here) and capture its token
-//   - robustly submit the EOI to POST /api/books/eoi, handling 400/413/429/503
-//     and generic errors WITHOUT leaking server detail, preventing duplicate
-//     submits, and resetting Turnstile + refreshing counters after success
-//     (the payload carries no preferred-format key: an omitted format is a
-//     server-side omission)
+//   - wire the one-or-both book checkboxes to their per-book estimated-copies
+//     controls (hidden + disabled while unselected, revealed + enabled when
+//     checked; an unselected book's quantity is never submitted)
+//   - preselect a book checkbox from a validated ?book=<code> query param
+//   - robustly submit the EOI to POST /api/books/eoi as
+//     { interests: [{ book, quantity }], name, email, consent, turnstileToken },
+//     handling 400/413/429/503 and generic errors WITHOUT leaking server
+//     detail and preventing duplicate submits
 //   - power the page's "Back to Top" control (shared implementation; targets
 //     the Books page top)
 //
-// No mail fallback, no localStorage, no R2 fallback. The pure helpers below are
-// exported so the mapping/validation logic is unit-testable without a DOM.
+// The page no longer fetches or renders public interest counters: live counts
+// are private admin data. No mail fallback, no localStorage, no R2 fallback.
+// The pure helpers below are exported so the mapping/validation logic is
+// unit-testable without a DOM.
 
 import { initBackToTop } from './back-to-top.js';
 
@@ -26,34 +30,43 @@ export const MIN_QUANTITY = 1;
 export const MAX_QUANTITY = 10;
 
 // Canonical book values MUST match the backend allowlist. These are the
-// non-secret contract values, not operator data. The visitor form no longer
-// sends a preferred format: the payload omits the key entirely (the server
-// treats an absent format as an omission and stores its internal default).
+// non-secret contract values, not operator data. The visitor form sends the
+// interests array only: one entry per checked book, no top-level book/quantity.
 export const BOOK_VALUES = ['biography', 'childrens'];
 
-// Build the exact JSON payload to POST. Consent is required and sent as the
-// boolean true (matches the server-side strict check). A non-empty honeypot is
-// forwarded so the backend can accept it silently as a bot trap. Returns null
-// when a client-side guard fails (book/consent/token missing).
+// Build the exact JSON payload to POST. `selections` carries one entry per
+// checkbox: { book, checked, quantity }. Only checked books are included; an
+// invalid quantity on ANY checked book rejects the whole payload. Consent is
+// required and sent as the boolean true (matches the server-side strict
+// check). A non-empty honeypot is forwarded so the backend can accept it
+// silently as a bot trap. Returns null when a client-side guard fails (no
+// book checked / bad quantity / missing name, email, consent, or token).
 export function buildEoiPayload(values) {
   const v = values || {};
-  const book = typeof v.book === 'string' ? v.book : '';
-  const quantity = toInt(v.quantity);
+  const selections = Array.isArray(v.selections) ? v.selections : [];
+
+  const interests = [];
+  for (const sel of selections) {
+    if (!sel || sel.checked !== true) continue;
+    if (!BOOK_VALUES.includes(sel.book)) return null;
+    const quantity = toInt(sel.quantity);
+    if (quantity === null || quantity < MIN_QUANTITY || quantity > MAX_QUANTITY) return null;
+    interests.push({ book: sel.book, quantity });
+  }
+  if (interests.length === 0) return null;
+
   const name = typeof v.name === 'string' ? v.name.trim() : '';
   const email = typeof v.email === 'string' ? v.email.trim() : '';
   const consent = v.consent === true;
   const turnstileToken = typeof v.turnstileToken === 'string' ? v.turnstileToken : '';
 
-  if (!BOOK_VALUES.includes(book)) return null;
-  if (quantity === null || quantity < MIN_QUANTITY || quantity > MAX_QUANTITY) return null;
   if (name.length === 0) return null;
   if (email.length === 0) return null;
   if (!consent) return null;
   if (turnstileToken.length === 0) return null;
 
   const payload = {
-    book,
-    quantity,
+    interests,
     name,
     email,
     consent: true,
@@ -82,34 +95,11 @@ export function messageForStatus(status) {
   }
 }
 
-// Pluralize a count for a counter label fragment.
-export function pluralize(count, singular, plural) {
-  return count === 1 ? singular : plural;
-}
-
-// Render the counter text for a single book from the /api/books/interest shape.
-// Returns "" when there is no data yet (caller leaves the placeholder).
-export function counterValue(entry, field) {
-  if (!entry || typeof entry[field] !== 'number') return '';
-  return String(entry[field]);
-}
-
-// Decide the text to render for a counter across the loading / loaded states.
-// While loading (no data object yet) it returns the empty sentinel "" so the
-// caller leaves the em dash placeholder in the markup untouched -- it NEVER
-// renders an apparent 0 before real data arrives. Once data is present, a
-// missing entry renders a genuine 0 (the backend always returns both books, so
-// a missing entry is a real zero count, not a loading state).
-export function counterText(data, book, field) {
-  if (!data || typeof data !== 'object') return '';
-  const entry = findBookEntry(data, book);
-  return counterValue(entry, field) || '0';
-}
-
-// Find a book entry inside { books: [...] } safely.
-export function findBookEntry(data, book) {
-  if (!data || !Array.isArray(data.books)) return null;
-  return data.books.find((b) => b && b.book === book) || null;
+// True when a selections list has no checked book at all (used to focus the
+// checkbox group with a specific, useful validation message).
+export function hasNoSelection(values) {
+  const selections = values && Array.isArray(values.selections) ? values.selections : [];
+  return !selections.some((sel) => sel && sel.checked === true);
 }
 
 // Validate a ?book=<code> query value against the canonical allowlist. Returns
@@ -136,7 +126,6 @@ function toInt(value) {
 
 const TURNSTILE_SCRIPT_SRC =
   'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
-const INTEREST_URL = '/api/books/interest';
 const EOI_URL = '/api/books/eoi';
 
 function init() {
@@ -148,7 +137,6 @@ function init() {
   let turnstileWidgetId = null;
   let submitting = false;
 
-  loadCounters(els);
   initTurnstile(els, {
     onToken: (token) => {
       turnstileToken = token || '';
@@ -162,25 +150,45 @@ function init() {
   });
   initBackToTop();
 
-  // Preselect the book radio from a validated ?book=<canonical> param; keep it
-  // in sync on back/forward without forcing focus so direct URLs/history work.
+  // Reveal/hide each book's quantity control as its checkbox changes. The
+  // initial sync runs after preselection so a ?book= deep link lands with its
+  // quantity already visible and enabled.
+  for (const checkbox of els.checkboxes) {
+    checkbox.addEventListener('change', () => syncQuantities(els));
+  }
   applyBookPreselection(form, { focus: true });
-  window.addEventListener('popstate', () => applyBookPreselection(form, { focus: false }));
+  syncQuantities(els);
+  window.addEventListener('popstate', () => {
+    applyBookPreselection(form, { focus: false });
+    syncQuantities(els);
+  });
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
     if (submitting) return;
 
-    const payload = buildEoiPayload({
-      book: readRadio(els.form, 'book'),
-      quantity: els.quantity ? els.quantity.value : '',
+    const raw = {
+      selections: readSelections(els),
       name: els.name ? els.name.value : '',
       email: els.email ? els.email.value : '',
       consent: els.consent ? els.consent.checked : false,
       turnstileToken,
       website: els.honeypot ? els.honeypot.value : ''
-    });
+    };
 
+    if (hasNoSelection(raw)) {
+      announce(els.status, 'Please choose at least one book to join the update list.');
+      if (els.checkboxes.length > 0) {
+        try {
+          els.checkboxes[0].focus({ preventScroll: false });
+        } catch {
+          els.checkboxes[0].focus();
+        }
+      }
+      return;
+    }
+
+    const payload = buildEoiPayload(raw);
     if (!payload) {
       announce(els.status, 'Please complete every field, including consent and verification.');
       return;
@@ -200,9 +208,9 @@ function init() {
       if (res.ok) {
         announce(els.status, 'Thank you. Your interest has been recorded. We will be in touch with updates about the book(s) you selected.');
         resetForm(els.form);
+        syncQuantities(els);
         resetTurnstile(turnstileWidgetId);
         turnstileToken = '';
-        await loadCounters(els);
       } else {
         announce(els.status, messageForStatus(res.status));
       }
@@ -218,87 +226,70 @@ function init() {
 function readElements(form) {
   return {
     form,
-    quantity: document.getElementById('books-quantity'),
+    checkboxes: [...form.querySelectorAll('input[name="books"]')],
+    qtyContainers: [...form.querySelectorAll('.books-qty')],
     name: document.getElementById('books-name'),
     email: document.getElementById('books-email'),
     consent: document.getElementById('books-consent'),
     honeypot: form.querySelector('[name="website"]'),
     submit: document.getElementById('books-submit'),
     status: document.getElementById('books-status'),
-    countersStatus: document.getElementById('books-counters-status'),
     turnstileBox: document.getElementById('books-turnstile')
   };
 }
 
-function readRadio(form, name) {
-  const checked = form.querySelector(`input[name="${name}"]:checked`);
-  return checked ? checked.value : '';
+// One selection per checkbox, pairing the checkbox state with its own
+// quantity input value (an unselected book's quantity is simply never read).
+function readSelections(els) {
+  return els.checkboxes.map((checkbox) => ({
+    book: checkbox.value,
+    checked: checkbox.checked === true,
+    quantity: quantityInputFor(els, checkbox.value)?.value ?? ''
+  }));
 }
 
-// Preselect the book radio from a validated ?book=<canonical> param. On the
-// initial load (opts.focus === true) the selected radio also receives focus so
-// keyboard users land on the form; on history navigation focus is left to the
-// browser so back/forward are not harmed. An invalid/missing value is a no-op.
+function quantityInputFor(els, book) {
+  const container = els.qtyContainers.find((c) => c.dataset.qtyFor === book);
+  return container ? container.querySelector('input[type="number"]') : null;
+}
+
+// Keep every quantity control in step with its checkbox: hidden + disabled
+// while unselected (out of the a11y tree and tab order), revealed + enabled
+// when checked. form.reset() restores checkbox state but not the disabled
+// property, so this re-runs after every reset.
+function syncQuantities(els) {
+  for (const container of els.qtyContainers) {
+    const book = container.dataset.qtyFor;
+    const checkbox = els.checkboxes.find((c) => c.value === book);
+    const input = container.querySelector('input[type="number"]');
+    if (!checkbox || !input) continue;
+    const selected = checkbox.checked === true;
+    container.hidden = !selected;
+    input.disabled = !selected;
+  }
+}
+
+// Preselect the book checkbox from a validated ?book=<canonical> param. On the
+// initial load (opts.focus === true) the selected checkbox also receives focus
+// so keyboard users land on the form; on history navigation focus is left to
+// the browser so back/forward are not harmed. An invalid/missing value is a
+// no-op; the other checkbox always remains available.
 function applyBookPreselection(form, opts) {
   const focus = opts && opts.focus === true;
   const params = new URLSearchParams(window.location.search);
   const book = parseBookQuery(params.get('book'));
   if (!book) return false;
-  const radio = form.querySelector(`input[name="book"][value="${book}"]`);
-  if (!radio) return false;
-  if (!radio.checked) radio.checked = true;
+  const checkbox = form.querySelector(`input[name="books"][value="${book}"]`);
+  if (!checkbox) return false;
+  if (!checkbox.checked) checkbox.checked = true;
   if (focus) {
     try {
-      radio.focus({ preventScroll: true });
+      checkbox.focus({ preventScroll: true });
     } catch {
-      radio.focus();
+      checkbox.focus();
     }
   }
   return true;
-}
-
-// Fetch and render the live counters. Loading/empty/error states are surfaced
-// accessibly via the counters status region.
-async function loadCounters(els) {
-  if (els.countersStatus) {
-    els.countersStatus.textContent = 'Loading interest counts...';
-  }
-  setCounters('biography', '');
-  setCounters('childrens', '');
-
-  try {
-    const res = await fetch(INTEREST_URL, { headers: { accept: 'application/json' } });
-    if (!res.ok) {
-      announceCounters(els, messageForStatus(res.status));
-      return;
-    }
-    const data = await res.json();
-    renderCounters(data);
-    announceCounters(els, '');
-  } catch {
-    announceCounters(els, messageForStatus(0));
-  }
-}
-
-function renderCounters(data) {
-  for (const book of BOOK_VALUES) {
-    setCounters(book, data);
-  }
-}
-
-function setCounters(book, data) {
-  // Loading (no data object yet): leave the em dash placeholder in place --
-  // never render an apparent 0 before real data arrives.
-  if (!data || typeof data !== 'object') return;
-  const interestEl = document.querySelector(`[data-book-interest="${book}"]`);
-  const copiesEl = document.querySelector(`[data-book-copies="${book}"]`);
-  if (interestEl) interestEl.textContent = counterText(data, book, 'interestCount');
-  if (copiesEl) copiesEl.textContent = counterText(data, book, 'requestedCopies');
-}
-
-function announceCounters(els, message) {
-  if (!els.countersStatus) return;
-  els.countersStatus.textContent = message;
 }
 
 // Explicitly load + render the Turnstile widget. The site key is read from the

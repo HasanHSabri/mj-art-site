@@ -682,7 +682,11 @@ function renderBooksTiles(summary) {
         break;
       case 'total':
         value.textContent = String(tile.value);
-        sub.textContent = 'all records';
+        sub.textContent = 'one row per book interest';
+        break;
+      case 'distinct':
+        value.textContent = String(tile.value);
+        sub.textContent = 'people, counted once across both books';
         break;
       default:
         throw new Error('Unknown summary tile kind: ' + tile.kind);

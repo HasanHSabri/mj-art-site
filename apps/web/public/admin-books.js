@@ -60,7 +60,9 @@ export function safeMailtoHref(email) {
 // the grid always renders a stable set of tiles with zeros. Book values are
 // active interest (withdrawn excluded); window values are raw submissions by
 // created_at and still include records later withdrawn. Last 7 days is the
-// trailing 168 hours in UTC.
+// trailing 168 hours in UTC. The total tile counts ROWS (one per book
+// interest); the distinct tile counts PEOPLE (unique email hashes), so one
+// contact interested in both books shows as two rows but one contact.
 export function buildSummaryTiles(summary) {
   const s = summary || {};
   const books = s.books || {};
@@ -104,8 +106,14 @@ export function buildSummaryTiles(summary) {
     {
       kind: 'total',
       key: 'total',
-      label: 'Total',
+      label: 'Interest records',
       value: statusTotal
+    },
+    {
+      kind: 'distinct',
+      key: 'overallContacts',
+      label: 'Distinct contacts',
+      value: numeric(s.overallContacts)
     }
   ];
 }

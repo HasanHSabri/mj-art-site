@@ -4,11 +4,15 @@
    surface treatment, button styles, section rhythm, and the shared primary
    navigation + footer. No new fonts and no dark-mode override. */
 
-/* The Gallery hero is a single copy column (no aside), so let it center and
-   breathe. */
+/* The Gallery hero is a single copy column (no aside). The outer hero surface
+   spans the full content width (no 60ch cap and no companion column); the copy
+   keeps its own readable measure inside the card. */
 .gallery-hero-content {
   grid-template-columns: 1fr;
-  max-width: 60ch;
+}
+
+.gallery-hero-content .hero-text {
+  max-width: 66ch;
 }
 
 /* The complete catalogue is dense, so a deliberate editorial rhythm paces it:

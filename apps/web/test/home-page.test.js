@@ -230,18 +230,23 @@ test('story prose is preserved apart from Australian spelling corrections', () =
   assert.match(copy, /From my heart to yours, love, courage, and gratitude/);
 });
 
-test('the empty story-left area is an intentional aria-hidden portrait reserve', () => {
+test('the story-left area integrates the real portrait with its full natural ratio', () => {
   const intro = indexHtml.match(/<div class="story-intro">([\s\S]*?)<\/div>/);
   assert.ok(intro, 'the story intro column exists');
-  assert.match(intro[0], /<div class="portrait-reserve" aria-hidden="true"><\/div>/);
-  // No image, icon, or text inside the reserve; no missing-image affordances.
-  const reserveRule = ruleBody(stylesCss, '.portrait-reserve');
-  assert.ok(reserveRule, 'the reserve is styled');
-  assert.match(reserveRule, /aspect-ratio:\s*3\s*\/\s*4/, 'portrait orientation');
-  assert.doesNotMatch(reserveRule, /url\(/, 'no imagery in the reserve itself');
-  assert.equal(/<img/.test(intro[0]), false);
-  assert.equal(/<svg/.test(intro[0]), false);
-  assert.equal(intro[0].includes('placeholder'), false, 'no placeholder wording');
+  assert.match(
+    intro[0],
+    /<img class="artist-portrait" src="\/images\/mj-portrait\.jpg" width="901" height="1200" loading="lazy" decoding="async" alt="Portrait of MJ">/
+  );
+  // The portrait keeps its full natural ratio inside a responsive frame: no
+  // aggressive crop, no leftover reserve styling or crop marks.
+  const portraitRule = ruleBody(stylesCss, '.artist-portrait');
+  assert.ok(portraitRule, 'the portrait is framed');
+  assert.match(portraitRule, /object-fit:\s*contain/, 'contain, never a crop');
+  assert.match(portraitRule, /width:\s*min\(100%,\s*320px\)/, 'responsive size capped like the composition it replaced');
+  assert.match(portraitRule, /height:\s*auto/, 'the height follows the natural ratio');
+  assert.equal(ruleBody(stylesCss, '.portrait-reserve'), null, 'the obsolete reserve styling is removed');
+  assert.doesNotMatch(stylesCss, /\.portrait-reserve::(before|after)/, 'no crop-mark pseudo elements remain');
+  assert.equal(indexHtml.includes('portrait-reserve'), false, 'no reserve markup remains');
 });
 
 // ===========================================================================
@@ -290,11 +295,12 @@ test('home header and footer wordmark read MJ Arts (no logo/icon)', () => {
 // 6. Books preview on Home: visitor titles/descriptions + cover reserves
 // ===========================================================================
 
-test('home books preview uses the visitor titles and exact descriptions', () => {
+test('home books preview uses the visitor titles, exact descriptions, and the real covers', () => {
   const section = indexHtml.match(/<section class="section books-preview-section"[\s\S]*?<\/section>/)[0];
   assert.match(section, /<h3>Frayed Not Broken<\/h3>/);
   assert.equal(section.includes('Biography'), false, 'the old visitor Biography label is gone');
-  assert.match(section, /<h3>MJ and the Wobbly Days<\/h3>/);
+  assert.match(section, /<h3>MJ and Her Wobbly Days<\/h3>/, 'the exact corrected title');
+  assert.equal(section.includes('MJ and the Wobbly Days'), false, 'the old title is gone');
   assert.doesNotMatch(section, /Children&rsquo;s Book/, 'the old visitor Children\'s Book label is gone');
   const bio = section.match(/<p class="books-panel-text">([\s\S]*?)<\/p>/)[1].replace(/\s+/g, ' ').trim();
   assert.equal(
@@ -306,8 +312,18 @@ test('home books preview uses the visitor titles and exact descriptions', () => 
     kids,
     '<p class="books-panel-text">A gentle children&rsquo;s story about meeting uncertain and wobbly days with courage, kindness, and hope.</p>'.replace(/\s+/g, ' ')
   );
-  // Each card opens with the intentional portrait cover reserve.
-  assert.equal((section.match(/class="book-cover-reserve" aria-hidden="true"/g) || []).length, 2);
+  // Each card opens with the real cover in the shared contain frame (the same
+  // public URLs as the Books page, no reserve treatment).
+  assert.match(
+    section,
+    /<img class="book-cover" src="\/images\/frayed-not-broken-cover\.jpg" width="797" height="1200" loading="lazy" decoding="async" alt="Cover of Frayed Not Broken">/
+  );
+  assert.match(
+    section,
+    /<img class="book-cover" src="\/images\/mj-and-her-wobbly-days-cover\.jpg" width="488" height="629" loading="lazy" decoding="async" alt="Cover of MJ and Her Wobbly Days">/
+  );
+  assert.equal((section.match(/class="book-cover-frame"/g) || []).length, 2);
+  assert.equal(section.includes('book-cover-reserve'), false, 'no reserve markup remains on Home');
   // No repeated old disclaimer language on Home.
   assert.equal(section.includes('not a payment'), false);
   assert.equal(section.includes('not a commitment to buy'), false);
@@ -317,8 +333,8 @@ test('home books preview uses the visitor titles and exact descriptions', () => 
 // 7. Book cover reserves (shared shape)
 // ===========================================================================
 
-test('book cover reserves are portrait-oriented, aria-hidden, spine-treated, responsive', () => {
-  const rule = ruleBody(stylesCss, '.book-cover-reserve');
+test('book cover frames are portrait-oriented, spine-treated, and responsively capped', () => {
+  const rule = ruleBody(stylesCss, '.book-cover-frame');
   assert.ok(rule);
   assert.match(rule, /aspect-ratio:\s*3\s*\/\s*4/, 'portrait orientation');
   assert.match(
@@ -326,12 +342,14 @@ test('book cover reserves are portrait-oriented, aria-hidden, spine-treated, res
     /linear-gradient\(90deg,\s*rgba\(154,\s*92,\s*75,\s*0\.1\d\),\s*rgba\(154,\s*92,\s*75,\s*0\)\s*16%\)/,
     'a soft tonal falloff toward the spine edge (no hard side stripe)'
   );
-  assert.doesNotMatch(rule, /url\(/, 'no imagery');
   assert.doesNotMatch(rule, /inset 3px/, 'no hard side-tab stripe');
+  // The complete cover is always visible: contain, never a crop.
+  const imgRule = ruleBody(stylesCss, '.book-cover-frame img');
+  assert.match(imgRule, /object-fit:\s*contain/);
   // Mobile height stays modest via a narrower cap under 640px.
   const mq = stylesCss.match(/@media\s*\(\s*max-width:\s*640px\s*\)\s*\{([\s\S]*?)\}\s*(?=@media)/);
   assert.ok(mq);
-  assert.match(mq[1], /\.book-cover-reserve\s*\{[^}]*width:\s*min\(100%,\s*1\d\dpx\)/);
+  assert.match(mq[1], /\.book-cover-frame\s*\{[^}]*width:\s*min\(100%,\s*1\d\dpx\)/);
 });
 
 // ===========================================================================

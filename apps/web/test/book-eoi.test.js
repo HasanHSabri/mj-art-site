@@ -28,6 +28,11 @@ const {
   SCHEMA_TABLE,
   computeColumnSignature,
   createNeonSqlExecutor,
+  createNeonTransactionExecutor,
+  buildEoiBatchStatements,
+  persistBookEoiInterest,
+  EOI_MAX_TRANSACTION_RETRIES,
+  isEoiRaceError,
   bookEoiSecretsOk,
   secretByteLength,
   compareLiveCatalog,
@@ -86,6 +91,22 @@ function makeSql(responder) {
   return sql;
 }
 
+// TEST-ONLY sequential batch runner for the explicit transaction seam. Tests
+// that assert on batch statements through the sql fake inject
+// `transaction: sequentialTransaction(sql)` EXPLICITLY via makeEnv -- the
+// Worker itself installs no fallback (deployed source has no such helper).
+// Execution stops at the first failing statement; atomic batches come from
+// makeEngine instead.
+function sequentialTransaction(sql) {
+  return async function transaction(statements) {
+    const results = [];
+    for (const statement of statements) {
+      results.push(await sql(statement.text, statement.params || []));
+    }
+    return results;
+  };
+}
+
 function okTurnstile({ action = 'books-eoi', hostname = 'localhost', success = true } = {}) {
   return async () =>
     new Response(JSON.stringify({ success, action, hostname, 'challenge_ts': new Date().toISOString() }), {
@@ -100,7 +121,7 @@ function failClosedTurnstile() {
   };
 }
 
-function makeEnv({ sql, turnstile, rateLimiter, withConfig = true } = {}) {
+function makeEnv({ sql, transaction, turnstile, rateLimiter, withConfig = true } = {}) {
   const env = {
     ARTWORK_IMAGES: { async get() { return null; }, async put() {} },
     ASSETS: { async fetch() { return new Response('not found', { status: 404 }); } },
@@ -121,6 +142,7 @@ function makeEnv({ sql, turnstile, rateLimiter, withConfig = true } = {}) {
     env.TURNSTILE_WIDGET_FINGERPRINT = turnstileFingerprint();
   }
   if (sql) env.BOOK_EOI_SQL = sql;
+  if (transaction) env.BOOK_EOI_TRANSACTION = transaction;
   return env;
 }
 
@@ -156,7 +178,7 @@ async function body(res) {
   return JSON.parse(await res.text());
 }
 
-// Valid submission payload.
+// Valid legacy (single-book) submission payload. Old clients keep working.
 function validPayload(overrides = {}) {
   return {
     book: 'biography',
@@ -170,13 +192,115 @@ function validPayload(overrides = {}) {
   };
 }
 
-// SQL responder that simulates a fresh insert (no existing row).
-function insertResponder() {
+// Valid multi-book (interests) submission payload: the new visitor shape.
+function validInterestsPayload(overrides = {}) {
+  return {
+    interests: [
+      { book: 'biography', quantity: 2 },
+      { book: 'childrens', quantity: 3 }
+    ],
+    name: 'Jane Doe',
+    email: 'JANE.Example@Example.COM ',
+    consent: true,
+    turnstileToken: 'fake-turnstile-token',
+    ...overrides
+  };
+}
+
+// SQL responder that simulates a fresh insert (no existing row). The storage
+// path reads existing rows (SELECT id, book_code, status), then the batch
+// transaction runs the INSERT/UPDATE plus the guarded assertion SELECT.
+function insertResponder(existingRows = []) {
   return (text) => {
-    if (/SELECT id, status/.test(text)) return [];
+    if (/SELECT id, book_code, status/.test(text)) return existingRows;
     if (/^INSERT INTO mj_eoi/.test(text)) return [];
+    if (/^UPDATE mj_eoi/.test(text)) return [];
+    if (/^SELECT 1 \//.test(text)) return [{ '?column?': 1 }];
     throw new Error('unexpected SQL: ' + text);
   };
+}
+
+// SQL responder for the resubmission path (one existing row found).
+function existingResponder(row) {
+  return (text) => {
+    if (/SELECT id, book_code, status/.test(text)) return [row];
+    if (/^UPDATE mj_eoi/.test(text)) return [{ id: row.id }];
+    if (/^INSERT INTO mj_eoi/.test(text)) return [];
+    if (/^SELECT 1 \//.test(text)) return [{ '?column?': 1 }];
+    throw new Error('unexpected SQL: ' + text);
+  };
+}
+
+// A tiny in-memory table + atomic transaction engine implementing just the
+// storage statements the EOI batch uses. `transaction(statements)` applies the
+// whole batch to a snapshot and commits only when every statement succeeds --
+// including the guarded assertion -- mirroring the HTTP batch transaction.
+// `beforeTxn` runs (awaited) before each transaction execution so tests can
+// inject concurrent writers at the exact race point.
+function makeEngine(seedRows = [], { beforeTxn } = {}) {
+  const rows = seedRows.map((r) => ({ ...r }));
+  const engine = { rows, txns: [] };
+  engine.sql = async function sql(text, params) {
+    if (/SELECT id, book_code, status FROM mj_eoi\.book_eoi/.test(text)) {
+      const [hash, books] = params;
+      return rows
+        .filter((r) => r.email_hash === hash && books.includes(r.book_code))
+        .map((r) => ({ id: r.id, book_code: r.book_code, status: r.status }));
+    }
+    throw new Error('unexpected SQL: ' + text);
+  };
+  engine.transaction = async function transaction(statements) {
+    engine.txns.push(statements);
+    if (beforeTxn) await beforeTxn(engine.txns.length, rows);
+    const snapshot = rows.map((r) => ({ ...r }));
+    try {
+      for (const s of statements) {
+        if (/^INSERT INTO mj_eoi/.test(s.text)) {
+          const [id, book, hash, ct, iv, qty, fmt, unsure] = s.params;
+          const dupe = rows.find((r) => r.book_code === book && r.email_hash === hash);
+          if (dupe) continue; // ON CONFLICT DO NOTHING: lands no row
+          if (rows.some((r) => r.id === id)) {
+            const err = new Error('duplicate key value violates unique constraint');
+            err.code = '23505';
+            throw err;
+          }
+          rows.push({
+            id, book_code: book, email_hash: hash,
+            pii_ciphertext: ct, pii_iv: iv,
+            quantity: qty, format_code: fmt == null ? unsure : fmt,
+            status: 'new'
+          });
+        } else if (/^UPDATE mj_eoi\.book_eoi SET/.test(s.text)) {
+          const [ct, iv, qty, fmt, withdrawn, reactivated, id] = s.params;
+          const row = rows.find((r) => r.id === id);
+          if (!row) continue; // zero rows updated
+          row.pii_ciphertext = ct;
+          row.pii_iv = iv;
+          row.quantity = qty;
+          if (fmt != null) row.format_code = fmt;
+          if (row.status === withdrawn) row.status = reactivated;
+        } else if (/^SELECT 1 \//.test(s.text)) {
+          const [hash, books, ids, expected] = s.params;
+          const count = rows.filter(
+            (r) => r.email_hash === hash && books.includes(r.book_code) && ids.includes(r.id)
+          ).length;
+          if (count !== expected) {
+            const err = new Error('division by zero');
+            err.code = '22012';
+            throw err;
+          }
+        } else {
+          throw new Error('unexpected statement: ' + s.text);
+        }
+      }
+    } catch (err) {
+      rows.length = 0;
+      rows.push(...snapshot); // rollback: nothing from this batch survives
+      throw err;
+    }
+    return statements.map(() => []);
+  };
+  return engine;
 }
 
 // ===========================================================================
@@ -270,17 +394,75 @@ test('dedup: equivalent emails produce the same HMAC hash after normalization', 
 // 3. Strict validation / errors / body caps / origin
 // ===========================================================================
 
-test('validateBookEoiPayload accepts a well-formed payload', () => {
+test('validateBookEoiPayload accepts a well-formed legacy payload and normalizes it to interests', () => {
   const r = validateBookEoiPayload(validPayload());
   assert.equal(r.ok, true);
   assert.equal(r.fields.email, 'jane.example@example.com');
-  assert.equal(r.fields.book, 'biography');
+  assert.deepEqual(r.fields.interests, [{ book: 'biography', quantity: 2, format: 'hardcover' }]);
+});
+
+test('validateBookEoiPayload accepts the new one-or-both interests payload', () => {
+  const both = validateBookEoiPayload(validInterestsPayload());
+  assert.equal(both.ok, true);
+  assert.equal(both.fields.email, 'jane.example@example.com');
+  assert.deepEqual(both.fields.interests, [
+    { book: 'biography', quantity: 2, format: null },
+    { book: 'childrens', quantity: 3, format: null }
+  ]);
+  const one = validateBookEoiPayload(validInterestsPayload({ interests: [{ book: 'childrens', quantity: 1 }] }));
+  assert.equal(one.ok, true);
+  assert.deepEqual(one.fields.interests, [{ book: 'childrens', quantity: 1, format: null }]);
+});
+
+test('validateBookEoiPayload requires EXACTLY one of book or interests', () => {
+  // Both -> 400.
+  assert.equal(validateBookEoiPayload(validInterestsPayload({ book: 'biography', quantity: 2 })).ok, false);
+  // Neither -> 400.
+  const { book, interests, ...neither } = validInterestsPayload();
+  const r = validateBookEoiPayload(neither);
+  assert.equal(r.ok, false);
+  assert.equal(r.status, 400);
+});
+
+test('validateBookEoiPayload rejects malformed interests lists', () => {
+  for (const bad of [
+    'not-an-array',
+    [],
+    [{}],
+    [{ book: 'biography' }],
+    [{ quantity: 2 }],
+    [{ book: 'biography', quantity: 2, extra: 1 }],
+    [{ book: 'biography', quantity: 2, format: 'ebook' }],
+    [{ book: 'novel', quantity: 2 }],
+    [{ book: 'biography', quantity: 2 }, { book: 'biography', quantity: 3 }],
+    [{ book: 'biography', quantity: 2 }, { book: 'childrens', quantity: 3 }, { book: 'x', quantity: 1 }],
+    [{ book: 'biography', quantity: 0 }],
+    [{ book: 'biography', quantity: 11 }],
+    [{ book: 'biography', quantity: 1.5 }],
+    [{ book: 'biography', quantity: '2' }],
+    [{ book: 'biography', quantity: null }]
+  ]) {
+    const r = validateBookEoiPayload(validInterestsPayload({ interests: bad }));
+    assert.equal(r.ok, false, `interests ${JSON.stringify(bad)} must be rejected`);
+    assert.equal(r.status, 400);
+  }
+});
+
+test('validateBookEoiPayload rejects legacy quantity/format smuggled beside interests', () => {
+  for (const extra of [{ quantity: 2 }, { format: 'ebook' }]) {
+    const r = validateBookEoiPayload(validInterestsPayload(extra));
+    assert.equal(r.ok, false, `interests + ${Object.keys(extra)[0]} must be rejected`);
+    assert.equal(r.status, 400);
+  }
 });
 
 test('validateBookEoiPayload rejects unknown fields', () => {
   const r = validateBookEoiPayload({ ...validPayload(), extra: 'x' });
   assert.equal(r.ok, false);
   assert.equal(r.status, 400);
+  const r2 = validateBookEoiPayload({ ...validInterestsPayload(), extra: 'x' });
+  assert.equal(r2.ok, false);
+  assert.equal(r2.status, 400);
 });
 
 test('validateBookEoiPayload rejects out-of-range and non-integer quantity', () => {
@@ -307,9 +489,9 @@ test('validateBookEoiPayload treats an ABSENT format as a valid omission', () =>
   const { format, ...withoutFormat } = validPayload();
   const r = validateBookEoiPayload(withoutFormat);
   assert.equal(r.ok, true, 'an omitted format is valid (legacy-optional)');
-  assert.equal(r.fields.format, null, 'omission carries null (persisted as internal unsure)');
+  assert.equal(r.fields.interests[0].format, null, 'omission carries null (persisted as internal unsure)');
   // All other fields still validate exactly as before.
-  assert.equal(r.fields.book, 'biography');
+  assert.equal(r.fields.interests[0].book, 'biography');
   assert.equal(r.fields.email, 'jane.example@example.com');
 });
 
@@ -326,19 +508,15 @@ test('validateBookEoiPayload accepts every valid legacy format code from older c
   for (const good of ['hardcover', 'paperback', 'ebook', 'unsure']) {
     const r = validateBookEoiPayload({ ...validPayload(), format: good });
     assert.equal(r.ok, true, `legacy format ${good} stays accepted`);
-    assert.equal(r.fields.format, good);
+    assert.equal(r.fields.interests[0].format, good);
   }
 });
 
 test('a full worker round-trip with an omitted format inserts with the internal unsure default', async () => {
   // The INSERT resolves an omitted format server-side via
   // COALESCE($7, 'unsure'): no schema migration, NOT NULL/CHECK stay satisfied.
-  const sql = makeSql((text) => {
-    if (/SELECT id, status/.test(text)) return [];
-    if (/^INSERT INTO mj_eoi/.test(text)) return [];
-    throw new Error('unexpected SQL: ' + text);
-  });
-  const env = makeEnv({ sql });
+  const sql = makeSql(insertResponder());
+  const env = makeEnv({ sql, transaction: sequentialTransaction(sql) });
   const { format, ...withoutFormat } = validPayload();
   const res = await worker.fetch(jsonPost('/api/books/eoi', withoutFormat), env);
   assert.equal(res.status, 200);
@@ -357,12 +535,8 @@ test('a resubmission with an omitted format preserves the historical value', asy
   // The UPDATE maps an omitted format to COALESCE($4, format_code): a returning
   // visitor who never saw a format control keeps whatever they chose before.
   const id = crypto.randomUUID();
-  const sql = makeSql((text) => {
-    if (/SELECT id, status/.test(text)) return [{ id, status: 'new' }];
-    if (/^UPDATE mj_eoi/.test(text)) return [];
-    throw new Error('unexpected SQL: ' + text);
-  });
-  const env = makeEnv({ sql });
+  const sql = makeSql(existingResponder({ id, book_code: 'biography', status: 'new' }));
+  const env = makeEnv({ sql, transaction: sequentialTransaction(sql) });
   const { format, ...withoutFormat } = validPayload();
   const res = await worker.fetch(jsonPost('/api/books/eoi', withoutFormat), env);
   assert.equal(res.status, 200);
@@ -374,12 +548,8 @@ test('a resubmission with an omitted format preserves the historical value', asy
 
 test('a resubmission with an explicit legacy format still updates it', async () => {
   const id = crypto.randomUUID();
-  const sql = makeSql((text) => {
-    if (/SELECT id, status/.test(text)) return [{ id, status: 'new' }];
-    if (/^UPDATE mj_eoi/.test(text)) return [];
-    throw new Error('unexpected SQL: ' + text);
-  });
-  const env = makeEnv({ sql });
+  const sql = makeSql(existingResponder({ id, book_code: 'biography', status: 'new' }));
+  const env = makeEnv({ sql, transaction: sequentialTransaction(sql) });
   const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload({ format: 'ebook' })), env);
   assert.equal(res.status, 200);
   const upd = sql.calls.find((c) => /^UPDATE/.test(c.text));
@@ -425,7 +595,7 @@ test('validateBookEoiPayload requires consent to be exactly the boolean true', (
 test('validateBookEoiPayload does not carry consent into the stored fields', () => {
   const r = validateBookEoiPayload(validPayload());
   assert.equal(r.ok, true);
-  assert.deepEqual(Object.keys(r.fields).sort(), ['book', 'email', 'format', 'name', 'quantity', 'turnstileToken']);
+  assert.deepEqual(Object.keys(r.fields).sort(), ['email', 'interests', 'name', 'turnstileToken']);
   assert.equal('consent' in r.fields, false);
 });
 
@@ -544,21 +714,26 @@ test('POST rejects missing origin/referer with 400', async () => {
 // 4. Turnstile verification (mocked via TURNSTILE_FETCH)
 // ===========================================================================
 
-test('POST with valid Turnstile succeeds and inserts a row', async () => {
+test('POST with valid Turnstile succeeds and submits the atomic batch', async () => {
   const sql = makeSql(insertResponder());
-  const env = makeEnv({ sql });
+  const env = makeEnv({ sql, transaction: sequentialTransaction(sql) });
   const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
   assert.equal(res.status, 200);
-  assert.deepEqual(await body(res), { ok: true });
-  // One SELECT (existing check) + one INSERT.
+  const resBody = await body(res);
+  assert.deepEqual(resBody, { ok: true });
+  // One read (existing check) + the batch transaction via the sequential test
+  // seam: INSERT + guarded assertion SELECT.
+  assert.equal(sql.calls.length, 3);
   const stmts = sql.calls.map((c) => c.text.split(' ')[0]);
-  assert.equal(sql.calls.length, 2);
-  assert.ok(stmts.includes('SELECT'));
+  assert.equal(stmts.filter((s) => s === 'SELECT').length, 2);
   assert.ok(stmts.includes('INSERT'));
+  assert.match(sql.calls[sql.calls.length - 1].text, /^SELECT 1 \//, 'the batch ends with the guarded assertion');
   // Inserted hash is the HMAC of the normalized email.
   const ins = sql.calls.find((c) => /^INSERT/.test(c.text));
   const expectedHash = await hmacEmailHash(HMAC_KEY, 'jane.example@example.com');
   assert.equal(ins.params[2], expectedHash);
+  // The public response carries no ids or PII.
+  assert.equal(JSON.stringify(resBody).includes('id'), false);
 });
 
 test('POST with Turnstile success=false returns 400 and touches no DB', async () => {
@@ -597,7 +772,11 @@ test('Turnstile replay assumption: a presented token is validated server-side on
   // local challenge_ts recency gate (avoids clock-skew false negatives). This
   // test documents that a normal success response is accepted.
   const sql = makeSql(insertResponder());
-  const env = makeEnv({ sql, turnstile: okTurnstile({ 'challenge_ts': new Date().toISOString() }) });
+  const env = makeEnv({
+    sql,
+    transaction: sequentialTransaction(sql),
+    turnstile: okTurnstile({ 'challenge_ts': new Date().toISOString() })
+  });
   const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
   assert.equal(res.status, 200);
 });
@@ -617,8 +796,10 @@ test('POST returns 429 when the rate limiter denies', async () => {
 
 test('rate limiter is keyed per client IP', async () => {
   let seenKey;
+  const sql = makeSql(insertResponder());
   const env = makeEnv({
-    sql: makeSql(insertResponder()),
+    sql,
+    transaction: sequentialTransaction(sql),
     rateLimiter: { async limit({ key }) { seenKey = key; return { success: true }; } }
   });
   const res = await worker.fetch(
@@ -631,6 +812,28 @@ test('rate limiter is keyed per client IP', async () => {
   );
   assert.equal(res.status, 200);
   assert.equal(seenKey, 'local:books-eoi:203.0.113.7');
+});
+
+test('a two-book submission hits the rate limiter and Turnstile exactly once', async () => {
+  let limitCalls = 0;
+  let siteverifyCalls = 0;
+  const sql = makeSql((text) => {
+    if (/SELECT id, book_code, status/.test(text)) return [];
+    if (/^INSERT INTO mj_eoi/.test(text)) return [];
+    if (/^UPDATE mj_eoi/.test(text)) return [];
+    if (/^SELECT 1 \//.test(text)) return [];
+    throw new Error('unexpected: ' + text);
+  });
+  const env = makeEnv({
+    sql,
+    transaction: sequentialTransaction(sql),
+    rateLimiter: { async limit() { limitCalls += 1; return { success: true }; } },
+    turnstile: async () => { siteverifyCalls += 1; return okTurnstile()(); }
+  });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validInterestsPayload()), env);
+  assert.equal(res.status, 200);
+  assert.equal(limitCalls, 1, 'the limiter runs once per form request, not per book');
+  assert.equal(siteverifyCalls, 1, 'Turnstile is verified once per form request, not per book');
 });
 
 // ===========================================================================
@@ -679,15 +882,17 @@ test('missing/false consent returns the same generic ok before limiter/Turnstile
 
 test('duplicate (existing email+book) and new both return identical generic ok', async () => {
   const id = crypto.randomUUID();
-  // First responder: existing row found -> UPDATE path.
-  const dupSql = makeSql((text) => {
-    if (/SELECT id, status/.test(text)) return [{ id, status: 'withdrawn' }];
-    if (/^UPDATE mj_eoi/.test(text)) return [];
-    throw new Error('unexpected: ' + text);
-  });
+  // First responder: existing row found -> UPDATE path inside the batch.
+  const dupSql = makeSql(existingResponder({ id, book_code: 'biography', status: 'withdrawn' }));
   const newSql = makeSql(insertResponder());
-  const dupRes = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), makeEnv({ sql: dupSql }));
-  const newRes = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), makeEnv({ sql: newSql }));
+  const dupRes = await worker.fetch(
+    jsonPost('/api/books/eoi', validPayload()),
+    makeEnv({ sql: dupSql, transaction: sequentialTransaction(dupSql) })
+  );
+  const newRes = await worker.fetch(
+    jsonPost('/api/books/eoi', validPayload()),
+    makeEnv({ sql: newSql, transaction: sequentialTransaction(newSql) })
+  );
   assert.equal(dupRes.status, 200);
   assert.equal(newRes.status, 200);
   assert.deepEqual(await body(dupRes), await body(newRes));
@@ -696,6 +901,195 @@ test('duplicate (existing email+book) and new both return identical generic ok',
   assert.ok(upd);
   assert.ok(upd.params.includes('withdrawn'));
   assert.ok(upd.params.includes('new'));
+});
+
+// ===========================================================================
+// 6b. Atomic multi-book storage (engine-backed: real batch, real rollback)
+// ===========================================================================
+
+test('a two-book submission writes both rows in ONE transaction with a shared hash and per-row ciphertext', async () => {
+  const engine = makeEngine();
+  const env = makeEnv({ sql: engine.sql, transaction: engine.transaction });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validInterestsPayload()), env);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await body(res), { ok: true });
+
+  // Exactly one batch was submitted.
+  assert.equal(engine.txns.length, 1, 'both books commit in a single transaction');
+  const batch = engine.txns[0];
+  // Two writes + the guarded assertion.
+  assert.equal(batch.length, 3);
+  assert.match(batch[0].text, /^INSERT INTO mj_eoi/);
+  assert.match(batch[1].text, /^INSERT INTO mj_eoi/);
+  assert.match(batch[2].text, /^SELECT 1 \//);
+  assert.match(batch[0].text, /ON CONFLICT DO NOTHING RETURNING id/);
+  assert.match(batch[1].text, /ON CONFLICT DO NOTHING RETURNING id/);
+
+  // Both rows share ONE normalized email hash...
+  const expectedHash = await hmacEmailHash(HMAC_KEY, 'jane.example@example.com');
+  assert.equal(engine.txns[0][0].params[2], expectedHash);
+  assert.equal(engine.txns[0][1].params[2], expectedHash);
+  // ...with distinct row ids, distinct ciphertext AND iv (separate AAD), and
+  // independent per-book quantities.
+  const [a, b] = engine.txns[0];
+  assert.notEqual(a.params[0], b.params[0], 'distinct row ids');
+  assert.notEqual(a.params[3], b.params[3], 'distinct ciphertext (per-row AAD)');
+  assert.notEqual(a.params[4], b.params[4], 'distinct iv');
+  const books = [a.params[1], b.params[1]].sort();
+  assert.deepEqual(books, ['biography', 'childrens']);
+  const qtyByBook = { [a.params[1]]: a.params[5], [b.params[1]]: b.params[5] };
+  assert.deepEqual(qtyByBook, { biography: 2, childrens: 3 }, 'independent per-book quantities');
+
+  // The stored ciphertext of each row decrypts under its OWN row id only.
+  const bioRow = engine.rows.find((r) => r.book_code === 'biography');
+  const kidRow = engine.rows.find((r) => r.book_code === 'childrens');
+  assert.deepEqual(
+    await decryptPii(ENC_KEY, bioRow.pii_ciphertext, bioRow.pii_iv, bioRow.id),
+    { name: 'Jane Doe', email: 'jane.example@example.com' }
+  );
+  await assert.rejects(() => decryptPii(ENC_KEY, bioRow.pii_ciphertext, bioRow.pii_iv, kidRow.id));
+  // A missing format inserts with the internal 'unsure' default.
+  assert.equal(bioRow.format_code, 'unsure');
+  assert.equal(kidRow.format_code, 'unsure');
+});
+
+test('the assertion statement aborts the whole batch when a concurrent writer lands a different row id', async () => {
+  // The real hash for the raced childrens row makes the assertion actually
+  // count it (different id -> count mismatch -> division by zero -> rollback).
+  const expectedHash = await hmacEmailHash(HMAC_KEY, 'jane.example@example.com');
+  const engine = makeEngine([], {
+    beforeTxn: (attempt, rows) => {
+      if (attempt === 1) {
+        rows.push({
+          id: crypto.randomUUID(), book_code: 'childrens',
+          email_hash: expectedHash, pii_ciphertext: 'x', pii_iv: 'y',
+          quantity: 1, format_code: 'unsure', status: 'new'
+        });
+      }
+    }
+  });
+  const env = makeEnv({ sql: engine.sql, transaction: engine.transaction });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validInterestsPayload()), env);
+  assert.equal(res.status, 200, 'the retry recovers by re-reading the raced row');
+  assert.equal(engine.txns.length, 2, 'exactly one bounded retry');
+
+  // Rollback proof: after the failed first batch the biography insert is gone;
+  // the committed second batch leaves exactly two rows.
+  const finalRows = engine.rows.filter((r) => r.email_hash === expectedHash);
+  assert.equal(finalRows.length, 2);
+  assert.ok(finalRows.some((r) => r.book_code === 'biography'));
+  // The childrens row kept the RACED id (the concurrent writer's row wins) and
+  // was refreshed via the id-guarded UPDATE.
+  const kids = finalRows.find((r) => r.book_code === 'childrens');
+  assert.notEqual(kids.pii_ciphertext, 'x', 'the raced row was re-encrypted by the UPDATE');
+  assert.equal(kids.quantity, 3);
+  // The first batch's statements prove the biography INSERT was attempted and
+  // rolled back before the retry re-submitted it.
+  assert.match(engine.txns[0][0].text, /^INSERT INTO mj_eoi/);
+});
+
+test('a persistent race exhausts the bounded retries and fails closed with a generic 503', async () => {
+  // A hostile concurrent writer keeps flipping the childrens row id between
+  // every read and its transaction, so every attempt's assertion fails.
+  const expectedHash = await hmacEmailHash(HMAC_KEY, 'jane.example@example.com');
+  const engine = makeEngine([], {
+    beforeTxn: (attempt, rows) => {
+      const kids = rows.find((r) => r.book_code === 'childrens' && r.email_hash === expectedHash);
+      if (kids) {
+        kids.id = crypto.randomUUID(); // the read saw the previous id
+      } else {
+        rows.push({
+          id: crypto.randomUUID(), book_code: 'childrens',
+          email_hash: expectedHash, pii_ciphertext: 'x', pii_iv: 'y',
+          quantity: 1, format_code: 'unsure', status: 'new'
+        });
+      }
+    }
+  });
+  const env = makeEnv({ sql: engine.sql, transaction: engine.transaction });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validInterestsPayload()), env);
+  assert.equal(res.status, 503);
+  assert.equal(engine.txns.length, 1 + EOI_MAX_TRANSACTION_RETRIES, 'initial attempt plus exactly two retries');
+  const text = await res.text();
+  assert.equal(text.includes('@'), false, 'no PII in the failure response');
+});
+
+test('a non-race transaction error is NOT retried (fails closed 503 immediately)', async () => {
+  let attempts = 0;
+  const sql = makeSql((text) => {
+    if (/SELECT id, book_code, status/.test(text)) return [];
+    if (/^SELECT 1 \//.test(text)) return [];
+    throw new Error('unexpected: ' + text);
+  });
+  const transaction = async (statements) => {
+    attempts += 1;
+    const err = new Error('unique constraint failed: something'); // message says "unique"
+    err.code = '23503'; // ...but it is actually a foreign-key violation
+    throw err;
+  };
+  const env = makeEnv({ sql, transaction });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
+  assert.equal(res.status, 503);
+  assert.equal(attempts, 1, 'a non-race error must not be retried');
+});
+
+test('an unselected existing book row is untouched by a one-book submission', async () => {
+  const emailHash = await hmacEmailHash(HMAC_KEY, 'jane.example@example.com');
+  const kidsId = crypto.randomUUID();
+  const engine = makeEngine([
+    {
+      id: kidsId, book_code: 'childrens', email_hash: emailHash,
+      pii_ciphertext: 'old-ct', pii_iv: 'old-iv', quantity: 9,
+      format_code: 'hardcover', status: 'contacted'
+    }
+  ]);
+  const env = makeEnv({ sql: engine.sql, transaction: engine.transaction });
+  const res = await worker.fetch(
+    jsonPost('/api/books/eoi', validInterestsPayload({ interests: [{ book: 'biography', quantity: 1 }] })),
+    env
+  );
+  assert.equal(res.status, 200);
+  const kids = engine.rows.find((r) => r.book_code === 'childrens');
+  assert.equal(kids.pii_ciphertext, 'old-ct', 'unselected row ciphertext untouched');
+  assert.equal(kids.quantity, 9, 'unselected row quantity untouched');
+  assert.equal(kids.status, 'contacted', 'unselected row status untouched');
+  assert.equal(kids.format_code, 'hardcover', 'unselected row format untouched');
+});
+
+test('a withdrawn selected book is reactivated and its historical format is preserved', async () => {
+  const emailHash = await hmacEmailHash(HMAC_KEY, 'jane.example@example.com');
+  const bioId = crypto.randomUUID();
+  const engine = makeEngine([
+    {
+      id: bioId, book_code: 'biography', email_hash: emailHash,
+      pii_ciphertext: 'old-ct', pii_iv: 'old-iv', quantity: 1,
+      format_code: 'hardcover', status: 'withdrawn'
+    }
+  ]);
+  const env = makeEnv({ sql: engine.sql, transaction: engine.transaction });
+  const res = await worker.fetch(
+    jsonPost('/api/books/eoi', validInterestsPayload({ interests: [{ book: 'biography', quantity: 4 }] })),
+    env
+  );
+  assert.equal(res.status, 200);
+  const bio = engine.rows.find((r) => r.book_code === 'biography');
+  assert.equal(bio.id, bioId, 'the row id is preserved (ciphertext AAD contract)');
+  assert.equal(bio.status, 'new', 'withdrawn -> new reactivation');
+  assert.equal(bio.quantity, 4);
+  assert.equal(bio.format_code, 'hardcover', 'omitted format preserves the historical value');
+  assert.notEqual(bio.pii_ciphertext, 'old-ct', 'PII is refreshed with the row id AAD');
+  const upd = engine.txns[0].find((s) => /^UPDATE/.test(s.text));
+  assert.ok(upd, 'existing row takes the id-guarded UPDATE');
+  assert.equal(upd.params[6], bioId);
+  assert.match(upd.text, /WHERE id = \$7 RETURNING id/);
+});
+
+test('isEoiRaceError matches only unique-violation and division-by-zero SQLSTATEs', () => {
+  assert.equal(isEoiRaceError({ code: '23505' }), true);
+  assert.equal(isEoiRaceError({ code: '22012' }), true);
+  assert.equal(isEoiRaceError({ code: '23503' }), false);
+  assert.equal(isEoiRaceError({ message: 'unique constraint failed' }), false);
+  assert.equal(isEoiRaceError(null), false);
 });
 
 // ===========================================================================
@@ -1273,14 +1667,15 @@ test('admin list: tampered ciphertext yields null PII without leaking raw', asyn
   assert.equal(data.rows[0].email, null);
 });
 
-test('admin summary returns per-book active counts, today + 7-day windows, statuses, total; no PII', async () => {
+test('admin summary returns per-book active counts, windows, statuses, total, and distinct contacts; no PII', async () => {
   const summaryRow = {
     bio_interest: 3, bio_copies: 7,
     child_interest: 1, child_copies: 2,
     today_submissions: 2, today_copies: 4,
     last7_submissions: 5, last7_copies: 9,
     status_new: 4, status_contacted: 2, status_withdrawn: 1,
-    total: 7
+    total: 7,
+    overall_contacts: 5
   };
   const env = makeEnv({ sql: makeSql(() => [summaryRow]) });
   const res = await worker.fetch(await authedReq('/api/admin/books/eoi/summary'), env);
@@ -1292,6 +1687,7 @@ test('admin summary returns per-book active counts, today + 7-day windows, statu
   assert.deepEqual(data.last7Days, { submissions: 5, copies: 9 });
   assert.deepEqual(data.byStatus, { new: 4, contacted: 2, withdrawn: 1 });
   assert.equal(data.total, 7);
+  assert.equal(data.overallContacts, 5, 'distinct recorded contacts');
   assert.equal(JSON.stringify(data).includes('@'), false);
 });
 
@@ -1301,7 +1697,7 @@ test('admin summary fails closed 503 when the DB throws', async () => {
   assert.equal(res.status, 503);
 });
 
-test('admin summary: empty DB yields all-zero windows, statuses, and books', async () => {
+test('admin summary: empty DB yields all-zero windows, statuses, books, and distinct contacts', async () => {
   const env = makeEnv({ sql: makeSql(() => [{}]) });
   const res = await worker.fetch(await authedReq('/api/admin/books/eoi/summary'), env);
   const data = await body(res);
@@ -1311,6 +1707,7 @@ test('admin summary: empty DB yields all-zero windows, statuses, and books', asy
   assert.deepEqual(data.last7Days, { submissions: 0, copies: 0 });
   assert.deepEqual(data.byStatus, { new: 0, contacted: 0, withdrawn: 0 });
   assert.equal(data.total, 0);
+  assert.equal(data.overallContacts, 0);
 });
 
 // --- summarizeBookEoi: parameterized date windows + counts (single scan) ---
@@ -1336,15 +1733,18 @@ test('summarizeBookEoi computes UTC start-of-today and trailing-7-day boundaries
   // Per-book active counts exclude withdrawn via status <> $2.
   assert.match(text, /book_code = \$1 AND status <> \$2/);
   assert.match(text, /book_code = \$3 AND status <> \$2/);
-  // Only created_at/quantity/status/book_code are referenced; no PII columns.
-  assert.equal(/pii_|email_hash/i.test(text), false);
+  // Distinct contacts is a single COUNT(DISTINCT email_hash) over all rows.
+  assert.match(text, /COUNT\(DISTINCT email_hash\) AS overall_contacts/);
+  // Only created_at/quantity/status/book_code/email_hash are referenced; no PII columns.
+  assert.equal(/pii_/i.test(text), false);
 });
 
 test('summarizeBookEoi maps a single aggregated row into the canonical shape and coerces to numbers', async () => {
   const sql = async () => [{
     bio_interest: '3', bio_copies: '7', child_interest: '1', child_copies: '2',
     today_submissions: '2', today_copies: '4', last7_submissions: '5', last7_copies: '9',
-    status_new: '4', status_contacted: '2', status_withdrawn: '1', total: '7'
+    status_new: '4', status_contacted: '2', status_withdrawn: '1', total: '7',
+    overall_contacts: '5'
   }];
   const out = await summarizeBookEoi(sql, { now: new Date('2026-08-07T10:00:00Z') });
   assert.equal(typeof out.books.biography.interestCount, 'number');
@@ -1355,6 +1755,45 @@ test('summarizeBookEoi maps a single aggregated row into the canonical shape and
   assert.equal(out.last7Days.submissions, 5);
   assert.equal(out.byStatus.withdrawn, 1);
   assert.equal(out.total, 7);
+  assert.equal(out.overallContacts, 5);
+});
+
+test('summarizeBookEoi counting semantics: two rows from one contact are two interests but ONE contact', async () => {
+  // One contact interested in both books: two book-interest rows sharing an
+  // email_hash. Per-book counts are 1 each; total is 2 (row-level);
+  // overallContacts is 1 (distinct people). A withdrawn row still counts as a
+  // recorded contact and in total, but not in the per-book active counts.
+  const hash = 'a'.repeat(64);
+  const rows = [
+    { book_code: 'biography', email_hash: hash, quantity: 2, status: 'new', created_at: new Date().toISOString() },
+    { book_code: 'childrens', email_hash: hash, quantity: 1, status: 'withdrawn', created_at: new Date().toISOString() }
+  ];
+  const sql = async (text, params) => {
+    assert.match(text, /COUNT\(DISTINCT email_hash\)/);
+    // Evaluate the FILTER aggregates against the fixture rows: params mirror
+    // the statement ($1 bio, $2 withdrawn, $3 childrens).
+    const active = (book) => rows.filter((r) => r.book_code === book && r.status !== params[1]);
+    return [{
+      bio_interest: active(params[0]).length,
+      bio_copies: active(params[0]).reduce((t, r) => t + r.quantity, 0),
+      child_interest: active(params[2]).length,
+      child_copies: active(params[2]).reduce((t, r) => t + r.quantity, 0),
+      today_submissions: rows.length,
+      today_copies: 3,
+      last7_submissions: rows.length,
+      last7_copies: 3,
+      status_new: rows.filter((r) => r.status === 'new').length,
+      status_contacted: 0,
+      status_withdrawn: 1,
+      total: rows.length,
+      overall_contacts: new Set(rows.map((r) => r.email_hash)).size
+    }];
+  };
+  const out = await summarizeBookEoi(sql, { now: new Date() });
+  assert.equal(out.books.biography.interestCount, 1);
+  assert.equal(out.books.childrens.interestCount, 0, 'withdrawn excluded from active per-book counts');
+  assert.equal(out.total, 2, 'row-level: one row per book interest');
+  assert.equal(out.overallContacts, 1, 'distinct contact counted once across both books');
 });
 
 test('summarizeBookEoi throws on an invalid clock value (fails closed, never silently wrong)', async () => {
@@ -1696,11 +2135,220 @@ test('createNeonSqlExecutor throws when neonClient.query is absent', () => {
   assert.throws(() => createNeonSqlExecutor(null), /query/);
 });
 
-test('production executor wraps neon() via createNeonSqlExecutor (no raw function-form return)', () => {
+test('installed @neondatabase/serverless neon() client also exposes .transaction()', async () => {
+  const { neon } = await import('@neondatabase/serverless');
+  const client = neon('postgres://u:p@host/db');
+  assert.equal(typeof client.transaction, 'function');
+});
+
+test('createNeonTransactionExecutor submits the whole descriptor batch as ONE transaction via query()', async () => {
+  const { neon } = await import('@neondatabase/serverless');
+  const client = neon('postgres://u:p@host/db');
+  const queryPromises = [];
+  const batches = [];
+  client.query = (text, params) => {
+    const p = { text, params };
+    queryPromises.push(p);
+    return { ...p, lazy: true };
+  };
+  client.transaction = async (queries) => {
+    batches.push(queries);
+    return queries.map(() => []);
+  };
+  const transaction = createNeonTransactionExecutor(client);
+  const statements = [
+    { text: 'INSERT INTO t VALUES ($1)', params: ['a'] },
+    { text: 'SELECT 1 / $1', params: [1] }
+  ];
+  const results = await transaction(statements);
+  assert.deepEqual(results, [[], []]);
+  assert.equal(batches.length, 1, 'exactly one HTTP batch transaction');
+  assert.deepEqual(
+    batches[0],
+    [
+      { text: 'INSERT INTO t VALUES ($1)', params: ['a'], lazy: true },
+      { text: 'SELECT 1 / $1', params: [1], lazy: true }
+    ],
+    'descriptors convert through the parameterized query() entry point'
+  );
+});
+
+test('createNeonTransactionExecutor throws when query/transaction are absent', () => {
+  assert.throws(() => createNeonTransactionExecutor({}), /transaction/);
+  assert.throws(() => createNeonTransactionExecutor({ query() {} }), /transaction/);
+  assert.throws(() => createNeonTransactionExecutor(null), /transaction/);
+});
+
+// --- Explicit transaction seam (no runtime sequential fallback) ---
+
+test('the test-only sequential helper runs descriptors in order and stops at the first failure', async () => {
+  const calls = [];
+  const sql = async (text, params) => { calls.push({ text, params }); return []; };
+  const transaction = sequentialTransaction(sql);
+  const out = await transaction([{ text: 'A', params: [1] }, { text: 'B', params: [] }]);
+  assert.deepEqual(out, [[], []]);
+  assert.deepEqual(calls, [{ text: 'A', params: [1] }, { text: 'B', params: [] }]);
+  // A failure mid-batch aborts the run: no later statement of the batch is
+  // executed (documented non-atomicity -- this helper exists ONLY in tests).
+  const executed = [];
+  const failing = async (text) => { executed.push(text); if (text === 'B') throw new Error('boom'); return []; };
+  const seq = sequentialTransaction(failing);
+  await assert.rejects(() => seq([{ text: 'A' }, { text: 'B' }, { text: 'C' }]));
+  assert.deepEqual(executed, ['A', 'B'], 'the statement after the first failure never runs');
+});
+
+test('injected SQL without an explicit transaction seam cannot process an EOI (generic 503, no writes)', async () => {
+  // BOOK_EOI_SQL is injected with NO BOOK_EOI_TRANSACTION and no bundled
+  // .transaction property: the Worker must fail closed -- no sequential
+  // fallback is installed -- before any database read or write.
+  const sql = makeSql(insertResponder());
+  const env = makeEnv({ sql });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
+  assert.equal(res.status, 503);
+  const text = await res.text();
+  assert.deepEqual(JSON.parse(text), { ok: false, error: 'Service unavailable.' });
+  assert.equal(text.includes('@'), false, 'no PII in the failure response');
+  assert.equal(sql.calls.length, 0, 'not even the pre-transaction read may run');
+});
+
+test('an explicitly injected BOOK_EOI_TRANSACTION seam is the one used for the batch', async () => {
+  const sql = makeSql(insertResponder());
+  const txns = [];
+  const transaction = async (statements) => {
+    txns.push(statements);
+    return statements.map(() => []);
+  };
+  const env = makeEnv({ sql, transaction });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validInterestsPayload()), env);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await body(res), { ok: true });
+  // The whole two-book submission was submitted to the EXPLICIT seam exactly
+  // once: two INSERTs plus the guarded assertion.
+  assert.equal(txns.length, 1);
+  assert.equal(txns[0].length, 3);
+  assert.match(txns[0][0].text, /^INSERT INTO mj_eoi/);
+  assert.match(txns[0][1].text, /^INSERT INTO mj_eoi/);
+  assert.match(txns[0][2].text, /^SELECT 1 \//);
+  // Batch writes went through the seam, NOT the sql executor: the executor
+  // only saw the single pre-transaction read.
+  assert.equal(sql.calls.length, 1);
+  assert.match(sql.calls[0].text, /SELECT id, book_code, status/);
+});
+
+test('a transaction property bundled on the injected executor satisfies the seam', async () => {
+  const sql = makeSql(insertResponder());
+  const txns = [];
+  sql.transaction = async (statements) => {
+    txns.push(statements);
+    return statements.map(() => []);
+  };
+  const env = makeEnv({ sql });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await body(res), { ok: true });
+  assert.equal(txns.length, 1);
+  assert.equal(txns[0].length, 2, 'INSERT + guarded assertion for a one-book submission');
+  // An explicit BOOK_EOI_TRANSACTION wins over the bundled property.
+  const explicit = [];
+  const env2 = makeEnv({
+    sql,
+    transaction: async (statements) => { explicit.push(statements); return statements.map(() => []); }
+  });
+  const res2 = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env2);
+  assert.equal(res2.status, 200);
+  assert.equal(explicit.length, 1);
+  assert.equal(txns.length, 1, 'the bundled property was not used when the explicit seam exists');
+});
+
+test('a non-callable BOOK_EOI_TRANSACTION is treated as absent (fail closed, 503)', async () => {
+  const sql = makeSql(insertResponder());
+  const env = makeEnv({ sql });
+  env.BOOK_EOI_TRANSACTION = 'not-a-function';
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
+  assert.equal(res.status, 503);
+  assert.equal(sql.calls.length, 0, 'no statements executed');
+});
+
+test('a failed first batch statement runs no further statements and writes nothing through sql', async () => {
+  // No sequential fallback means a failing batch aborts at the failing
+  // statement: nothing later in the batch executes and no write statement is
+  // ever routed through the plain sql seam.
+  const executed = [];
+  const sql = makeSql((text) => {
+    if (/SELECT id, book_code, status/.test(text)) return [];
+    throw new Error('write statements must not reach the sql seam: ' + text);
+  });
+  const transaction = async (statements) => {
+    for (const s of statements) {
+      executed.push(s.text);
+      if (/^INSERT INTO mj_eoi/.test(s.text)) {
+        const err = new Error('insert failed');
+        err.code = '23503'; // non-race: no retry
+        throw err;
+      }
+    }
+    return statements.map(() => []);
+  };
+  const env = makeEnv({ sql, transaction });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validInterestsPayload()), env);
+  assert.equal(res.status, 503);
+  // The batch aborted at the FIRST statement: the second INSERT and the
+  // guarded assertion never executed, and exactly one batch was attempted.
+  assert.equal(executed.length, 1);
+  assert.match(executed[0], /^INSERT INTO mj_eoi/);
+  assert.equal(sql.calls.length, 1, 'only the pre-transaction read hit the sql seam');
+});
+
+test('buildEoiBatchStatements emits per-book writes plus the exact-pairs assertion', () => {
+  const emailHash = 'f'.repeat(64);
+  const statements = buildEoiBatchStatements({
+    emailHash,
+    rows: [
+      { bookCode: 'biography', existing: false, id: 'id-1', piiCiphertext: 'ct1', piiIv: 'iv1', quantity: 2, formatCode: null },
+      { bookCode: 'childrens', existing: true, id: 'id-2', piiCiphertext: 'ct2', piiIv: 'iv2', quantity: 5, formatCode: 'ebook' }
+    ]
+  });
+  assert.equal(statements.length, 3);
+  assert.match(statements[0].text, /^INSERT INTO mj_eoi/);
+  assert.match(statements[0].text, /ON CONFLICT DO NOTHING RETURNING id/);
+  assert.equal(statements[0].params[2], emailHash, 'INSERT carries the shared hash');
+  assert.match(statements[1].text, /^UPDATE mj_eoi/);
+  assert.match(statements[1].text, /WHERE id = \$7 RETURNING id/);
+  const assertStmt = statements[2];
+  assert.match(assertStmt.text, /^SELECT 1 \//);
+  assert.match(assertStmt.text, /email_hash = \$1 AND book_code = ANY\(\$2::text\[\]\) AND id = ANY\(\$3::uuid\[\]\)/);
+  assert.equal(assertStmt.params[0], emailHash);
+  assert.deepEqual(assertStmt.params[1], ['biography', 'childrens']);
+  assert.deepEqual(assertStmt.params[2], ['id-1', 'id-2']);
+  assert.equal(assertStmt.params[3], 2, 'the expected count is the number of selected books');
+  // Every statement is a pure descriptor: fully-qualified table, placeholders only.
+  for (const s of statements) {
+    assert.doesNotMatch(s.text, /'jane|@example/i, 'no interpolated values');
+  }
+});
+
+test('production executors wrap neon() via createNeonSqlExecutor/createNeonTransactionExecutor', () => {
   const src = readFileSync(path.resolve(import.meta.dirname, '..', 'src', 'worker.js'), 'utf8');
-  assert.match(src, /return createNeonSqlExecutor\(neon\(env\.NEON_DATABASE_URL\)\)/);
+  assert.match(src, /sql:\s*createNeonSqlExecutor\(client\)/);
+  assert.match(src, /transaction:\s*createNeonTransactionExecutor\(client\)/);
   // The broken form -- returning the neon() client directly -- must be absent.
   assert.equal(/return neon\(env\.NEON_DATABASE_URL\)/.test(src), false);
+});
+
+test('production requires the Neon transaction executor; no sequential fallback exists in deployed source', () => {
+  const src = readFileSync(path.resolve(import.meta.dirname, '..', 'src', 'worker.js'), 'utf8');
+  const coreSrc = readFileSync(path.resolve(import.meta.dirname, '..', 'src', 'book-eoi.js'), 'utf8');
+  // The runtime sequential fallback is gone from deployed source entirely.
+  assert.equal(src.includes('createSequentialTransaction'), false, 'worker must not install a sequential fallback');
+  assert.equal(coreSrc.includes('createSequentialTransaction'), false, 'book-eoi core must not export a sequential fallback');
+  assert.equal(coreSrc.includes('sequentialTransaction'), false);
+  // An injected BOOK_EOI_SQL executor resolves its transaction ONLY through
+  // the explicit seam (BOOK_EOI_TRANSACTION or a bundled property)...
+  assert.match(src, /injectedBookEoiTransaction\(env\)/);
+  // ...and the write path fails closed when the seam is missing.
+  assert.match(src, /typeof executors\.transaction !== 'function'/);
+  // The production path always builds the atomic neonClient.transaction
+  // executor (which itself rejects clients without .transaction).
 });
 
 // --- HKDF / secret-length gate ---
@@ -1746,46 +2394,80 @@ test('isUniqueViolation matches only PG SQLSTATE 23505', () => {
   assert.equal(isUniqueViolation(undefined), false);
 });
 
-test('concurrent insert race (unique violation) is treated as idempotent success', async () => {
-  let insertAttempted = false;
+test('a unique-violation insert race is retried: the re-read finds the winner and takes the UPDATE path', async () => {
+  const racedRow = { id: crypto.randomUUID(), book_code: 'biography', status: 'new' };
+  let reads = 0;
+  let insertAttempts = 0;
   const sql = makeSql((text) => {
-    if (/SELECT id, status/.test(text)) return [];
+    if (/SELECT id, book_code, status/.test(text)) {
+      reads += 1;
+      return reads === 1 ? [] : [racedRow];
+    }
     if (/^INSERT INTO mj_eoi/.test(text)) {
-      insertAttempted = true;
+      insertAttempts += 1;
+      const err = new Error('duplicate key value violates unique constraint');
+      err.code = '23505';
+      throw err;
+    }
+    if (/^UPDATE mj_eoi/.test(text)) return [{ id: racedRow.id }];
+    if (/^SELECT 1 \//.test(text)) return [{ '?column?': 1 }];
+    throw new Error('unexpected: ' + text);
+  });
+  const env = makeEnv({ sql, transaction: sequentialTransaction(sql) });
+  const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await body(res), { ok: true });
+  assert.equal(insertAttempts, 1);
+  assert.equal(reads, 2, 'the race triggered exactly one bounded re-read');
+  const upd = sql.calls.find((c) => /^UPDATE/.test(c.text));
+  assert.ok(upd, 'the retry took the UPDATE path');
+  assert.equal(upd.params[6], racedRow.id, 'guarded by the raced row id');
+});
+
+test('a persistent unique-violation race exhausts the bounded retries and fails closed 503', async () => {
+  let insertAttempts = 0;
+  const sql = makeSql((text) => {
+    if (/SELECT id, book_code, status/.test(text)) return [];
+    if (/^INSERT INTO mj_eoi/.test(text)) {
+      insertAttempts += 1;
       const err = new Error('duplicate key value violates unique constraint');
       err.code = '23505';
       throw err;
     }
     throw new Error('unexpected: ' + text);
   });
-  const env = makeEnv({ sql });
+  const env = makeEnv({ sql, transaction: sequentialTransaction(sql) });
   const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
-  assert.equal(res.status, 200);
-  assert.deepEqual(await body(res), { ok: true });
-  assert.equal(insertAttempted, true);
+  assert.equal(res.status, 503);
+  assert.equal(insertAttempts, 1 + EOI_MAX_TRANSACTION_RETRIES, 'initial attempt plus exactly two retries');
 });
 
-test('a non-23505 SQL error during insert is NOT swallowed (fails closed 503)', async () => {
+test('a non-23505 SQL error during insert is NOT swallowed or retried (fails closed 503)', async () => {
+  let insertAttempts = 0;
   const sql = makeSql((text) => {
-    if (/SELECT id, status/.test(text)) return [];
+    if (/SELECT id, book_code, status/.test(text)) return [];
     if (/^INSERT INTO mj_eoi/.test(text)) {
+      insertAttempts += 1;
       const err = new Error('unique constraint failed: something'); // message says "unique"
       err.code = '23503'; // ...but it is actually a foreign-key violation
       throw err;
     }
     throw new Error('unexpected: ' + text);
   });
-  const env = makeEnv({ sql });
+  const env = makeEnv({ sql, transaction: sequentialTransaction(sql) });
   const res = await worker.fetch(jsonPost('/api/books/eoi', validPayload()), env);
   assert.equal(res.status, 503);
+  assert.equal(insertAttempts, 1, 'non-race errors must not be retried');
 });
 
 // --- XFF removal + stable unknown bucket ---
 
 test('rate-limit key uses cf-connecting-ip and ignores spoofable X-Forwarded-For', async () => {
   let seenKey;
+  const sql = makeSql(insertResponder());
   const env = makeEnv({
-    sql: makeSql(insertResponder()),
+    sql,
+    transaction: sequentialTransaction(sql),
     rateLimiter: { async limit({ key }) { seenKey = key; return { success: true }; } }
   });
   await worker.fetch(req('/api/books/eoi', {
@@ -1798,8 +2480,10 @@ test('rate-limit key uses cf-connecting-ip and ignores spoofable X-Forwarded-For
 
 test('rate-limit key falls back to a single stable unknown bucket (no XFF fan-out)', async () => {
   let seenKey;
+  const sql = makeSql(insertResponder());
   const env = makeEnv({
-    sql: makeSql(insertResponder()),
+    sql,
+    transaction: sequentialTransaction(sql),
     rateLimiter: { async limit({ key }) { seenKey = key; return { success: true }; } }
   });
   await worker.fetch(req('/api/books/eoi', {
@@ -1814,8 +2498,10 @@ test('rate-limit key falls back to a single stable unknown bucket (no XFF fan-ou
 
 test('Turnstile verification includes an idempotency_key UUID', async () => {
   let captured = null;
+  const sql = makeSql(insertResponder());
   const env = makeEnv({
-    sql: makeSql(insertResponder()),
+    sql,
+    transaction: sequentialTransaction(sql),
     turnstile: async (_url, init) => {
       const form = new URLSearchParams(init.body);
       captured = { idempotency_key: form.get('idempotency_key') };

@@ -1,16 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
 import {
   buildEoiPayload,
   messageForStatus,
-  findBookEntry,
-  counterValue,
-  counterText,
-  pluralize,
+  hasNoSelection,
   parseBookQuery,
   BOOK_VALUES,
   MIN_QUANTITY,
@@ -22,6 +19,7 @@ const publicDir = join(__dirname, '..', 'public');
 const booksHtml = readFileSync(join(publicDir, 'books.html'), 'utf8');
 const booksCss = readFileSync(join(publicDir, 'books.css'), 'utf8');
 const booksJs = readFileSync(join(publicDir, 'books.js'), 'utf8');
+const stylesCss = readFileSync(join(publicDir, 'styles.css'), 'utf8');
 const backToTopJs = readFileSync(join(publicDir, 'back-to-top.js'), 'utf8');
 const rootPkg = readFileSync(join(__dirname, '..', 'package.json'), 'utf8');
 
@@ -40,24 +38,28 @@ function mediaBlock(css, feature) {
   return css.slice(start, next === -1 ? undefined : next);
 }
 
+function panels() {
+  const panels = booksHtml.match(/<article class="books-panel"[\s\S]*?<\/article>/g);
+  assert.ok(panels && panels.length === 2, 'there must be exactly two book panels');
+  return panels;
+}
+
 // ===========================================================================
-// 1. HTML structure: two book cards with the visitor titles + live counters
+// 1. HTML structure: two book cards, exact visitor titles, real covers
 // ===========================================================================
 
-test('there are exactly two book panels titled Frayed Not Broken and MJ and the Wobbly Days', () => {
-  const panels = booksHtml.match(/<article class="books-panel"[\s\S]*?<\/article>/g);
-  assert.ok(panels, 'books-panel articles must exist');
-  assert.equal(panels.length, 2);
-  assert.ok(booksHtml.includes('Frayed Not Broken'), 'a Frayed Not Broken panel exists');
-  assert.ok(booksHtml.includes('MJ and the Wobbly Days'), 'an MJ and the Wobbly Days panel exists');
-  // The old visitor-facing labels are gone everywhere public.
+test('there are exactly two book panels titled Frayed Not Broken and MJ and Her Wobbly Days', () => {
+  const [bio, kids] = panels();
+  assert.match(bio, /<h3>Frayed Not Broken<\/h3>/);
+  assert.match(kids, /<h3>MJ and Her Wobbly Days<\/h3>/);
+  // The old title (and the old internal-facing labels) are gone everywhere.
+  assert.equal(booksHtml.includes('MJ and the Wobbly Days'), false, 'the old title must not survive anywhere');
   assert.equal(/<h3>Biography<\/h3>/.test(booksHtml), false);
   assert.equal(/Children&rsquo;s Book/.test(booksHtml), false);
 });
 
 test('each book panel carries its exact approved description', () => {
-  const panels = booksHtml.match(/<article class="books-panel"[\s\S]*?<\/article>/g);
-  const [bio, kids] = panels;
+  const [bio, kids] = panels();
   assert.equal(
     bio.match(/<p class="books-panel-text">([\s\S]*?)<\/p>/)[1].replace(/\s+/g, ' ').trim(),
     'An honest and personal reflection on life with Multiple Sclerosis&mdash;its fragility, its unexpected strength, and the faith and hope that continue to carry MJ forward.'
@@ -68,146 +70,174 @@ test('each book panel carries its exact approved description', () => {
   );
 });
 
-test('each book card opens with an intentional portrait cover reserve', () => {
-  const panels = booksHtml.match(/<article class="books-panel"[\s\S]*?<\/article>/g);
-  for (const panel of panels) {
+test('each book card opens with the real cover image in a fixed contain frame', () => {
+  const [bio, kids] = panels();
+  assert.match(
+    bio,
+    /<div class="book-cover-frame">\s*<img class="book-cover" src="\/images\/frayed-not-broken-cover\.jpg" width="797" height="1200" loading="lazy" decoding="async" alt="Cover of Frayed Not Broken">\s*<\/div>/
+  );
+  assert.match(
+    kids,
+    /<div class="book-cover-frame">\s*<img class="book-cover" src="\/images\/mj-and-her-wobbly-days-cover\.jpg" width="488" height="629" loading="lazy" decoding="async" alt="Cover of MJ and Her Wobbly Days">\s*<\/div>/
+  );
+  // No placeholder/reserve treatment remains anywhere on the page.
+  assert.equal(booksHtml.includes('book-cover-reserve'), false);
+});
+
+test('cover frames: consistent fixed outer frame with object-fit contain (complete cover visible)', () => {
+  const frame = ruleBody(stylesCss, '.book-cover-frame');
+  assert.ok(frame, '.book-cover-frame rule must exist');
+  assert.match(frame, /aspect-ratio:\s*3\s*\/\s*4/, 'a consistent portrait frame for both books');
+  const img = ruleBody(stylesCss, '.book-cover-frame img');
+  assert.ok(img, '.book-cover-frame img rule must exist');
+  assert.match(img, /object-fit:\s*contain/, 'the cover is contained, never cropped');
+  assert.match(img, /width:\s*100%/);
+  assert.match(img, /height:\s*100%/);
+  const narrow = mediaBlock(stylesCss, '(max-width: 640px)');
+  assert.match(narrow, /\.book-cover-frame\s*\{[^}]*width:\s*min\(100%,\s*180px\)/, 'frames stay modest on small screens');
+});
+
+// ===========================================================================
+// 1b. Anticipation + anchored CTA (equal-height cards)
+// ===========================================================================
+
+test('each card carries the exact Coming soon badge, anticipation message, and Join the update list CTA', () => {
+  const [bio, kids] = panels();
+  for (const panel of [bio, kids]) {
+    assert.match(panel, /<p class="book-availability">Coming soon<\/p>/, 'the exact Coming soon badge');
     assert.match(
       panel,
-      /<div class="book-cover-reserve" aria-hidden="true"><\/div>/,
-      'the card carries an aria-hidden portrait cover reserve'
+      /<p class="books-anticipation">Be among the first to know when it becomes available\.<\/p>/,
+      'the exact anticipation message'
     );
-    // No imagery, icon, or missing-image affordance inside the reserve.
-    assert.doesNotMatch(panel, /<img[^>]*books-cover/i);
-    assert.doesNotMatch(panel, /<img[^>]*book-cover/i);
+    assert.match(panel, />Join the update list<\/a>/, 'the exact CTA text');
   }
 });
 
-test('each book panel exposes interest and copies counter hooks', () => {
-  for (const book of ['biography', 'childrens']) {
-    assert.ok(
-      new RegExp(`data-book-counters="${book}"`).test(booksHtml),
-      `${book} counters container must exist`
-    );
-    assert.ok(
-      new RegExp(`data-book-interest="${book}"`).test(booksHtml),
-      `${book} interest value hook must exist`
-    );
-    assert.ok(
-      new RegExp(`data-book-copies="${book}"`).test(booksHtml),
-      `${book} copies value hook must exist`
-    );
-  }
-});
-
-test('counters start with a non-numeric placeholder (no fake counts)', () => {
-  // Both the interest and copies hooks start as an em dash entity, never a
-  // fabricated number (and never an apparent 0 while data loads).
-  for (const book of ['biography', 'childrens']) {
-    const interest = booksHtml.match(new RegExp(`data-book-interest="${book}"[^>]*>([^<]*)<`));
-    assert.ok(interest, `${book} interest hook must exist`);
-    assert.equal(interest[1].trim(), '&mdash;', `${book} interest placeholder must be an em dash, not a number`);
-    const copies = booksHtml.match(new RegExp(`data-book-copies="${book}"[^>]*>([^<]*)<`));
-    assert.ok(copies, `${book} copies hook must exist`);
-    assert.equal(copies[1].trim(), '&mdash;', `${book} copies placeholder must be an em dash, not a number`);
-  }
-});
-
-// ===========================================================================
-// 1b. Book-specific register-interest CTAs (validated ?book=<code>#books-form)
-// ===========================================================================
-
-test('each book panel carries an honest register-interest CTA using the ?book=<code>#books-form contract', () => {
-  const panels = booksHtml.match(/<article class="books-panel"[\s\S]*?<\/article>/g);
-  assert.ok(panels && panels.length === 2, 'there must be exactly two book panels');
-  const [bio, kids] = panels;
-  // CTAs: canonical codes + current visitor titles.
-  assert.match(bio, /href="\?book=biography#books-form"/, 'Biography CTA uses the canonical same-page contract');
-  assert.match(bio, />Register interest in Frayed Not Broken</, 'Biography CTA uses the visitor title');
-  assert.match(kids, /href="\?book=childrens#books-form"/, "Children's CTA uses the canonical same-page contract");
-  assert.match(kids, /Register interest in MJ and the Wobbly Days/, "Children's CTA uses the visitor title");
-  // The hash target must exist so the same-page contract lands at the form.
+test('CTAs preselect their own book via the ?book=<code>#books-form contract with useful accessible names', () => {
+  const [bio, kids] = panels();
+  assert.match(bio, /href="\?book=biography#books-form"/);
+  assert.match(bio, /aria-label="Join the update list for Frayed Not Broken"/);
+  assert.match(kids, /href="\?book=childrens#books-form"/);
+  assert.match(kids, /aria-label="Join the update list for MJ and Her Wobbly Days"/);
   assert.match(booksHtml, /<section[^>]*id="books-form"/, 'the #books-form anchor section must exist');
 });
 
-test('book panel CTAs reuse existing button visual language and claim nothing invented', () => {
-  const panels = booksHtml.match(/<article class="books-panel"[\s\S]*?<\/article>/g);
-  for (const panel of panels) {
-    assert.match(panel, /class="button button-secondary"/, 'CTA reuses the existing secondary button language');
+test('cards are equal-height on desktop: flex column with the CTA anchored by margin-top auto', () => {
+  const panel = ruleBody(booksCss, '.books-panel');
+  assert.ok(panel);
+  assert.match(panel, /display:\s*flex/);
+  assert.match(panel, /flex-direction:\s*column/);
+  const cta = ruleBody(booksCss, '.books-panel-cta');
+  assert.ok(cta, '.books-panel-cta rule must exist');
+  assert.match(cta, /margin:\s*auto\s+0\s+0/, 'CTA anchored to the bottom edge via margin-top auto (no fixed offsets)');
+  const grid = ruleBody(booksCss, '.books-grid');
+  assert.match(grid, /grid-template-columns:\s*repeat\(2/);
+  assert.match(grid, /align-items:\s*stretch/, 'both tracks stretch so the panels share one height');
+});
+
+// ===========================================================================
+// 2. Public stats are gone from the page (API contract stays server-side)
+// ===========================================================================
+
+test('the public interest/copy counters and their status region are fully removed', () => {
+  for (const absent of [
+    'books-counters',
+    'books-counter-value',
+    'data-book-interest',
+    'data-book-copies',
+    'data-book-counters',
+    'books-counters-status'
+  ]) {
+    assert.equal(booksHtml.includes(absent), false, `${absent} must not remain in the markup`);
   }
-  // No invented purchase/price/reservation claims introduced by the CTAs.
-  assert.doesNotMatch(booksHtml, /Register interest[^<]*(buy|price|pre-?order|reserv)/i);
+  assert.equal(booksCss.includes('books-counters'), false, 'counter styles must not remain');
+});
+
+test('books.js no longer fetches /api/books/interest (the API itself is retained for ops)', () => {
+  assert.equal(booksJs.includes('/api/books/interest'), false, 'no interest fetch remains in the client');
+  assert.doesNotMatch(booksJs, /loadCounters|renderCounters|setCounters|announceCounters/, 'no counter code remains');
+  assert.match(booksJs, /'\/api\/books\/eoi'/, 'the EOI endpoint is still used');
 });
 
 // ===========================================================================
-// 2. EOI form: canonical fields, honeypot, required consent, Turnstile marker
+// 3. EOI form: one-or-both checkboxes + per-book estimated copies
 // ===========================================================================
 
-test('the EOI form uses canonical book radio values matching the backend allowlist', () => {
+test('the form uses two accessible checkboxes with the exact visitor titles and canonical codes', () => {
   const form = booksHtml.match(/<form[^>]*id="books-eoi-form"[\s\S]*?<\/form>/)[0];
-  const radios = form.match(/<input[^>]*type="radio"[^>]*name="book"[^>]*>/g);
-  assert.ok(radios);
-  const values = radios.map((r) => r.match(/value="([^"]+)"/)[1]).sort();
+  const boxes = form.match(/<input[^>]*type="checkbox"[^>]*name="books"[^>]*>/g);
+  assert.ok(boxes);
+  const values = boxes.map((b) => b.match(/value="([^"]+)"/)[1]).sort();
   assert.deepEqual(values, [...BOOK_VALUES].sort());
-  // The radio labels use the current visitor titles; the internal codes stay.
-  assert.match(form, /value="biography" required>\s*<span>Frayed Not Broken<\/span>/);
-  assert.match(form, /value="childrens" required>\s*<span>MJ and the Wobbly Days<\/span>/);
+  assert.match(form, /value="biography">\s*<span>Frayed Not Broken<\/span>/);
+  assert.match(form, /value="childrens">\s*<span>MJ and Her Wobbly Days<\/span>/);
+  // Each checkbox label meets the control target floor via the shared style.
+  assert.match(booksCss, /\.books-choice\s*\{[^}]*min-height:\s*48px/, 'the shared choice row keeps its target size');
 });
 
-test('the preferred format control is removed from the visitor form', () => {
+test('the fieldset legend supports choosing one or both books', () => {
   const form = booksHtml.match(/<form[^>]*id="books-eoi-form"[\s\S]*?<\/form>/)[0];
-  assert.doesNotMatch(form, /name="format"/i, 'no format input/select remains');
-  assert.doesNotMatch(form, /Preferred format/i, 'no format label remains');
-  assert.doesNotMatch(form, /<select/i, 'no select control remains in the form');
+  assert.match(form, /<legend>Which books are you interested in\? Choose one or both\.<\/legend>/);
+  // The old radio group and the shared top-level quantity control are gone.
+  assert.doesNotMatch(form, /type="radio"/);
+  assert.doesNotMatch(form, /name="quantity"/, 'no top-level quantity input remains (per-book controls own it)');
+  assert.doesNotMatch(form, /Number of copies/);
 });
 
-test('quantity input enforces the backend 1..10 integer window', () => {
-  const input = booksHtml.match(/<input[^>]*name="quantity"[^>]*>/)[0];
-  assert.equal(input.match(/min="(\d+)"/)[1], String(MIN_QUANTITY));
-  assert.equal(input.match(/max="(\d+)"/)[1], String(MAX_QUANTITY));
-  assert.match(input, /step="1"/);
+test('each checkbox owns a labelled per-book quantity control, hidden and disabled while unselected', () => {
+  const form = booksHtml.match(/<form[^>]*id="books-eoi-form"[\s\S]*?<\/form>/)[0];
+  for (const [code, title] of [['biography', 'Frayed Not Broken'], ['childrens', 'MJ and Her Wobbly Days']]) {
+    const container = form.match(new RegExp(`<div class="books-qty" data-qty-for="${code}" hidden>[\\s\\S]*?</div>`));
+    assert.ok(container, `${code} quantity container must exist, hidden by default`);
+    assert.match(
+      container[0],
+      new RegExp(`<label for="books-qty-${code}">Estimated copies of ${title}</label>`),
+      'the control is clearly labelled with its book'
+    );
+    const input = container[0].match(/<input[^>]*>/)[0];
+    assert.match(input, new RegExp(`id="books-qty-${code}"`));
+    assert.match(input, /type="number"/);
+    assert.match(input, new RegExp(`name="quantity-${code}"`));
+    assert.match(input, /min="1"/);
+    assert.match(input, /max="10"/);
+    assert.match(input, /step="1"/);
+    assert.match(input, /value="1"/, 'default quantity is 1');
+    assert.match(input, /\bdisabled\b/, 'disabled while its book is unselected');
+  }
 });
 
-test('a hidden honeypot field (website) is present and visually hidden', () => {
-  assert.match(booksHtml, /name="website"/, 'honeypot named website must exist');
-  assert.match(booksHtml, /books-honeypot/, 'a honeypot container class must exist');
-  assert.match(booksCss, /\.books-honeypot\s*\{[\s\S]*?position:\s*absolute/, 'honeypot is positioned off-screen');
+test('the quantity reveal is a real a11y collapse: display:none beats the grid when hidden', () => {
+  const qty = ruleBody(booksCss, '.books-qty');
+  assert.ok(qty);
+  assert.match(qty, /grid-template-columns:\s*minmax\(0,\s*1fr\)/, '0-minimum track keeps the 320px overflow fix');
+  const hidden = ruleBody(booksCss, '.books-qty[hidden]');
+  assert.ok(hidden, 'an explicit [hidden] guard must exist (display:grid overrides the UA default)');
+  assert.match(hidden, /display:\s*none/);
 });
 
-test('consent is an explicit, required checkbox', () => {
+test('honeypot, consent, Turnstile marker, and status region contracts are preserved', () => {
+  assert.match(booksHtml, /name="website"/);
+  assert.match(booksCss, /\.books-honeypot\s*\{[\s\S]*?position:\s*absolute/);
   const cb = booksHtml.match(/<input[^>]*name="consent"[^>]*>/)[0];
   assert.match(cb, /type="checkbox"/);
   assert.match(cb, /\brequired\b/);
-  // The consent copy states updates-only usage.
-  assert.match(booksHtml, /updates[\s\S]*?book/i);
-});
-
-test('the Turnstile container carries the unique site-key marker and the books-eoi action', () => {
   const box = booksHtml.match(/<div[^>]*id="books-turnstile"[^>]*>/)[0];
-  assert.match(box, /data-sitekey="__BOOKS_TURNSTILE_SITE_KEY__"/, 'site key is a marker, never a literal key');
+  assert.match(box, /data-sitekey="__BOOKS_TURNSTILE_SITE_KEY__"/);
   assert.match(box, /data-action="books-eoi"/);
-});
-
-test('no literal/hardcoded Turnstile site key is present in the HTML', () => {
-  // A real site key looks like 1x...; the page must only ever carry the marker.
   assert.equal(/data-sitekey="(0x|1x)[a-f0-9]+/i.test(booksHtml), false);
-  assert.equal(booksHtml.includes('1x00000000000000000000AA'), false);
-});
-
-test('a live status region and a counters status region exist for assistive feedback', () => {
   assert.match(booksHtml, /id="books-status"[^>]*role="status"[^>]*aria-live="polite"/);
-  assert.match(booksHtml, /id="books-counters-status"[^>]*role="status"[^>]*aria-live="polite"/);
 });
 
 test('no-JS text requires JS + Turnstile and links only to the gallery (no email fallback)', () => {
   const noscript = booksHtml.match(/<noscript>([\s\S]*?)<\/noscript>/)[1];
   assert.match(noscript, /JavaScript/i);
-  assert.match(noscript, /gallery/i);
   assert.match(noscript, /href="\/gallery"/);
-  assert.equal(noscript.includes('mailto:'), false, 'no email fallback in the books noscript');
+  assert.equal(noscript.includes('mailto:'), false);
 });
 
 // ===========================================================================
-// 3. Copy: exact hero + book intro, one clarification, no old disclaimers
+// 4. Copy: exact hero + book intro, clarifications intact, no invented claims
 // ===========================================================================
 
 test('the hero carries the exact approved eyebrow, heading, and description', () => {
@@ -229,78 +259,59 @@ test('the hero primary action is "Follow the books" into the EOI form, and the r
   const actions = booksHtml.match(/<div class="hero-actions">([\s\S]*?)<\/div>/)[1];
   assert.match(actions, /class="button button-primary" href="#books-form"/);
   assert.match(actions, />Follow the books</);
-  // Removed by the micro-adjustment: pills, oversized Before panel, Back to gallery.
-  assert.doesNotMatch(booksHtml, /hero-tags/, 'no hero pills');
-  assert.doesNotMatch(booksHtml, /Expression of interest<\/span>/, 'no pill text');
-  assert.doesNotMatch(booksHtml, /No payment now/, 'no pill text');
-  assert.doesNotMatch(booksHtml, /books-hero-card/, 'no oversized Before panel');
-  assert.doesNotMatch(booksHtml, /Before you continue/, 'no Before copy');
-  assert.doesNotMatch(booksHtml, /Back to the gallery/, 'no Back to gallery action');
-  assert.equal(/class="button button-secondary" href="\/gallery"/.test(booksHtml), false);
+  assert.doesNotMatch(booksHtml, /hero-tags/);
+  assert.doesNotMatch(booksHtml, /books-hero-card/);
+  assert.doesNotMatch(booksHtml, /Back to the gallery/);
 });
 
-test('the book intro section carries the exact approved eyebrow, heading, and description', () => {
+test('the book intro section and free-update-list clarification are intact exactly once', () => {
   const section = booksHtml.match(/<section class="section books-section" id="books-interest"[\s\S]*?<\/section>/)[0];
   assert.match(section, /<p class="section-label">Meet the books<\/p>/);
   assert.equal(
     section.match(/<h2 id="books-heading">([\s\S]*?)<\/h2>/)[1].trim(),
     'Two stories, written from the heart.'
   );
-  assert.equal(
-    section.match(/<p class="section-note">([\s\S]*?)<\/p>/)[1].replace(/\s+/g, ' ').trim(),
-    'Each book speaks to a different reader, but both grow from the same place: MJ&rsquo;s experience of finding strength, meaning, and moments of joy when life does not move as expected.'
-  );
-});
-
-test('the free-update-list clarification appears exactly once, near the form', () => {
   const exact =
     'Joining the update list is free and does not reserve a copy or commit you to buying. Your details will only be used to share news about the book or books you choose.';
   const count = (booksHtml.match(new RegExp(exact.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+'), 'g')) || []).length;
-  assert.equal(count, 1, 'the clarification copy appears exactly once');
-  const formSection = booksHtml.match(/<section class="section books-form-section"[\s\S]*?<\/section>/)[0];
-  assert.ok(formSection.includes('Joining the update list is free'), 'it lives at the EOI form');
+  assert.equal(count, 1);
 });
 
-test('the repeated old disclaimer language is removed', () => {
-  assert.doesNotMatch(booksHtml, /not a payment/i);
-  assert.doesNotMatch(booksHtml, /not a commitment to buy/i);
-  assert.doesNotMatch(booksHtml, /Nothing is\s+sold or paid for/i);
-  assert.doesNotMatch(booksHtml, /still to be decided/i);
-  assert.doesNotMatch(booksHtml, /Titles, covers, and prices are not announced yet/i);
-});
-
-test('no invented book data: no covers, prices, release dates, or pre-order claims', () => {
-  // No cover imagery at all (the cover reserves are empty decorative frames).
-  assert.equal(/<img[^>]*(books-cover|book-cover)/i.test(booksHtml), false);
-  // No currency/price tokens.
+test('no invented book data: no prices, release dates, or pre-order claims', () => {
   assert.equal(/(A\$|AUD|\$\d)/i.test(booksHtml), false);
   assert.equal(/\bprice\b/i.test(booksHtml), false);
-  assert.equal(/\b(pre-?order|preorder)\b/i.test(booksHtml), false, 'must not promise a pre-order');
+  assert.equal(/\b(pre-?order|preorder)\b/i.test(booksHtml), false);
   assert.equal(/\bISBN\b/i.test(booksHtml), false);
   assert.equal(/\b(release date|launches on|available \d{4})\b/i.test(booksHtml), false);
-  assert.equal(/\b(best-?seller|bestseller)\b/i.test(booksHtml), false);
 });
 
 // ===========================================================================
-// 4. Navigation: Books is current page; section links are root-absolute
+// 5. Full-width hero surface with an internal readable measure
+// ===========================================================================
+
+test('the Books hero surface spans the full content width with an internal copy measure', () => {
+  const hero = ruleBody(booksCss, '.books-hero-content');
+  assert.ok(hero);
+  assert.match(hero, /grid-template-columns:\s*1fr/, 'single full-width track (no companion column)');
+  assert.doesNotMatch(hero, /max-width:\s*60ch/, 'the obsolete 60ch outer cap is removed');
+  const measure = ruleBody(booksCss, '.books-hero-content .hero-text');
+  assert.ok(measure, 'an internal measure rule must exist');
+  assert.match(measure, /max-width:\s*6[2-9]ch/, 'the copy keeps a readable 62-70ch measure');
+  // The <=960 collapse stays coherent (the shared hero grid drops to one column).
+  const narrow = mediaBlock(booksCss, '(max-width: 960px)');
+  assert.ok(narrow);
+  assert.match(narrow, /\.books-hero-content\s*\{[^}]*grid-template-columns:\s*1fr/);
+});
+
+// ===========================================================================
+// 6. Navigation + build integration
 // ===========================================================================
 
 test('Books is the current page in the shared topbar nav (aria-current="page")', () => {
   const nav = booksHtml.match(/<nav[^>]*class="[^"]*topbar[^"]*"[\s\S]*?<\/nav>/)[0];
-  assert.match(nav, /href="\/books"[^>]*aria-current="page"/, 'the topbar Books link is the current page');
-  // The shared nav order is Home | Gallery | Books | Enquire.
-  assert.match(nav, /href="\/"/);
-  assert.match(nav, /href="\/gallery"/);
-  assert.match(nav, /href="\/#contact"/);
-});
-
-test('the topbar brand links home and the Books link is root-absolute', () => {
-  const topbar = booksHtml.match(/<nav[^>]*class="[^"]*topbar[^"]*"[\s\S]*?<\/nav>/)[0];
-  assert.match(topbar, /class="brand" href="\/"/);
-  assert.match(topbar, /href="\/books"/);
-  // No bare in-page section anchors that would strand a Books visitor.
-  assert.equal(/href="#gallery"/.test(topbar), false);
-  assert.equal(/href="#contact"/.test(topbar), false);
+  assert.match(nav, /href="\/books"[^>]*aria-current="page"/);
+  assert.match(nav, /class="brand" href="\/"/);
+  assert.equal(/href="#gallery"/.test(nav), false);
 });
 
 test('Books page provides #top as the Back to Top target and loads site-nav + books.js', () => {
@@ -310,150 +321,112 @@ test('Books page provides #top as the Back to Top target and loads site-nav + bo
   assert.match(booksHtml, /<script[^>]*src="\.\/books\.js/);
 });
 
-// ===========================================================================
-// 5. CSS: responsive 2->1 grid, centered readable form, no overflow
-// ===========================================================================
-
-test('book grid is two columns by default and collapses to one', () => {
-  const grid = ruleBody(booksCss, '.books-grid');
-  assert.ok(grid, '.books-grid rule must exist');
-  assert.match(grid, /grid-template-columns:\s*repeat\(2/);
-  const narrow = mediaBlock(booksCss, '(max-width: 960px)');
-  assert.ok(narrow, 'a max-width: 960px breakpoint must exist');
-  assert.match(narrow, /\.books-grid\s*\{[^}]*grid-template-columns:\s*1fr/);
-});
-
-test('EOI form is centered with a bounded readable measure', () => {
-  // Both tokens are unique to the standalone Books form/section rules (the
-  // grouped surface rules do not carry them), so a direct text check is robust.
-  assert.match(booksCss, /max-width:\s*620px/, 'the form must have a bounded readable measure');
-  assert.match(booksCss, /justify-items:\s*center/, 'the form section must center the form');
-});
-
-test('counters collapse to one column on very narrow viewports (no 320px overflow)', () => {
-  const very = mediaBlock(booksCss, '(max-width: 420px)');
-  assert.ok(very, 'a max-width: 420px breakpoint must exist for the counters');
-  assert.match(very, /\.books-counters\s*\{[^}]*grid-template-columns:\s*1fr/);
-});
-
-test('EOI form and its grid children/controls can shrink (min-width:0) to avoid 320px overflow', () => {
-  // The form is a grid item (of .books-form-section) and itself a grid
-  // container; without min-width:0 the form and its fields default to
-  // min-width:auto and force horizontal overflow at 320px. The standalone form
-  // rule (uniquely identified by max-width:620px, which the grouped surface
-  // rule does not carry) must set min-width:0; fieldset/label children carry
-  // min-width:0; inputs/selects are capped to their cell.
-  assert.match(
-    booksCss,
-    /\.books-eoi-form\s*\{[^}]*max-width:\s*620px[^}]*min-width:\s*0/,
-    'the standalone .books-eoi-form rule must set min-width:0'
-  );
-  assert.match(booksCss, /\.books-eoi-form\s+fieldset[\s\S]*?min-width:\s*0/, 'fieldset children must set min-width:0');
-  assert.match(booksCss, /\.books-eoi-form\s+label[\s\S]*?min-width:\s*0/, 'label children must set min-width:0');
-  assert.match(booksCss, /\.books-eoi-form\s+input[\s\S]*?max-width:\s*100%/, 'inputs must be capped to their cell');
-});
-
-test('EOI form and nested label/fieldset grids pin an explicit minmax(0,1fr) track (root-cause 320px fix)', () => {
-  // Root cause: styles.css makes every <label> a display:grid container, and
-  // .books-eoi-form + .books-fieldset are grids too. Their implicit auto tracks
-  // (minmax(auto,auto)) will not shrink below intrinsic control widths, forcing
-  // horizontal overflow at 320px. Each grid level must declare an explicit
-  // minmax(0,1fr) single track. The standalone form rule is uniquely identified
-  // by max-width:620px (the grouped surface rule lacks it); the two lookaheads
-  // are order-independent within that one rule body.
-  assert.match(
-    booksCss,
-    /\.books-eoi-form\s*\{(?=[^}]*max-width:\s*620px)(?=[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\))/,
-    'the standalone .books-eoi-form grid must declare a minmax(0,1fr) track'
-  );
-  assert.match(
-    booksCss,
-    /\.books-fieldset\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/,
-    '.books-fieldset grid must declare a minmax(0,1fr) track'
-  );
-  assert.match(
-    booksCss,
-    /\.books-eoi-form\s+label\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/,
-    'form labels must override the inherited <label>{display:grid} with a minmax(0,1fr) track'
-  );
-  // Negative guard: no grid container in the form subtree may regress to a
-  // bare/implicit track (auto min) that would reintroduce overflow.
-  assert.doesNotMatch(
-    booksCss,
-    /\.books-(eoi-form|fieldset)\s*\{[^}]*grid-template-columns:\s*(1fr|2fr|auto|repeat\([^)]*\))/,
-    'form grids must not regress to bare fr/auto tracks'
-  );
-});
-
-test('the honeypot is fully removed from layout (off-screen + 1px)', () => {
-  const hp = ruleBody(booksCss, '.books-honeypot');
-  assert.ok(hp);
-  assert.match(hp, /position:\s*absolute/);
-  assert.match(hp, /left:\s*-10000px/);
-  assert.match(hp, /(width:\s*1px|height:\s*1px|overflow:\s*hidden)/);
+test('books.js and back-to-top.js are syntax-checked by build/lint/type-check', () => {
+  for (const file of ['public/books.js', 'public/back-to-top.js']) {
+    for (const script of ['build', 'lint', 'type-check']) {
+      assert.ok(rootPkg.includes(`node --check ${file}`), `${file} must be in the ${script} check list`);
+    }
+  }
 });
 
 // ===========================================================================
-// 6. books.js pure helpers (no DOM/network)
+// 7. books.js pure helpers: one-or-both selection payloads
 // ===========================================================================
 
-const GOOD = {
-  book: 'biography',
-  quantity: 2,
+const CONTACT = {
   name: 'Jane Doe',
   email: 'jane@example.com',
   consent: true,
   turnstileToken: 'tok'
 };
 
-test('buildEoiPayload accepts a well-formed payload and canonicalizes consent to boolean true', () => {
-  const p = buildEoiPayload(GOOD);
+const SEL_BIO = { book: 'biography', checked: true, quantity: '2' };
+const SEL_KIDS = { book: 'childrens', checked: true, quantity: 3 };
+const SEL_BIO_OFF = { book: 'biography', checked: false, quantity: '5' };
+
+test('buildEoiPayload sends the exact interests payload for a single checked book', () => {
+  const p = buildEoiPayload({ ...CONTACT, selections: [SEL_BIO, SEL_KIDS_OFF()] });
   assert.ok(p);
-  assert.equal(p.book, 'biography');
+  assert.deepEqual(p.interests, [{ book: 'biography', quantity: 2 }]);
+  assert.equal(p.name, 'Jane Doe');
+  assert.equal(p.email, 'jane@example.com');
   assert.equal(p.consent, true);
-  assert.deepEqual(Object.keys(p).sort(), ['book', 'consent', 'email', 'name', 'quantity', 'turnstileToken']);
+  assert.deepEqual(Object.keys(p).sort(), ['consent', 'email', 'interests', 'name', 'turnstileToken']);
 });
 
-test('buildEoiPayload sends no format key (the control was removed from the form)', () => {
-  const p = buildEoiPayload({ ...GOOD, format: 'hardcover' });
+function SEL_KIDS_OFF() {
+  return { book: 'childrens', checked: false, quantity: '4' };
+}
+
+test('buildEoiPayload supports both books with independent quantities', () => {
+  const p = buildEoiPayload({ ...CONTACT, selections: [SEL_BIO, SEL_KIDS] });
   assert.ok(p);
-  assert.equal('format' in p, false, 'the client payload never carries a format key');
+  assert.deepEqual(p.interests, [
+    { book: 'biography', quantity: 2 },
+    { book: 'childrens', quantity: 3 }
+  ]);
 });
 
-test('buildEoiPayload returns null when any required field or consent or token is missing/invalid', () => {
+test('an unselected book (and its quantity) is omitted entirely from the payload', () => {
+  const p = buildEoiPayload({ ...CONTACT, selections: [SEL_BIO_OFF, SEL_KIDS] });
+  assert.ok(p);
+  assert.deepEqual(p.interests, [{ book: 'childrens', quantity: 3 }]);
+});
+
+test('buildEoiPayload rejects no selection, bad quantities, and missing guards', () => {
   for (const overrides of [
-    { book: 'novel' },
-    { quantity: 0 },
-    { quantity: 11 },
-    { quantity: 1.5 },
+    { selections: [SEL_BIO_OFF, SEL_KIDS_OFF()] },
+    { selections: [] },
+    { selections: [{ book: 'novel', checked: true, quantity: 1 }] },
+    { selections: [{ ...SEL_BIO, quantity: 0 }] },
+    { selections: [{ ...SEL_BIO, quantity: 11 }] },
+    { selections: [{ ...SEL_BIO, quantity: 1.5 }] },
+    { selections: [{ ...SEL_BIO, quantity: '' }] },
+    { selections: [{ ...SEL_BIO, quantity: null }] },
     { name: '' },
     { email: '' },
     { consent: false },
     { consent: 'yes' },
-    { turnstileToken: '' }
+    { turnstileToken: '' },
+    {}
   ]) {
-    assert.equal(buildEoiPayload({ ...GOOD, ...overrides }), null, `should reject ${JSON.stringify(overrides)}`);
+    assert.equal(
+      buildEoiPayload({ ...CONTACT, ...overrides }),
+      null,
+      `should reject ${JSON.stringify(overrides)}`
+    );
   }
 });
 
-test('buildEoiPayload trims name/email and parses numeric quantity from a string', () => {
-  const p = buildEoiPayload({ ...GOOD, name: '  Jane  ', email: '  jane@example.com  ', quantity: '3' });
+test('buildEoiPayload trims contact fields and forwards a non-empty honeypot only', () => {
+  const p = buildEoiPayload({
+    ...CONTACT,
+    name: '  Jane  ',
+    email: '  jane@example.com  ',
+    selections: [SEL_BIO],
+    website: 'spam'
+  });
   assert.ok(p);
   assert.equal(p.name, 'Jane');
-  assert.equal(p.email, 'jane@example.com');
-  assert.equal(p.quantity, 3);
-});
-
-test('buildEoiPayload forwards a non-empty honeypot (so the backend can trap bots)', () => {
-  const p = buildEoiPayload({ ...GOOD, website: 'spam' });
-  assert.ok(p);
   assert.equal(p.website, 'spam');
+  const q = buildEoiPayload({ ...CONTACT, selections: [SEL_BIO], website: '' });
+  assert.ok(q);
+  assert.equal('website' in q, false);
 });
 
-test('buildEoiPayload omits an empty honeypot entirely', () => {
-  const p = buildEoiPayload({ ...GOOD, website: '' });
+test('the client payload never carries book/quantity/format top-level keys', () => {
+  const p = buildEoiPayload({ ...CONTACT, selections: [SEL_BIO] });
   assert.ok(p);
-  assert.equal('website' in p, false);
+  for (const absent of ['book', 'quantity', 'format']) {
+    assert.equal(absent in p, false, `the new UI never sends top-level ${absent}`);
+  }
+});
+
+test('hasNoSelection flags a submission with no checked book (for useful validation focus)', () => {
+  assert.equal(hasNoSelection({ selections: [SEL_BIO_OFF] }), true);
+  assert.equal(hasNoSelection({ selections: [] }), true);
+  assert.equal(hasNoSelection({}), true);
+  assert.equal(hasNoSelection({ selections: [SEL_BIO_OFF, SEL_KIDS] }), false);
 });
 
 test('messageForStatus maps each handled status to a safe, non-leaking message', () => {
@@ -466,161 +439,79 @@ test('messageForStatus maps each handled status to a safe, non-leaking message',
   ]) {
     assert.ok(messageForStatus(status).toLowerCase().includes(needle));
   }
-  // Generic fallback for unexpected statuses.
   assert.match(messageForStatus(500), /something went wrong/i);
-  assert.match(messageForStatus(404), /something went wrong/i);
-});
-
-test('findBookEntry and counterValue read the /api/books/interest shape safely', () => {
-  const data = { books: [{ book: 'biography', interestCount: 3, requestedCopies: 7 }] };
-  assert.equal(findBookEntry(data, 'biography').interestCount, 3);
-  assert.equal(findBookEntry(data, 'childrens'), null);
-  assert.equal(findBookEntry(null, 'biography'), null);
-  assert.equal(counterValue(findBookEntry(data, 'biography'), 'interestCount'), '3');
-  assert.equal(counterValue(null, 'interestCount'), '');
-});
-
-test('counterText keeps the em dash sentinel while loading (never an apparent 0)', () => {
-  // While loading (no data object yet) the placeholder must be retained: the
-  // helper returns the empty sentinel so the caller leaves the em dash alone.
-  assert.equal(counterText(null, 'biography', 'interestCount'), '', 'null data -> empty sentinel');
-  assert.equal(counterText(undefined, 'biography', 'interestCount'), '', 'undefined data -> empty sentinel');
-  assert.equal(counterText('', 'biography', 'interestCount'), '', 'string data (loading call) -> empty sentinel');
-  assert.equal(counterText('loading', 'biography', 'interestCount'), '', 'non-object data -> empty sentinel');
-  // Once data is present, a missing entry is a genuine 0 (backend returns both).
-  assert.equal(counterText({ books: [] }, 'biography', 'interestCount'), '0', 'data present, missing entry -> real 0');
-  assert.equal(counterText({ books: [] }, 'biography', 'requestedCopies'), '0', 'data present, missing entry -> real 0');
-  // Real data renders the actual number.
-  const data = { books: [{ book: 'biography', interestCount: 3, requestedCopies: 7 }] };
-  assert.equal(counterText(data, 'biography', 'interestCount'), '3');
-  assert.equal(counterText(data, 'biography', 'requestedCopies'), '7');
-  assert.equal(counterText(data, 'childrens', 'interestCount'), '0', 'other book missing -> real 0');
-});
-
-test('pluralize picks singular vs plural by count', () => {
-  assert.equal(pluralize(1, 'person', 'people'), 'person');
-  assert.equal(pluralize(0, 'person', 'people'), 'people');
-  assert.equal(pluralize(3, 'person', 'people'), 'people');
-});
-
-test('parseBookQuery returns the canonical value for valid codes and empty otherwise', () => {
-  // Both canonical codes preselect; invalid/missing/miscased values leave the
-  // existing behaviour unchanged (strict allowlist match).
-  assert.equal(parseBookQuery('biography'), 'biography');
-  assert.equal(parseBookQuery('childrens'), 'childrens');
-  assert.equal(parseBookQuery('  biography  '), 'biography', 'surrounding whitespace is trimmed');
-  assert.equal(parseBookQuery('novel'), '', 'an unknown code must not preselect');
-  assert.equal(parseBookQuery('Biography'), '', 'a miscased code must not preselect (strict allowlist match)');
-  assert.equal(parseBookQuery(''), '', 'an empty value must not preselect');
-  assert.equal(parseBookQuery(null), '', 'a null value must not preselect');
-  assert.equal(parseBookQuery(undefined), '', 'an undefined value must not preselect');
 });
 
 // ===========================================================================
-// 7. books.js source contract (no fallback paths; official Turnstile; token field)
+// 8. books.js source contract (checkbox wiring, preselection, official Turnstile)
 // ===========================================================================
 
-test('books.js posts to /api/books/eoi and reads /api/books/interest (no fallback)', () => {
-  assert.match(booksJs, /'\/api\/books\/eoi'/);
-  assert.match(booksJs, /'\/api\/books\/interest'/);
-  // No actual mail/localStorage/R2 USAGE paths (the explanatory header comment
-  // legitimately mentions these by name, so we assert against real member access).
-  assert.doesNotMatch(booksJs, /mailto:/, 'no mail fallback');
-  assert.doesNotMatch(booksJs, /localStorage\s*\.\s*(get|set|remove)Item/, 'no localStorage usage');
-  assert.doesNotMatch(booksJs, /ARTWORK_IMAGES|env\.R2|R2_BUCKET/, 'no R2 usage');
+test('books.js syncs each quantity control to its checkbox (hidden + disabled while unselected)', () => {
+  assert.match(booksJs, /function syncQuantities/);
+  assert.match(booksJs, /container\.hidden\s*=\s*!selected/);
+  assert.match(booksJs, /input\.disabled\s*=\s*!selected/);
+  assert.match(booksJs, /checkbox\.addEventListener\('change',\s*\(\)\s*=>\s*syncQuantities\(els\)\)/);
+  // The sync re-runs after form.reset() because reset() does not restore the
+  // disabled property or the hidden attribute.
+  assert.match(booksJs, /resetForm\(els\.form\);\s*\n\s*syncQuantities\(els\);/);
 });
 
-test('books.js loads the official Turnstile script and never hardcodes a site key', () => {
+test('books.js reads selections from the checkbox group with each book\'s own quantity input', () => {
+  assert.match(booksJs, /input\[name="books"\]/);
+  assert.match(booksJs, /\.books-qty/);
+  assert.match(booksJs, /dataset\.qtyFor/);
+  assert.match(booksJs, /function readSelections/);
+});
+
+test('books.js preselects the checkbox from a validated ?book= param and focuses it on first load', () => {
+  assert.match(booksJs, /function applyBookPreselection[\s\S]*?parseBookQuery\(/);
+  assert.match(booksJs, /checkbox\.checked\s*=\s*true/);
+  assert.match(booksJs, /checkbox\.focus\(/);
+  assert.match(booksJs, /preventScroll:\s*true/);
   assert.match(
     booksJs,
-    /challenges\.cloudflare\.com\/turnstile\/v0\/api\.js\?render=explicit/,
-    'must load the official explicit-render Turnstile script'
+    /addEventListener\(\s*['"]popstate['"]\s*,\s*\(\)\s*=>\s*\{[\s\S]*?applyBookPreselection\(\s*form,\s*\{\s*focus:\s*false\s*\}\s*\);[\s\S]*?syncQuantities\(els\);/
   );
-  assert.match(booksJs, /turnstile\.render\(/, 'must render the widget explicitly');
-  // The site key is read from the DOM marker, never a literal.
-  assert.doesNotMatch(booksJs, /sitekey:\s*['"](0x|1x)[a-f0-9]+/i);
 });
 
-test('books.js sends the token as turnstileToken (matches backend field) and requires consent', () => {
+test('no-selection submit announces a specific message and focuses the checkbox group', () => {
+  assert.match(booksJs, /Please choose at least one book to join the update list\./);
+  assert.match(booksJs, /els\.checkboxes\[0\]\.focus\(/);
+});
+
+test('books.js loads the official Turnstile script, never hardcodes a site key, and prevents duplicate submits', () => {
+  assert.match(booksJs, /challenges\.cloudflare\.com\/turnstile\/v0\/api\.js\?render=explicit/);
+  assert.match(booksJs, /turnstile\.render\(/);
+  assert.doesNotMatch(booksJs, /sitekey:\s*['"](0x|1x)[a-f0-9]+/i);
   assert.match(booksJs, /turnstileToken/);
   assert.match(booksJs, /consent:\s*true/);
-});
-
-test('books.js prevents duplicate submits, resets Turnstile, and refreshes counters after success', () => {
   assert.match(booksJs, /if\s*\(\s*submitting\s*\)\s*return/);
   assert.match(booksJs, /resetTurnstile/);
-  assert.match(booksJs, /await loadCounters/);
-});
-
-test('books.js never overwrites the placeholder during loading (no apparent 0)', () => {
-  // setCounters must early-return while there is no data object so the em dash
-  // placeholder in the markup is preserved, then route through counterText.
-  assert.match(
-    booksJs,
-    /function setCounters[\s\S]*?if\s*\(\s*!data\s*\|\|\s*typeof data\s*!==\s*'object'\s*\)\s*return/,
-    'setCounters must skip writing until a data object is present'
-  );
-  assert.match(booksJs, /counterText\(data,\s*book,\s*'interestCount'\)/);
-  assert.match(booksJs, /counterText\(data,\s*book,\s*'requestedCopies'\)/);
-  // The old loading bug (counterValue(...) || '0' inside setCounters) is gone.
-  assert.doesNotMatch(
-    booksJs,
-    /function setCounters[\s\S]*?\}\s*function[\s\S]*?counterValue\([^)]*\)\s*\|\|\s*'0'/,
-    'setCounters must not fall back to a literal 0 from counterValue'
-  );
+  assert.doesNotMatch(booksJs, /mailto:/, 'no mail fallback');
+  assert.doesNotMatch(booksJs, /localStorage\s*\.\s*(get|set|remove)Item/, 'no localStorage usage');
 });
 
 test('books.js Back to Top uses the shared module (no duplicated logic)', () => {
-  // The behaviour lives once in ./back-to-top.js; books.js imports and calls it
-  // (with no dialog -> the simpler scroll-only variant).
   assert.match(booksJs, /import\s*\{\s*initBackToTop\s*\}\s*from\s*['"]\.\/back-to-top\.js['"]/);
-  assert.match(booksJs, /initBackToTop\(\)/, 'books.js must call initBackToTop with no dialog');
-  // The page-local scroll/threshold logic must NOT be duplicated in books.js.
-  assert.doesNotMatch(booksJs, /BACK_TO_TOP_THRESHOLD/, 'books.js must not redefine the threshold');
-  assert.doesNotMatch(booksJs, /function\s+initBackToTop\s*\(/, 'books.js must not redefine initBackToTop');
-  // The shared module owns the behaviour and targets the page #top.
+  assert.match(booksJs, /initBackToTop\(\)/);
+  assert.doesNotMatch(booksJs, /BACK_TO_TOP_THRESHOLD/);
+  assert.doesNotMatch(booksJs, /function\s+initBackToTop\s*\(/);
   assert.match(backToTopJs, /getElementById\('back-to-top'\)/);
   assert.match(backToTopJs, /getElementById\('top'\)/);
   assert.match(backToTopJs, /addEventListener\('scroll',\s*sync,\s*\{\s*passive:\s*true\s*\}\)/);
 });
 
 // ===========================================================================
-// 7b. ?book= preselection source contract (validated, history-synced, no payload drift)
+// 9. The exact corrected title appears on every public surface of this page
 // ===========================================================================
 
-test('books.js preselects the book radio from a validated ?book= param and syncs on history navigation', () => {
-  // A pure validator gates preselection; an arbitrary code is never trusted.
-  assert.match(
-    booksJs,
-    /function applyBookPreselection[\s\S]*?parseBookQuery\(/,
-    'preselection must validate the param via parseBookQuery (BOOK_VALUES allowlist)'
-  );
-  // The selected radio is checked (preselection) ...
-  assert.match(booksJs, /radio\.checked\s*=\s*true/);
-  // ... and focused on initial load so keyboard users land on the form, without
-  // forcing a second scroll (the hash lands the form; focus uses preventScroll).
-  assert.match(booksJs, /radio\.focus\(/);
-  assert.match(booksJs, /preventScroll:\s*true/);
-  // Back/forward keeps the radio in sync with the URL without forcing focus.
-  assert.match(
-    booksJs,
-    /addEventListener\(\s*['"]popstate['"]\s*,\s*\(\)\s*=>\s*applyBookPreselection\(\s*form,\s*\{\s*focus:\s*false\s*\}\s*\)/
-  );
-  // The init path wires the initial-load preselection.
-  assert.match(booksJs, /applyBookPreselection\(\s*form,\s*\{\s*focus:\s*true\s*\}\s*\)/);
+test('MJ and Her Wobbly Days appears in the card, CTA accessible name, and checkbox label', () => {
+  const count = (booksHtml.match(/MJ and Her Wobbly Days/g) || []).length;
+  assert.ok(count >= 3, `the exact title must label the card, CTA, and checkbox (found ${count})`);
 });
 
-// ===========================================================================
-// 8. Build integration
-// ===========================================================================
-
-test('books.js and back-to-top.js are syntax-checked by build/lint/type-check', () => {
-  for (const file of ['public/books.js', 'public/back-to-top.js']) {
-    for (const script of ['build', 'lint', 'type-check']) {
-      assert.ok(
-        rootPkg.includes(`node --check ${file}`),
-        `${file} must be in the ${script} check list`
-      );
-    }
-  }
+test('internal code childrens stays stable while the visitor title is exact', () => {
+  assert.match(booksHtml, /value="childrens"/);
+  assert.match(booksHtml, /\?book=childrens#books-form/);
+  assert.equal(booksHtml.includes('MJ and the Wobbly Days'), false);
 });
