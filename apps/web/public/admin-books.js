@@ -9,7 +9,7 @@
 
 // Allowlist mirrors src/book-eoi.js (BOOK_CODES / FORMAT_CODES /
 // BOOK_EOI_STATUSES). Kept as plain objects for O(1) label lookup.
-export const BOOK_LABELS = { biography: 'Biography', childrens: "Children's Book" };
+export const BOOK_LABELS = { biography: 'Frayed Not Broken', childrens: 'MJ and Her Wobbly Days' };
 export const FORMAT_LABELS = { hardcover: 'Hardcover', paperback: 'Paperback', ebook: 'E-book', unsure: 'Unsure' };
 export const STATUS_LABELS = { new: 'New', contacted: 'Contacted', withdrawn: 'Withdrawn' };
 

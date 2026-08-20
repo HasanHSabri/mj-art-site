@@ -164,8 +164,8 @@ test('label maps cover every book/format/status code from the backend allowlist'
 });
 
 test('formatBookLabel / formatFormatLabel / formatStatusLabel map known codes and fall back gracefully', () => {
-  assert.equal(formatBookLabel('biography'), 'Biography');
-  assert.equal(formatBookLabel('childrens'), "Children's Book");
+  assert.equal(formatBookLabel('biography'), 'Frayed Not Broken');
+  assert.equal(formatBookLabel('childrens'), 'MJ and Her Wobbly Days');
   assert.equal(formatFormatLabel('ebook'), 'E-book');
   assert.equal(formatStatusLabel('new'), 'New');
   assert.equal(formatStatusLabel('contacted'), 'Contacted');
@@ -179,6 +179,24 @@ test('formatBookLabel / formatFormatLabel / formatStatusLabel map known codes an
 test('BOOK_ORDER and STATUS_ORDER are the canonical display orders', () => {
   assert.deepEqual(BOOK_ORDER, ['biography', 'childrens']);
   assert.deepEqual(STATUS_ORDER, ['new', 'contacted', 'withdrawn']);
+});
+
+test('admin book labels stay aligned with the public book titles (admin/public no-drift)', () => {
+  // The stable persisted/API codes never change; only the admin-visible
+  // display titles do, and they must match the public Books page <h3> titles.
+  const booksHtml = readFileSync(join(__dirname, '..', 'public', 'books.html'), 'utf8');
+  const titles = [...booksHtml.matchAll(/<h3>([\s\S]*?)<\/h3>/g)].map((m) => m[1].trim());
+  assert.deepEqual(titles, ['Frayed Not Broken', 'MJ and Her Wobbly Days']);
+  for (const code of BOOK_ORDER) {
+    assert.equal(formatBookLabel(code), titles[BOOK_ORDER.indexOf(code)], `admin label for ${code} matches its public title`);
+    assert.ok(
+      new RegExp(`<option value="${code}">${BOOK_LABELS[code]}</option>`).test(adminHtml),
+      `admin.html filter option for ${code} shows the public title`
+    );
+  }
+  // The old generic admin labels are gone from the admin surface.
+  assert.doesNotMatch(adminHtml, /<option value="biography">Biography<\/option>/);
+  assert.doesNotMatch(adminHtml, /Children&rsquo;s Book/);
 });
 
 // ---------------------------------------------------------------------------
@@ -245,8 +263,8 @@ test('buildSummaryTiles returns the exact canonical tile set when the reported t
     overallContacts: 6
   });
   assert.deepEqual(tiles, [
-    { kind: 'book', key: 'biography', label: 'Biography', value: 3, secondary: 7 },
-    { kind: 'book', key: 'childrens', label: "Children's Book", value: 1, secondary: 2 },
+    { kind: 'book', key: 'biography', label: 'Frayed Not Broken', value: 3, secondary: 7 },
+    { kind: 'book', key: 'childrens', label: 'MJ and Her Wobbly Days', value: 1, secondary: 2 },
     { kind: 'window', key: 'today', label: 'Submissions received — Today', value: 2, secondary: 4 },
     { kind: 'window', key: 'last7Days', label: 'Submissions received — Last 7 days', value: 5, secondary: 9 },
     { kind: 'status', key: 'new', label: 'New', value: 4 },
@@ -350,7 +368,7 @@ test('toCsv emits a header row plus one quoted-safe line per row', () => {
   assert.ok(first.startsWith('2026-08-07 09:00 UTC,'));
   assert.ok(first.includes(',Jane Doe,'));
   // Raw codes are NOT used; human labels appear.
-  assert.ok(first.includes(',Biography,'));
+  assert.ok(first.includes(',Frayed Not Broken,'));
   assert.ok(first.includes(',Hardcover,'));
   assert.ok(first.endsWith(',New'));
 });

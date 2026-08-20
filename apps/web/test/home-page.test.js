@@ -297,6 +297,11 @@ test('home header and footer wordmark read MJ Arts (no logo/icon)', () => {
 
 test('home books preview uses the visitor titles, exact descriptions, and the real covers', () => {
   const section = indexHtml.match(/<section class="section books-preview-section"[\s\S]*?<\/section>/)[0];
+  assert.equal(
+    section.match(/<h2 id="books-preview-heading">([\s\S]*?)<\/h2>/)[1],
+    'Two books.. almost ready for launch!',
+    'the exact requested books preview heading'
+  );
   assert.match(section, /<h3>Frayed Not Broken<\/h3>/);
   assert.equal(section.includes('Biography'), false, 'the old visitor Biography label is gone');
   assert.match(section, /<h3>MJ and Her Wobbly Days<\/h3>/, 'the exact corrected title');
