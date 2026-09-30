@@ -7,10 +7,16 @@ import {
 } from './artwork-schema.js';
 import { renderArtworkCards, renderArtworkPreviewCards, SSR_FEATURED_COUNT } from './gallery-ssr.js';
 import {
+  CONTENT_SECURITY_POLICY,
+  isBooksPage,
+  isGalleryPage
+} from './worker-contract.js';
+import {
   BOOK_CODES,
   BOOK_EOI_STATUSES,
   MAX_BOOK_EOI_BODY_BYTES,
   MAX_BOOK_EOI_ADMITTED_LIMIT,
+  MAX_BOOK_EOI_OFFSET,
   DEFAULT_BOOK_EOI_LIMIT,
   TURNSTILE_ACTION,
   createNeonSqlExecutor,
@@ -22,11 +28,13 @@ import {
   probeLiveCatalogShape,
   validateBookEoiPayload,
   validateStatusUpdate,
+  normalizeEmail,
   hmacEmailHash,
   decryptPii,
   persistBookEoiInterest,
   updateBookEoiStatus,
   countBookInterest,
+  countBookEoi,
   listRecentBookEoi,
   summarizeBookEoi
 } from './book-eoi.js';
@@ -38,46 +46,13 @@ const SESSION_MAX_AGE_SECONDS = 60 * 60 * 8;
 // as a preview that links to /gallery. The complete catalogue lives on the
 // dedicated Gallery page.
 const HOME_PREVIEW_COUNT = 6;
-export const CONTENT_SECURITY_POLICY = [
-  "default-src 'self'",
-  "base-uri 'self'",
-  "object-src 'none'",
-  "frame-ancestors 'none'",
-  "form-action 'self' mailto:",
-  "script-src 'self' https://challenges.cloudflare.com",
-  "style-src 'self' https://fonts.googleapis.com",
-  "font-src 'self' https://fonts.gstatic.com",
-  "img-src 'self' data:",
-  "connect-src 'self' https://challenges.cloudflare.com",
-  "frame-src https://challenges.cloudflare.com"
-].join('; ');
 
-// The Worker owns every Books page URL. The canonical page is /books; the raw
-// .html alias and any trailing-slash variant (single or repeated) all
-// canonicalize to /books. Anything that is NOT one of these is left alone
-// (e.g. /api/books/*, /bookstore). Pure + exported so the route contract is
-// unit-tested directly.
-export function isBooksPage(pathname) {
-  return (
-    pathname === '/books' ||
-    pathname === '/books.html' ||
-    /^\/books\/+$/.test(pathname)
-  );
-}
-
-// The Worker owns every Gallery page URL the same way it owns Books. The
-// canonical page is /gallery; the raw /gallery.html asset and any
-// trailing-slash variant (single or repeated) permanently redirect to /gallery
-// so the canonical SSR page is the only URL served and direct refresh/HEAD on
-// /gallery always hit the Worker. Anything else (e.g. /api/...) is left alone.
-// Pure + exported so the route contract is unit-tested directly.
-export function isGalleryPage(pathname) {
-  return (
-    pathname === '/gallery' ||
-    pathname === '/gallery.html' ||
-    /^\/gallery\/+$/.test(pathname)
-  );
-}
+// MAIN-MODULE EXPORT CONTRACT: this file exports ONLY the default
+// ExportedHandler. workerd rejects non-handler named exports from a main
+// module (e.g. the former `export const CONTENT_SECURITY_POLICY` string broke
+// `wrangler dev` with "Incorrect type map entry expected
+// function/ExportedHandler"). Pure values/functions under test live in
+// ./worker-contract.js and are imported above.
 
 // Canonical upload pipeline constants. The admin produces two JPEG derivatives
 // (full ~2000px, thumb ~640px); these caps bound the uploaded multipart parts.
@@ -92,6 +67,7 @@ const JPEG = 'image/jpeg';
 // reading the body, so an oversized payload is rejected even with no header.
 const MAX_ADMIN_LOGIN_BODY_BYTES = 4 * 1024;
 const MAX_BOOK_EOI_PATCH_BODY_BYTES = 2 * 1024;
+const MAX_BOOK_EOI_SEARCH_BODY_BYTES = 2 * 1024;
 const BOOK_EOI_ENVIRONMENTS = new Set(['local', 'preview', 'production']);
 
 // Strict allowlist for served uploaded-image keys. Only canonical catalog JPEG
@@ -260,6 +236,17 @@ async function routeRequest(request, env) {
       return handleAdminSummaryBookEoi(env);
     }
     return methodNotAllowed('GET, HEAD');
+  }
+  // POST-only exact-email search. The email travels in the request BODY (never
+  // a URL query parameter) so plaintext PII cannot end up in request URLs or
+  // access logs; the server matches it through the existing keyed email hash.
+  if (url.pathname === '/api/admin/books/eoi/search') {
+    if (request.method === 'POST') {
+      const auth = await requireAdmin(request, env);
+      if (auth) return auth;
+      return handleAdminSearchBookEoi(request, env);
+    }
+    return methodNotAllowed('POST');
   }
   if (request.method === 'PATCH' && url.pathname.startsWith('/api/admin/books/eoi/')) {
     const auth = await requireAdmin(request, env);
@@ -1169,12 +1156,70 @@ async function handleBookHealth(env) {
   }
 }
 
-// GET /api/admin/books/eoi?limit= -- recent rows with PII decrypted. limit<=100.
+// Parse + strictly validate the admin list query parameters shared by the GET
+// list and the POST email-search routes. limit: integer 1..100 (default 50,
+// invalid falls back like the original route). offset: integer 0..MAX (invalid
+// falls back to 0). book/status: absent/'' = no filter; any OTHER value that is
+// not in the backend allowlist is a real client error -> 400.
+function parseAdminBookEoiListParams(url) {
+  const out = { limit: DEFAULT_BOOK_EOI_LIMIT, offset: 0, book: null, status: null, bad: null };
+
+  const rawLimit = Number(url.searchParams.get('limit'));
+  if (Number.isInteger(rawLimit) && rawLimit > 0) {
+    out.limit = Math.min(rawLimit, MAX_BOOK_EOI_ADMITTED_LIMIT);
+  }
+  const rawOffset = Number(url.searchParams.get('offset'));
+  if (Number.isInteger(rawOffset) && rawOffset > 0) {
+    out.offset = Math.min(rawOffset, MAX_BOOK_EOI_OFFSET);
+  }
+
+  const book = url.searchParams.get('book');
+  if (book !== null && book !== '') {
+    if (!BOOK_CODES.has(book)) return { bad: 'Invalid book filter.' };
+    out.book = book;
+  }
+  const status = url.searchParams.get('status');
+  if (status !== null && status !== '') {
+    if (!BOOK_EOI_STATUSES.has(status)) return { bad: 'Invalid status filter.' };
+    out.status = status;
+  }
+  return out;
+}
+
+// Decrypt raw rows for the authenticated admin views. An unreadable row
+// (tamper/key/AAD mismatch) surfaces null PII, never raw crypto material.
+async function decryptBookEoiRows(env, rawRows) {
+  const out = [];
+  for (const row of rawRows) {
+    let pii = null;
+    try {
+      pii = await decryptPii(env.BOOK_EOI_ENCRYPTION_KEY, row.pii_ciphertext, row.pii_iv, row.id);
+    } catch {
+      pii = null; // unreadable (tamper/key/ADD mismatch): do not expose raw.
+    }
+    out.push({
+      id: row.id,
+      book: row.book_code,
+      name: pii ? pii.name : null,
+      email: pii ? pii.email : null,
+      quantity: row.quantity,
+      format: row.format_code,
+      status: row.status,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    });
+  }
+  return out;
+}
+
+// GET /api/admin/books/eoi?limit=&offset=&book=&status= -- filtered, paginated
+// recent rows with PII decrypted (bounded to `limit` rows per request) plus the
+// matching total count for truthful pagination.
 async function handleAdminListBookEoi(request, env) {
   const url = new URL(request.url);
-  const rawLimit = Number(url.searchParams.get('limit'));
-  let limit = Number.isInteger(rawLimit) && rawLimit > 0 ? rawLimit : DEFAULT_BOOK_EOI_LIMIT;
-  if (limit > MAX_BOOK_EOI_ADMITTED_LIMIT) limit = MAX_BOOK_EOI_ADMITTED_LIMIT;
+  const parsed = parseAdminBookEoiListParams(url);
+  if (parsed.bad) return jsonResponse({ error: parsed.bad }, 400);
+  const { limit, offset, book, status } = parsed;
 
   let sql;
   try {
@@ -1183,28 +1228,93 @@ async function handleAdminListBookEoi(request, env) {
     return jsonResponse({ error: 'Service unavailable.' }, 503);
   }
   try {
-    const rows = await listRecentBookEoi(sql, limit);
-    const out = [];
-    for (const row of rows) {
-      let pii = null;
-      try {
-        pii = await decryptPii(env.BOOK_EOI_ENCRYPTION_KEY, row.pii_ciphertext, row.pii_iv, row.id);
-      } catch {
-        pii = null; // unreadable (tamper/key/ADD mismatch): do not expose raw.
-      }
-      out.push({
-        id: row.id,
-        book: row.book_code,
-        name: pii ? pii.name : null,
-        email: pii ? pii.email : null,
-        quantity: row.quantity,
-        format: row.format_code,
-        status: row.status,
-        createdAt: row.created_at,
-        updatedAt: row.updated_at
-      });
+    const [rawRows, total] = await Promise.all([
+      listRecentBookEoi(sql, { limit, offset, book, status }),
+      countBookEoi(sql, { book, status })
+    ]);
+    const rows = await decryptBookEoiRows(env, rawRows);
+    return jsonResponse({ rows, total, limit, offset });
+  } catch {
+    return jsonResponse({ error: 'Service unavailable.' }, 503);
+  }
+}
+
+// POST /api/admin/books/eoi/search -- exact-email lookup across ALL records
+// using the existing keyed email hash (no schema change, no per-row decrypt of
+// the whole table: only the matching rows are decrypted, bounded by limit).
+// The email stays in the request body; the hash key never leaves the server.
+async function handleAdminSearchBookEoi(request, env) {
+  if (!bookEoiSecretsOk(env)) return jsonResponse({ error: 'Service unavailable.' }, 503);
+
+  const contentType = request.headers.get('content-type') || '';
+  if (contentType.split(';')[0].trim().toLowerCase() !== 'application/json') {
+    return jsonResponse({ error: 'Request must be JSON.' }, 415);
+  }
+  const declaredLength = Number(request.headers.get('content-length') || 0);
+  if (declaredLength > MAX_BOOK_EOI_SEARCH_BODY_BYTES) {
+    return jsonResponse({ error: 'Request body is too large.' }, 413);
+  }
+  let body;
+  try {
+    const text = await request.text();
+    if (new TextEncoder().encode(text).length > MAX_BOOK_EOI_SEARCH_BODY_BYTES) {
+      return jsonResponse({ error: 'Request body is too large.' }, 413);
     }
-    return jsonResponse({ rows: out });
+    body = JSON.parse(text);
+  } catch {
+    return jsonResponse({ error: 'Request body is not valid JSON.' }, 400);
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return jsonResponse({ error: 'Request body must be a JSON object.' }, 400);
+  }
+  for (const key of Object.keys(body)) {
+    if (!['email', 'book', 'status', 'limit', 'offset'].includes(key)) {
+      return jsonResponse({ error: 'Unexpected field in request.' }, 400);
+    }
+  }
+
+  const email = normalizeEmail(typeof body.email === 'string' ? body.email : '');
+  if (email === null) return jsonResponse({ error: 'A valid email is required.' }, 400);
+
+  const book = body.book == null || body.book === '' ? null : body.book;
+  if (book !== null && !BOOK_CODES.has(book)) {
+    return jsonResponse({ error: 'Invalid book filter.' }, 400);
+  }
+  const status = body.status == null || body.status === '' ? null : body.status;
+  if (status !== null && !BOOK_EOI_STATUSES.has(status)) {
+    return jsonResponse({ error: 'Invalid status filter.' }, 400);
+  }
+
+  let limit = DEFAULT_BOOK_EOI_LIMIT;
+  if (body.limit !== undefined) {
+    if (!Number.isInteger(body.limit) || body.limit < 1 || body.limit > MAX_BOOK_EOI_ADMITTED_LIMIT) {
+      return jsonResponse({ error: 'Invalid limit.' }, 400);
+    }
+    limit = body.limit;
+  }
+  let offset = 0;
+  if (body.offset !== undefined) {
+    if (!Number.isInteger(body.offset) || body.offset < 0 || body.offset > MAX_BOOK_EOI_OFFSET) {
+      return jsonResponse({ error: 'Invalid offset.' }, 400);
+    }
+    offset = body.offset;
+  }
+
+  const emailHash = await hmacEmailHash(env.BOOK_EOI_HMAC_KEY, email);
+
+  let sql;
+  try {
+    sql = (await getBookEoiExecutors(env)).sql;
+  } catch {
+    return jsonResponse({ error: 'Service unavailable.' }, 503);
+  }
+  try {
+    const [rawRows, total] = await Promise.all([
+      listRecentBookEoi(sql, { limit, offset, book, status, emailHash }),
+      countBookEoi(sql, { book, status, emailHash })
+    ]);
+    const rows = await decryptBookEoiRows(env, rawRows);
+    return jsonResponse({ rows, total, limit, offset });
   } catch {
     return jsonResponse({ error: 'Service unavailable.' }, 503);
   }

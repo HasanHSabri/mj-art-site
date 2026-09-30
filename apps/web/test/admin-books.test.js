@@ -11,6 +11,7 @@ import {
   STATUS_LABELS,
   BOOK_ORDER,
   STATUS_ORDER,
+  BOOKS_PAGE_SIZE,
   formatBookLabel,
   formatFormatLabel,
   formatStatusLabel,
@@ -18,6 +19,8 @@ import {
   safeMailtoHref,
   buildSummaryTiles,
   filterRows,
+  filterRowsByName,
+  booksRangeLabel,
   toCsv
 } from '../public/admin-books.js';
 
@@ -118,6 +121,7 @@ function createBooksVm(responses) {
   const context = {
     document,
     fetch,
+    URLSearchParams,
     window: { confirm: () => true },
     adminContent: new FakeElement(),
     loginPanel: new FakeElement(),
@@ -131,10 +135,13 @@ function createBooksVm(responses) {
     safeMailtoHref,
     buildSummaryTiles,
     filterRows,
+    filterRowsByName,
+    booksRangeLabel,
+    BOOKS_PAGE_SIZE,
     console
   };
   runInNewContext(
-    adminJs.slice(adminJs.lastIndexOf('\n', booksSectionStart) + 1) + '\nglobalThis.booksTestApi = { loadBooksDashboard };',
+    adminJs.slice(adminJs.lastIndexOf('\n', booksSectionStart) + 1) + '\nglobalThis.booksTestApi = { loadBooksDashboard, resetBooksSurface };',
     context
   );
   return { context, document, elements };
@@ -356,6 +363,36 @@ test('filterRows is defensive against non-array / malformed rows', () => {
 });
 
 // ---------------------------------------------------------------------------
+// filterRowsByName (loaded-page name filter) + booksRangeLabel + page size
+// ---------------------------------------------------------------------------
+
+test('filterRowsByName matches ONLY the name, never the email (truthful scope)', () => {
+  const rows = [
+    { id: '1', name: 'Jane Doe', email: 'jane@example.com' },
+    { id: '2', name: 'Ali Rao', email: 'ali@example.com' },
+    { id: '3', name: null, email: 'bo@example.com' }
+  ];
+  assert.deepEqual(filterRowsByName(rows, 'jane').map((r) => r.id), ['1']);
+  // An email-shaped term must NOT match via the email column.
+  assert.deepEqual(filterRowsByName(rows, 'example.com').map((r) => r.id), []);
+  assert.deepEqual(filterRowsByName(rows, '').map((r) => r.id), ['1', '2', '3']);
+  assert.deepEqual(filterRowsByName(rows).length, 3);
+  assert.deepEqual(filterRowsByName(null, 'x'), []);
+});
+
+test('booksRangeLabel renders honest 1-based ranges and empty states', () => {
+  assert.equal(booksRangeLabel(0, 50, 137), '1\u201350 of 137 records');
+  assert.equal(booksRangeLabel(100, 37, 137), '101\u2013137 of 137 records');
+  assert.equal(booksRangeLabel(0, 0, 0), 'No records yet.');
+  assert.equal(booksRangeLabel(50, 0, 137), 'No matching records.');
+});
+
+test('the client page size stays at 50 and within the server-admitted limit', () => {
+  assert.equal(BOOKS_PAGE_SIZE, 50);
+  assert.ok(BOOKS_PAGE_SIZE >= 1 && BOOKS_PAGE_SIZE <= 100);
+});
+
+// ---------------------------------------------------------------------------
 // toCsv (pure helper; no UI export wired in this phase)
 // ---------------------------------------------------------------------------
 
@@ -450,17 +487,55 @@ test('Books status updates use PATCH only; there is no DELETE path or button', (
   assert.equal(/['"]delete['"]\s*[,)\]]/.test(booksCode), false, 'no delete action literal in the books code');
 });
 
-test('Books dashboard loads only inside the authenticated admin content (after adminContent.hidden = false)', () => {
-  // The loadArtworks success path must reveal admin content and THEN trigger the
-  // books load. The call must not appear before that reveal in module order.
+test('exact-email search sends the address in a POST body, never in a URL', () => {
+  const searchMatch = booksCode.match(/fetch\('\/api\/admin\/books\/eoi\/search',\s*\{[\s\S]*?\}\)/);
+  assert.ok(searchMatch, 'the search endpoint is called by URL /api/admin/books/eoi/search');
+  assert.match(searchMatch[0], /method:\s*'POST'/, 'search is a POST');
+  assert.match(searchMatch[0], /JSON\.stringify\(\{ email: booksListState\.email/);
+  // The GET list URL is built from limit/offset/book/status only -- the email
+  // never appears as a query parameter anywhere in the books code.
+  assert.doesNotMatch(booksCode, /[?&]email=/);
+  assert.doesNotMatch(booksCode, /params\.set\('email'/);
+});
+
+test('server-side pagination requests use limit+offset and render DOM-built controls', () => {
+  assert.match(booksCode, /const offset = \(booksListState\.page - 1\) \* BOOKS_PAGE_SIZE;/, 'offset derives from the page state');
+  assert.match(
+    booksCode,
+    /new URLSearchParams\(\{ limit: String\(BOOKS_PAGE_SIZE\), offset: String\(offset\) \}\)/,
+    'the GET list carries limit and offset'
+  );
+  const pagination = booksCode.match(/function renderBooksPagination\(\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(pagination, 'renderBooksPagination must exist');
+  assert.match(pagination[1], /document\.createElement\('button'\)/, 'pagination buttons are DOM-built');
+  assert.match(pagination[1], /'Previous'/);
+  assert.match(pagination[1], /'Next'/);
+  assert.match(pagination[1], /'Page ' \+ booksListState\.page \+ ' of ' \+ pageCount/, 'truthful page label');
+});
+
+test('the search controls name their exact scope in the UI copy', () => {
+  assert.match(adminHtml, /Find by exact email/);
+  assert.match(adminHtml, /Name \(loaded page only\)/);
+  // The empty search result for an email names the exact-email semantics.
+  assert.match(booksCode, /No records match that exact email address\./);
+  // The name-filter scope note is rendered and honest.
+  assert.match(booksCode, /loaded records match/);
+});
+
+test('Books dashboard loads lazily inside the authenticated admin content (never eagerly)', () => {
+  // The loadArtworks success path reveals admin content; the Books view is
+  // then loaded lazily by renderView -> ensureBooksLoaded the first time the
+  // books view becomes visible. The guarded first-load call must appear after
+  // the reveal, and no loadBooksDashboard call may be a top-level statement.
   const revealIdx = adminJs.indexOf('adminContent.hidden = false');
   const callIdx = adminJs.indexOf('loadBooksDashboard(false)');
   assert.ok(revealIdx >= 0, 'admin content reveal must exist');
-  assert.ok(callIdx >= 0, 'a guarded loadBooksDashboard(false) call must exist');
-  assert.ok(callIdx > revealIdx, 'loadBooksDashboard is called only after admin content is revealed');
-  // No top-level / eager load on module evaluation: the only direct call is the
-  // guarded one inside loadArtworks.
-  assert.equal(adminJs.indexOf('loadBooksDashboard(true)'), adminJs.lastIndexOf('loadBooksDashboard(true)'));
+  assert.ok(callIdx >= 0, 'a guarded lazy loadBooksDashboard(false) call must exist');
+  assert.ok(callIdx > revealIdx, 'the books load happens only after admin content is revealed');
+  // No top-level (module-scope) invocation of the loader.
+  assert.doesNotMatch(adminJs, /^loadBooksDashboard\(/m);
+  // The lazy trigger is wired to the books view.
+  assert.match(adminJs, /function ensureBooksLoaded\(\)\s*\{\s*if \(!booksLoadedOnce\) loadBooksDashboard\(false\);\s*\}/);
 });
 
 test('logout resets the Books surface (clears PII from the DOM)', () => {
@@ -531,6 +606,130 @@ test('manual Refresh fetch failure clears rows, PII, status, and tiles through t
   assert.equal(elements.get('books-refresh').disabled, false, 'the refresh control is re-enabled');
 });
 
+// ===========================================================================
+// Request invalidation: stale loads / logout can never repopulate PII
+// ===========================================================================
+
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test('a superseded Books load is dropped: its late response renders nothing', async () => {
+  const responses = [];
+  const { context, elements } = createBooksVm(responses);
+
+  // First (slow) load whose responses resolve only later.
+  let resolveSlowSummary;
+  let resolveSlowList;
+  responses.push(
+    new Promise((resolve) => { resolveSlowSummary = resolve; }),
+    new Promise((resolve) => { resolveSlowList = resolve; })
+  );
+  const slowLoad = context.booksTestApi.loadBooksDashboard(false);
+
+  // A newer load completes first and renders.
+  responses.push(
+    okJson({ byStatus: { new: 1, contacted: 0, withdrawn: 0 }, total: 1 }),
+    okJson({ rows: [piiRow], total: 1 })
+  );
+  await context.booksTestApi.loadBooksDashboard(true);
+  const tbody = elements.get('books-tbody');
+  assert.equal(tbody.textContent.includes(piiRow.email), true, 'the newest load rendered');
+
+  // The superseded load resolves LAST: it must not render, overwrite status,
+  // or re-enable/disable controls.
+  resolveSlowSummary(okJson({ byStatus: { new: 5, contacted: 0, withdrawn: 0 }, total: 5 }));
+  resolveSlowList(okJson({ rows: [{ ...piiRow, id: 'stale-1', name: 'Stale Person', email: 'stale@example.com' }], total: 5 }));
+  await slowLoad;
+  await tick();
+
+  assert.equal(tbody.textContent.includes('stale@example.com'), false, 'stale rows are never rendered');
+  assert.equal(tbody.textContent.includes(piiRow.email), true, 'the newest rows remain');
+  assert.match(elements.get('books-status').textContent, /Last updated/);
+  assert.equal(elements.get('books-refresh').disabled, false, 'stale finally-handlers do not touch controls');
+  assert.equal(elements.get('books-error').hidden, true, 'an aborted/stale request is not an error');
+});
+
+test('logout invalidates in-flight loads: nothing repopulates afterwards', async () => {
+  const responses = [];
+  const { context, elements } = createBooksVm(responses);
+
+  let resolveSummary;
+  let resolveList;
+  responses.push(
+    new Promise((resolve) => { resolveSummary = resolve; }),
+    new Promise((resolve) => { resolveList = resolve; })
+  );
+  const pending = context.booksTestApi.loadBooksDashboard(false);
+  assert.equal(elements.get('books-refresh').disabled, true, 'precondition: load in flight');
+
+  // Mid-flight logout (or session expiry): everything is invalidated now.
+  context.booksTestApi.resetBooksSurface();
+
+  resolveSummary(okJson({ byStatus: { new: 3, contacted: 0, withdrawn: 0 }, total: 3 }));
+  resolveList(okJson({ rows: [piiRow], total: 3 }));
+  await pending;
+  await tick();
+
+  const tbody = elements.get('books-tbody');
+  assert.equal(tbody.children.length, 0, 'no rows repopulate after logout');
+  assert.equal(tbody.textContent.includes(piiRow.email), false, 'PII never reappears');
+  assert.equal(elements.get('books-status').textContent, '', 'status text stays cleared');
+  assert.equal(elements.get('books-error').hidden, true, 'the dropped request is not an error');
+  assert.equal(elements.get('books-dashboard').hidden, true, 'the panel stays hidden');
+  assert.equal(elements.get('books-refresh').disabled, true, 'a stale finally-handler does not re-enable controls');
+});
+
+test('a PATCH completing after logout renders nothing', async () => {
+  const responses = [
+    okJson({ byStatus: { new: 1, contacted: 0, withdrawn: 0 }, total: 1 }),
+    okJson({ rows: [piiRow], total: 1 })
+  ];
+  const { context, elements } = createBooksVm(responses);
+  await context.booksTestApi.loadBooksDashboard(false);
+  const tbody = elements.get('books-tbody');
+  const row = tbody.children[0];
+  const contactedButton = row.querySelectorAll('button').find((button) => button.dataset.action === 'contacted');
+  assert.ok(contactedButton, 'precondition: a status action exists');
+
+  // PATCH starts, then the session dies before the response lands.
+  let resolvePatch;
+  responses.push(new Promise((resolve) => { resolvePatch = resolve; }));
+  const patch = contactedButton.listeners.click();
+  context.booksTestApi.resetBooksSurface();
+  resolvePatch(okJson({ ok: true }));
+  await patch;
+  await tick();
+
+  assert.equal(tbody.children.length, 0, 'no rows repopulate from the stale PATCH');
+  assert.equal(tbody.textContent.includes(piiRow.email), false);
+  assert.notEqual(elements.get('books-status').textContent, 'Status updated.', 'no success message after logout');
+  assert.equal(elements.get('books-error').hidden, true);
+});
+
+test('Books requests are generation-guarded, aborted, and epoch-invalidated (source contract)', () => {
+  assert.match(booksCode, /let booksLoadGeneration = 0;/);
+  assert.match(booksCode, /let booksSessionEpoch = 0;/);
+  assert.match(booksCode, /function isStaleBooksRequest\(generation, epoch\)/);
+  // Every await point in the load path re-checks staleness before rendering.
+  const load = booksCode.match(/function loadBooksDashboard\(isRefresh\)\s*\{([\s\S]*?)\n\}\n/);
+  assert.ok(load);
+  assert.match(load[1], /if \(isStaleBooksRequest\(generation, epoch\)\)\s*return;/);
+  assert.match(load[1], /\.finally\(\(\) => \{[\s\S]*?isStaleBooksRequest[\s\S]*?booksRefresh\.disabled = false;/);
+  // Real browsers also cancel the network work (and any decrypt it causes).
+  assert.match(booksCode, /typeof AbortController === 'function'/);
+  assert.match(booksCode, /booksAbortController\.abort\(\)/);
+  assert.match(booksCode, /fetchBooksRows\(signal\)/);
+  // The logout/session-expiry reset invalidates loads, summaries, the abort
+  // controller, and any pending name-filter debounce.
+  const reset = booksCode.match(/function resetBooksSurface\(\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(reset);
+  assert.match(reset[1], /booksSessionEpoch \+= 1;/);
+  assert.match(reset[1], /booksLoadGeneration \+= 1;/);
+  assert.match(reset[1], /booksSummaryGeneration \+= 1;/);
+  assert.match(reset[1], /\.abort\(\)/);
+  // The name filter is debounced.
+  assert.match(booksCode, /booksDebounce\.set\(\(\) => \{/);
+});
+
 test('successful PATCH followed by a mismatched summary clears PII, shows an error, and resets tiles', async () => {
   const responses = [
     okJson({ byStatus: { new: 1, contacted: 0, withdrawn: 0 }, total: 1 }),
@@ -554,15 +753,24 @@ test('successful PATCH followed by a mismatched summary clears PII, shows an err
   assertBooksFailureSurface(elements);
 });
 
-test('admin.html exposes nav anchors for Artwork Catalogue and Book Interest Dashboard', () => {
-  assert.match(adminHtml, /href="#artwork-section"[^>]*>Artwork Catalogue/);
-  assert.match(adminHtml, /href="#books-dashboard"[^>]*>Book Interest Dashboard/);
-  assert.ok(adminHtml.includes('id="artwork-section"'));
-  assert.ok(adminHtml.includes('id="books-dashboard"'));
-  // The dashboard lives inside the authenticated admin content container.
+test('admin.html exposes a persistent topbar with URL-addressable focused views', () => {
+  // The compact nav links to the focused, URL-addressable views and carries a
+  // data-view attribute so admin.js can intercept and set the active state.
+  assert.match(adminHtml, /data-view="catalogue"[^>]*>Artworks</);
+  assert.match(adminHtml, /data-view="books"[^>]*>Book enquiries</);
+  // Every view panel exists and is governed by data-view-panel, with the
+  // books dashboard inside the authenticated admin content container.
+  for (const panel of ['catalogue', 'artwork', 'books']) {
+    assert.ok(adminHtml.includes(`data-view-panel="${panel}"`), `${panel} panel exists`);
+  }
   const contentIdx = adminHtml.indexOf('id="admin-content"');
-  const panelIdx = adminHtml.indexOf('id="books-dashboard"');
-  assert.ok(panelIdx > contentIdx, 'the books dashboard must be inside #admin-content');
+  const booksIdx = adminHtml.indexOf('id="books-dashboard"');
+  assert.ok(booksIdx > contentIdx, 'the books dashboard must be inside #admin-content');
+  // View website link and sign out live in the persistent topbar.
+  assert.match(adminHtml, /class="button ghost-button topbar-link" href="\.\/index\.html">View website</);
+  assert.match(adminHtml, /id="logout"[^>]*hidden>Sign out</);
+  // The section nav is hidden until authentication succeeds.
+  assert.match(adminHtml, /id="admin-section-nav"[^>]*aria-label="Admin sections" hidden/);
 });
 
 // ===========================================================================

@@ -48,6 +48,9 @@ export const MAX_BOOK_EOI_BODY_BYTES = 16 * 1024;
 // Hard ceiling for admin "recent rows" pagination.
 export const MAX_BOOK_EOI_ADMITTED_LIMIT = 100;
 export const DEFAULT_BOOK_EOI_LIMIT = 50;
+// Hard ceiling for the admin list offset. Bounded so a single request can
+// never demand an unbounded scan; real histories are far smaller.
+export const MAX_BOOK_EOI_OFFSET = 100000;
 
 // Turnstile expectations (the public sitekey/secret are separate). The action
 // and expected hostnames are non-secret and live in wrangler `vars`.
@@ -663,14 +666,57 @@ export async function countBookInterest(sql) {
   return Array.isArray(rows) ? rows : [];
 }
 
-// Recent rows for admin decryption. Returns raw columns including ciphertext.
-export async function listRecentBookEoi(sql, limit) {
+// Shared WHERE-clause builder for the admin list/count queries. Every value is
+// a parameter placeholder ($1..$n) -- allowlist codes and the keyed email hash
+// are never interpolated into statement text. `emailHash` is the server-side
+// HMAC of an exact normalized email (see hmacEmailHash); searching by it
+// touches only the dedup column, never decrypted PII. Returns
+// { clauses: string[], params: mixed[] }; an empty filter set yields an empty
+// clause list (no WHERE).
+export function buildBookEoiWhere({ book = null, status = null, emailHash = null } = {}) {
+  const clauses = [];
+  const params = [];
+  if (book) {
+    params.push(book);
+    clauses.push(`book_code = $${params.length}`);
+  }
+  if (status) {
+    params.push(status);
+    clauses.push(`status = $${params.length}`);
+  }
+  if (emailHash) {
+    params.push(emailHash);
+    clauses.push(`email_hash = $${params.length}`);
+  }
+  return { clauses, params };
+}
+
+// Recent rows for admin decryption, newest first, with optional server filters
+// (exact allowlisted book/status) and bounded offset pagination. Returns raw
+// columns including ciphertext. The caller decrypts at most `limit` rows.
+export async function listRecentBookEoi(sql, { limit, offset = 0, book = null, status = null, emailHash = null } = {}) {
+  const { clauses, params } = buildBookEoiWhere({ book, status, emailHash });
+  params.push(limit);
+  const limitParam = `$${params.length}`;
+  params.push(offset);
+  const offsetParam = `$${params.length}`;
+  const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : '';
   const rows = await sql(
     'SELECT id, book_code, email_hash, pii_ciphertext, pii_iv, quantity, format_code, status, created_at, updated_at ' +
-      'FROM mj_eoi.book_eoi ORDER BY created_at DESC LIMIT $1',
-    [limit]
+      'FROM mj_eoi.book_eoi' + where + ' ORDER BY created_at DESC LIMIT ' + limitParam + ' OFFSET ' + offsetParam,
+    params
   );
   return Array.isArray(rows) ? rows : [];
+}
+
+// Count of rows matching the same server filters (no PII columns are read).
+// Used for truthful pagination totals in the admin list.
+export async function countBookEoi(sql, { book = null, status = null, emailHash = null } = {}) {
+  const { clauses, params } = buildBookEoiWhere({ book, status, emailHash });
+  const where = clauses.length ? ' WHERE ' + clauses.join(' AND ') : '';
+  const rows = await sql('SELECT COUNT(*)::int AS total FROM mj_eoi.book_eoi' + where, params);
+  const total = Array.isArray(rows) && rows[0] ? Number(rows[0].total) : 0;
+  return Number.isFinite(total) && total >= 0 ? total : 0;
 }
 
 // Admin summary in a single table scan using conditional (FILTER)

@@ -3,10 +3,27 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 
-import worker, { CONTENT_SECURITY_POLICY } from '../src/worker.js';
+import worker from '../src/worker.js';
+import { CONTENT_SECURITY_POLICY } from '../src/worker-contract.js';
 
 const PUBLIC = path.resolve(import.meta.dirname, '..', 'public');
 const CANONICAL_IMAGE = '/artwork-uploaded/artwork/catalog/mj-001/thumb.jpg';
+
+test('the Worker main module exports only the default handler (workerd main-module compatibility)', () => {
+  // workerd rejects non-handler named exports from the MAIN module
+  // ("Incorrect type map entry expected function/ExportedHandler"), which
+  // blocked `wrangler dev` startup. Contract: named exports under test live in
+  // src/worker-contract.js; src/worker.js keeps exactly `export default`.
+  const source = readFileSync(path.resolve(import.meta.dirname, '..', 'src', 'worker.js'), 'utf8');
+  const namedExports = [...source.matchAll(/^export\s+(?:const|let|var|function|class)\s+/gm)];
+  assert.deepEqual(namedExports, [], 'no named non-default exports in the main module');
+  assert.match(source, /^export\s+default\s*\{/m, 'the default ExportedHandler is exported');
+  // The shared contract module still carries the exact tested values.
+  const contract = readFileSync(path.resolve(import.meta.dirname, '..', 'src', 'worker-contract.js'), 'utf8');
+  assert.match(contract, /export const CONTENT_SECURITY_POLICY/);
+  assert.match(contract, /export function isBooksPage/);
+  assert.match(contract, /export function isGalleryPage/);
+});
 
 function request(pathname, options = {}, origin = 'http://localhost') {
   return new Request(new URL(pathname, origin), options);

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import worker, { CONTENT_SECURITY_POLICY, isGalleryPage } from '../src/worker.js';
+import worker from '../src/worker.js';
+import { CONTENT_SECURITY_POLICY, isGalleryPage } from '../src/worker-contract.js';
 
 const ARTWORKS_KEY = 'artworks.json';
 

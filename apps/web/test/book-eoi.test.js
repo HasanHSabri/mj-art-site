@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import worker from '../src/worker.js';
-import { isBooksPage } from '../src/worker.js';
+import { isBooksPage } from '../src/worker-contract.js';
 import * as bookEoi from '../src/book-eoi.js';
 import {
   extractCreateTableBody,
@@ -1592,6 +1592,7 @@ test('DELETE on /api/books/interest returns 405', async () => {
 async function seedRowSql(rows) {
   return makeSql((text) => {
     if (/ORDER BY created_at DESC/.test(text)) return rows;
+    if (/SELECT COUNT\(\*\)::int AS total FROM mj_eoi\.book_eoi/.test(text)) return [{ total: rows.length }];
     if (/AS bio_interest/.test(text)) {
       return [{
         bio_interest: 0, bio_copies: 0, child_interest: 0, child_copies: 0,
@@ -1665,6 +1666,222 @@ test('admin list: tampered ciphertext yields null PII without leaking raw', asyn
   const data = await body(res);
   assert.equal(data.rows[0].name, null);
   assert.equal(data.rows[0].email, null);
+});
+
+// --- admin list: server filters, offset pagination, and truthful totals ---
+
+test('admin list response carries rows plus a truthful total and echoes limit/offset', async () => {
+  const env = makeEnv({ sql: await seedRowSql([]) });
+  const res = await worker.fetch(await authedReq('/api/admin/books/eoi?limit=20&offset=40'), env);
+  assert.equal(res.status, 200);
+  const data = await body(res);
+  assert.deepEqual(Object.keys(data).sort(), ['limit', 'offset', 'rows', 'total']);
+  assert.equal(data.limit, 20);
+  assert.equal(data.offset, 40);
+  assert.equal(data.total, 0);
+});
+
+test('admin list applies allowlisted book/status filters and offset, all parameterized', async () => {
+  const sql = await seedRowSql([]);
+  const env = makeEnv({ sql });
+  const res = await worker.fetch(
+    await authedReq('/api/admin/books/eoi?limit=30&offset=60&book=childrens&status=new'),
+    env
+  );
+  assert.equal(res.status, 200);
+  const listCall = sql.calls.find((c) => /ORDER BY created_at DESC/.test(c.text));
+  const countCall = sql.calls.find((c) => /SELECT COUNT\(\*\)::int AS total/.test(c.text));
+  assert.ok(listCall);
+  assert.ok(countCall);
+  // Shared filter builder: book/status values arrive as bound parameters, never
+  // interpolated; limit and offset trail them.
+  assert.equal(listCall.text.includes('childrens'), false);
+  assert.equal(listCall.text.includes("'new'"), false);
+  assert.match(listCall.text, /book_code = \$1 AND status = \$2/);
+  assert.equal(listCall.params[0], 'childrens');
+  assert.equal(listCall.params[1], 'new');
+  assert.equal(listCall.params[2], 30);
+  assert.equal(listCall.params[3], 60);
+  // The count query applies the same filters (no limit/offset).
+  assert.deepEqual(countCall.params, ['childrens', 'new']);
+});
+
+test('admin list rejects non-allowlisted book or status filters with 400', async () => {
+  const env = makeEnv({ sql: await seedRowSql([]) });
+  for (const bad of ['?book=novel', '?status=archived', '?book=DELETE%20FROM%20x']) {
+    const res = await worker.fetch(await authedReq('/api/admin/books/eoi' + bad), env);
+    assert.equal(res.status, 400, bad);
+    const data = await body(res);
+    assert.match(data.error, /Invalid (book|status) filter\./);
+  }
+});
+
+test('admin list ignores absent/empty filters and invalid limit/offset fall back safely', async () => {
+  const sql = await seedRowSql([]);
+  const env = makeEnv({ sql });
+  const res = await worker.fetch(await authedReq('/api/admin/books/eoi?book=&status=&limit=-4&offset=-9&limit2=x'), env);
+  assert.equal(res.status, 200);
+  const listCall = sql.calls.find((c) => /ORDER BY created_at DESC/.test(c.text));
+  assert.doesNotMatch(listCall.text, /WHERE/);
+  assert.deepEqual(listCall.params, [bookEoi.DEFAULT_BOOK_EOI_LIMIT, 0]);
+});
+
+test('buildBookEoiWhere binds each filter as a parameter and composes with AND', () => {
+  const none = bookEoi.buildBookEoiWhere({});
+  assert.deepEqual(none, { clauses: [], params: [] });
+  const out = bookEoi.buildBookEoiWhere({ book: 'biography', status: 'withdrawn', emailHash: 'a'.repeat(64) });
+  assert.deepEqual(out.clauses, ['book_code = $1', 'status = $2', 'email_hash = $3']);
+  assert.deepEqual(out.params, ['biography', 'withdrawn', 'a'.repeat(64)]);
+});
+
+test('countBookEoi counts with the same filters and coerces bad results to zero', async () => {
+  const sql = makeSql((text) => {
+    assert.match(text, /SELECT COUNT\(\*\)::int AS total FROM mj_eoi\.book_eoi WHERE email_hash = \$1$/);
+    return [{ total: '42' }];
+  });
+  assert.equal(await bookEoi.countBookEoi(sql, { emailHash: 'h'.repeat(64) }), 42);
+  const badSql = makeSql(() => [{ total: 'not-a-number' }]);
+  assert.equal(await bookEoi.countBookEoi(badSql, {}), 0);
+  const emptySql = makeSql(() => []);
+  assert.equal(await bookEoi.countBookEoi(emptySql, {}), 0);
+});
+
+// --- POST /api/admin/books/eoi/search: exact-email lookup via keyed hash ---
+
+test('email search without auth returns 401 before any DB/crypto work', async () => {
+  const sql = makeSql(() => { throw new Error('should not query'); });
+  const env = makeEnv({ sql });
+  const res = await worker.fetch(jsonPost('/api/admin/books/eoi/search', { email: 'jane@example.com' }), env);
+  assert.equal(res.status, 401);
+  assert.equal(sql.calls.length, 0);
+});
+
+test('email search rejects non-JSON bodies, wrong methods, and oversized bodies', async () => {
+  const env = makeEnv({ sql: await seedRowSql([]) });
+  const textReq = await authedReq('/api/admin/books/eoi/search', {
+    method: 'POST',
+    headers: { 'content-type': 'text/plain' },
+    body: 'x'
+  });
+  assert.equal((await worker.fetch(textReq, env)).status, 415);
+  const get = await worker.fetch(await authedReq('/api/admin/books/eoi/search'), env);
+  assert.equal(get.status, 405);
+  assert.equal(get.headers.get('allow'), 'POST');
+});
+
+test('email search validates the body strictly: valid email required, no unexpected fields, bounded paging', async () => {
+  const env = makeEnv({ sql: await seedRowSql([]) });
+  for (const [payload, error] of [
+    [{}, /A valid email is required\./],
+    [{ email: 'not-an-email' }, /A valid email is required\./],
+    [{ email: 'jane@example.com', delete: true }, /Unexpected field in request\./],
+    [{ email: 'jane@example.com', book: 'novel' }, /Invalid book filter\./],
+    [{ email: 'jane@example.com', status: 'archived' }, /Invalid status filter\./],
+    [{ email: 'jane@example.com', limit: 0 }, /Invalid limit\./],
+    [{ email: 'jane@example.com', limit: 101 }, /Invalid limit\./],
+    [{ email: 'jane@example.com', offset: -1 }, /Invalid offset\./],
+    [{ email: 'jane@example.com', offset: bookEoi.MAX_BOOK_EOI_OFFSET + 1 }, /Invalid offset\./]
+  ]) {
+    const res = await worker.fetch(
+      await authedReq('/api/admin/books/eoi/search', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      }),
+      env
+    );
+    assert.equal(res.status, 400, JSON.stringify(payload));
+    assert.match((await body(res)).error, error);
+  }
+});
+
+test('email search fails closed 503 when crypto secrets are missing', async () => {
+  const env = makeEnv({ sql: await seedRowSql([]), withConfig: false });
+  env.NEON_DATABASE_URL = 'postgres://u:p@host/db';
+  const res = await worker.fetch(
+    await authedReq('/api/admin/books/eoi/search', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'jane@example.com' })
+    }),
+    env
+  );
+  assert.equal(res.status, 503);
+});
+
+test('email search matches the keyed hash across ALL records and decrypts only the matches', async () => {
+  const email = 'Jane.Example@Example.COM';
+  const expectedHash = await hmacEmailHash(HMAC_KEY, 'jane.example@example.com');
+  const id = crypto.randomUUID();
+  const { ciphertext, iv } = await encryptPii(ENC_KEY, { name: 'Jane Doe', email: 'jane.example@example.com' }, id);
+  const sql = makeSql((text, params) => {
+    if (/ORDER BY created_at DESC/.test(text)) {
+      assert.match(text, /WHERE email_hash = \$1/);
+      assert.equal(params[0], expectedHash, 'the plaintext email is never sent to the database');
+      return [
+        {
+          id, book_code: 'biography', email_hash: expectedHash,
+          pii_ciphertext: ciphertext, pii_iv: iv, quantity: 2, format_code: 'hardcover',
+          status: 'new', created_at: '2026-02-01T00:00:00Z', updated_at: '2026-02-01T00:00:00Z'
+        }
+      ];
+    }
+    if (/SELECT COUNT\(\*\)::int AS total/.test(text)) return [{ total: 1 }];
+    throw new Error('unexpected: ' + text);
+  });
+  const env = makeEnv({ sql });
+  const res = await worker.fetch(
+    await authedReq('/api/admin/books/eoi/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, limit: 50, offset: 0 })
+    }),
+    env
+  );
+  assert.equal(res.status, 200);
+  const data = await body(res);
+  assert.equal(data.total, 1);
+  assert.equal(data.rows.length, 1);
+  assert.equal(data.rows[0].email, 'jane.example@example.com');
+  assert.equal(data.rows[0].name, 'Jane Doe');
+  // No raw crypto material in the response.
+  assert.equal(JSON.stringify(data).includes(ciphertext), false);
+});
+
+test('email search combines with book/status filters and paginates with offset', async () => {
+  const sql = makeSql((text, params) => {
+    if (/ORDER BY created_at DESC/.test(text)) {
+      assert.match(text, /book_code = \$1 AND status = \$2 AND email_hash = \$3/);
+      assert.equal(params[3], 50);
+      assert.equal(params[4], 150);
+      return [];
+    }
+    if (/SELECT COUNT\(\*\)::int AS total/.test(text)) return [{ total: 151 }];
+    throw new Error('unexpected: ' + text);
+  });
+  const env = makeEnv({ sql });
+  const res = await worker.fetch(
+    await authedReq('/api/admin/books/eoi/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: 'a@b.com', book: 'childrens', status: 'new', limit: 50, offset: 150 })
+    }),
+    env
+  );
+  assert.equal(res.status, 200);
+  const data = await body(res);
+  assert.equal(data.total, 151);
+  assert.equal(data.offset, 150);
+});
+
+test('email search fails closed 503 when the DB throws', async () => {
+  const env = makeEnv({ sql: makeSql(() => { throw new Error('db down'); }) });
+  const res = await worker.fetch(
+    await authedReq('/api/admin/books/eoi/search', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'jane@example.com' })
+    }),
+    env
+  );
+  assert.equal(res.status, 503);
 });
 
 test('admin summary returns per-book active counts, windows, statuses, total, and distinct contacts; no PII', async () => {

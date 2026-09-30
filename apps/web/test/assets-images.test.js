@@ -10,7 +10,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
-import { CONTENT_SECURITY_POLICY } from '../src/worker.js';
+import { CONTENT_SECURITY_POLICY } from '../src/worker-contract.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(__dirname, '..', 'public');

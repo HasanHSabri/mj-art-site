@@ -10,3 +10,6 @@ _bmad-output/
 catalog-derivatives/
 # Local durable storage: source catalogue assets + R2 backups (never committed).
 .local-assets/
+# Local-only Worker dev secrets (admin password, session secret, dev Neon URL,
+# dev crypto keys). Never commit real values; .dev.vars.example is the template.
+apps/web/.dev.vars

@@ -12,21 +12,25 @@
   <link rel="stylesheet" href="./admin.css">
 </head>
 <body>
-  <main class="admin-shell">
-    <header class="admin-hero">
-      <div>
-        <p class="eyebrow">MJ Art admin</p>
-        <h1>Edit and publish the public gallery.</h1>
-        <p>Sign in, add or edit a painting, upload images, and save directly to the live public gallery.</p>
-      </div>
-      <a class="button ghost-button" href="./index.html">View public site</a>
-    </header>
+  <header class="admin-topbar">
+    <a class="topbar-brand" href="./admin.html" id="admin-brand">MJ Art admin</a>
+    <nav class="admin-section-nav" id="admin-section-nav" aria-label="Admin sections" hidden>
+      <a class="section-anchor" href="./admin.html?view=catalogue" data-view="catalogue">Artworks</a>
+      <a class="section-anchor" href="./admin.html?view=books" data-view="books">Book enquiries</a>
+    </nav>
+    <div class="topbar-actions">
+      <a class="button ghost-button topbar-link" href="./index.html">View website</a>
+      <button class="button ghost-button topbar-link" id="logout" type="button" hidden>Sign out</button>
+    </div>
+  </header>
 
+  <main class="admin-shell">
     <section class="panel login-panel" id="login-panel" aria-label="Admin sign in">
       <form id="login-form" class="login-form">
         <div class="section-heading">
           <p class="eyebrow">Private access</p>
           <h2>Admin sign in</h2>
+          <p class="login-lede">Sign in to edit the public gallery and review book enquiries.</p>
         </div>
         <label>
           Password
@@ -38,184 +42,204 @@
     </section>
 
     <div id="admin-content" hidden>
-      <nav class="admin-section-nav" aria-label="Admin sections">
-        <a class="section-anchor" href="#artwork-section">Artwork Catalogue</a>
-        <a class="section-anchor" href="#books-dashboard">Book Interest Dashboard</a>
-      </nav>
-
-      <section class="admin-grid" id="artwork-section" aria-label="Artwork editor">
-        <form class="panel editor-panel" id="artwork-form" novalidate>
-          <div class="section-heading inline-heading">
-            <div>
-              <p class="eyebrow">Artwork details</p>
-              <h2>Add or update a painting</h2>
-            </div>
-            <button class="button ghost-button" id="logout" type="button">Sign out</button>
-          </div>
-
-          <input id="artwork-id" name="artworkId" type="hidden">
-          <input id="sort-order" name="sortOrder" type="hidden">
-
-          <fieldset class="field-group">
-            <legend>Catalog identity</legend>
-            <div class="field-row">
-              <label>
-                Category
-                <select id="category" name="category">
-                  <option value="catalogue">Catalogue</option>
-                  <option value="miscellaneous">Miscellaneous</option>
-                </select>
-              </label>
-              <label>
-                Catalog number
-                <input id="catalog-number" name="catalogNumber" type="text" inputmode="text" placeholder="MJ-001" autocomplete="off">
-              </label>
-            </div>
-            <label>
-              Title
-              <input id="title" name="title" type="text" placeholder="Painting title" required>
-            </label>
-          </fieldset>
-
-          <fieldset class="field-group">
-            <legend>Image</legend>
-            <label>
-              Source image (JPEG)
-              <input id="image-upload" type="file" accept="image/jpeg,image/*">
-            </label>
-            <div class="actions upload-actions">
-              <button class="button ghost-button" id="upload-button" type="button">Generate &amp; upload derivatives</button>
-            </div>
-            <p class="copy-status" id="upload-status" role="status" aria-live="polite"></p>
-            <label>
-              Full image path
-              <input id="image-path" name="image" type="text" readonly placeholder="/artwork-uploaded/artwork/catalog/mj-001/full.jpg">
-            </label>
-            <label>
-              Thumbnail path
-              <input id="thumbnail-path" name="thumbnail" type="text" readonly placeholder="/artwork-uploaded/artwork/catalog/mj-001/thumb.jpg">
-            </label>
-            <label class="checkbox-label">
-              <input id="contain-image" name="containImage" type="checkbox">
-              Show full image without cropping
-            </label>
-          </fieldset>
-
-          <fieldset class="field-group">
-            <legend>Dimensions &amp; medium</legend>
-            <div class="field-row">
-              <label>
-                Width (cm)
-                <input id="width-cm" name="widthCm" type="number" min="0" step="any" inputmode="decimal" placeholder="20">
-              </label>
-              <label>
-                Height (cm)
-                <input id="height-cm" name="heightCm" type="number" min="0" step="any" inputmode="decimal" placeholder="20">
-              </label>
-            </div>
-            <div class="field-row">
-              <label>
-                Orientation
-                <input id="orientation" name="orientation" type="text" readonly placeholder="Derived from dimensions">
-              </label>
-              <label>
-                Size category
-                <select id="size-category" name="sizeCategory">
-                  <option value="">Select a size…</option>
-                  <option value="miscellaneous">Miscellaneous</option>
-                </select>
-              </label>
-            </div>
-            <label>
-              Medium
-              <input id="medium" name="medium" type="text" placeholder="Acrylic on canvas">
-            </label>
-          </fieldset>
-
-          <fieldset class="field-group">
-            <legend>Availability &amp; price</legend>
-            <div class="field-row">
-              <label>
-                Availability
-                <select id="availability" name="availability">
-                  <option value="Available">Available</option>
-                  <option value="Sold">Sold</option>
-                </select>
-              </label>
-              <label>
-                Price (AUD)
-                <input id="price-amount" name="priceAmount" type="number" min="0" step="any" inputmode="decimal" placeholder="Leave empty for price on enquiry">
-              </label>
-            </div>
-            <label>
-              Price note (optional)
-              <input id="price-note" name="priceNote" type="text" placeholder="postage extra">
-            </label>
-          </fieldset>
-
-          <fieldset class="field-group">
-            <legend>Notes</legend>
-            <label>
-              Short card note
-              <input id="card-note" name="cardNote" type="text" placeholder="Details to be added">
-            </label>
-            <label>
-              Description
-              <textarea id="description" name="description" rows="6" placeholder="Artwork description"></textarea>
-            </label>
-          </fieldset>
-
-          <div class="provenance-block" id="provenance-block" hidden>
-            <p class="eyebrow">Provenance (admin only)</p>
-            <p class="provenance-summary" id="provenance-summary">None</p>
-          </div>
-
-          <ul class="form-errors" id="form-errors" aria-live="assertive" hidden></ul>
-
-          <div class="actions">
-            <button class="button primary-button" type="submit">Save to public gallery</button>
-            <button class="button ghost-button" id="new-artwork" type="button">New painting</button>
-            <button class="button ghost-button" id="reset-form" type="button">Clear form</button>
-          </div>
-          <p class="copy-status" id="save-status" role="status" aria-live="polite"></p>
-        </form>
-
-        <aside class="panel preview-panel" aria-label="Preview">
-          <div class="section-heading">
-            <p class="eyebrow">Preview</p>
-            <h2 id="preview-title">Untitled painting</h2>
-          </div>
-          <div class="preview-image" id="preview-image"></div>
-          <dl class="preview-meta">
-            <div><dt>Medium</dt><dd id="preview-medium">—</dd></div>
-            <div><dt>Size</dt><dd id="preview-size">—</dd></div>
-            <div><dt>Availability</dt><dd id="preview-availability">—</dd></div>
-            <div><dt>Price</dt><dd id="preview-price">—</dd></div>
-          </dl>
-          <p id="preview-description" class="preview-description">Artwork description preview.</p>
-        </aside>
-      </section>
-
-      <section class="panel drafts-panel" aria-label="Artwork list">
+      <section class="panel catalogue-panel" id="artwork-section" data-view-panel="catalogue" aria-labelledby="catalogue-heading" hidden>
         <div class="section-heading inline-heading">
           <div>
             <p class="eyebrow">Public gallery</p>
-            <h2>Artwork list</h2>
+            <h2 id="catalogue-heading" tabindex="-1">Artwork catalogue</h2>
           </div>
+          <button class="button primary-button" id="add-artwork" type="button">Add painting</button>
+        </div>
+
+        <div class="catalogue-controls">
           <label class="search-label">
             Search
-            <input id="artwork-search" type="search" placeholder="Filter by title or number">
+            <input id="artwork-search" type="search" placeholder="Title or number" autocomplete="off">
+          </label>
+          <label class="filter-label">
+            Availability
+            <select id="artwork-filter-availability">
+              <option value="all">All</option>
+              <option value="Available">Available</option>
+              <option value="Sold">Sold</option>
+            </select>
+          </label>
+          <label class="filter-label">
+            Size
+            <select id="artwork-filter-size">
+              <option value="all">All sizes</option>
+            </select>
           </label>
         </div>
+
         <p class="reorder-note" aria-live="polite" id="reorder-note"></p>
-        <div class="draft-list" id="artwork-list"></div>
+        <div class="catalogue-list" id="artwork-list"></div>
+
+        <div class="catalogue-footer">
+          <p class="catalogue-count" id="catalogue-count" aria-live="polite" role="status"></p>
+          <div class="pagination-controls" id="artwork-pagination"></div>
+        </div>
       </section>
 
-      <section class="panel books-panel" id="books-dashboard" aria-labelledby="books-heading" hidden>
+      <section data-view-panel="artwork" aria-labelledby="artwork-heading" hidden>
+        <div class="admin-grid" id="editor-grid">
+          <form class="panel editor-panel" id="artwork-form" novalidate>
+            <div class="section-heading inline-heading">
+              <div>
+                <p class="eyebrow">Artwork details</p>
+                <h2 id="artwork-heading" tabindex="-1">Add a painting</h2>
+              </div>
+              <p class="dirty-status" id="dirty-status" role="status" aria-live="polite" hidden>Unsaved changes</p>
+            </div>
+
+            <input id="artwork-id" name="artworkId" type="hidden">
+            <input id="sort-order" name="sortOrder" type="hidden">
+
+            <fieldset class="field-group">
+              <legend>Catalog identity</legend>
+              <div class="field-row">
+                <label>
+                  Category
+                  <select id="category" name="category">
+                    <option value="catalogue">Catalogue</option>
+                    <option value="miscellaneous">Miscellaneous</option>
+                  </select>
+                </label>
+                <label>
+                  Catalog number
+                  <input id="catalog-number" name="catalogNumber" type="text" inputmode="text" placeholder="MJ-001" autocomplete="off">
+                </label>
+              </div>
+              <label>
+                Title
+                <input id="title" name="title" type="text" placeholder="Painting title" required>
+              </label>
+            </fieldset>
+
+            <fieldset class="field-group">
+              <legend>Image</legend>
+              <label>
+                Source image (JPEG)
+                <input id="image-upload" type="file" accept="image/jpeg,image/*">
+              </label>
+              <div class="actions upload-actions">
+                <button class="button ghost-button" id="upload-button" type="button">Generate &amp; upload derivatives</button>
+              </div>
+              <p class="copy-status" id="upload-status" role="status" aria-live="polite"></p>
+              <label>
+                Full image path
+                <input id="image-path" name="image" type="text" readonly placeholder="/artwork-uploaded/artwork/catalog/mj-001/full.jpg">
+              </label>
+              <label>
+                Thumbnail path
+                <input id="thumbnail-path" name="thumbnail" type="text" readonly placeholder="/artwork-uploaded/artwork/catalog/mj-001/thumb.jpg">
+              </label>
+              <label class="checkbox-label">
+                <input id="contain-image" name="containImage" type="checkbox">
+                Show full image without cropping
+              </label>
+            </fieldset>
+
+            <fieldset class="field-group">
+              <legend>Dimensions &amp; medium</legend>
+              <div class="field-row">
+                <label>
+                  Width (cm)
+                  <input id="width-cm" name="widthCm" type="number" min="0" step="any" inputmode="decimal" placeholder="20">
+                </label>
+                <label>
+                  Height (cm)
+                  <input id="height-cm" name="heightCm" type="number" min="0" step="any" inputmode="decimal" placeholder="20">
+                </label>
+              </div>
+              <div class="field-row">
+                <label>
+                  Orientation
+                  <input id="orientation" name="orientation" type="text" readonly placeholder="Derived from dimensions">
+                </label>
+                <label>
+                  Size category
+                  <select id="size-category" name="sizeCategory">
+                    <option value="">Select a size…</option>
+                    <option value="miscellaneous">Miscellaneous</option>
+                  </select>
+                </label>
+              </div>
+              <label>
+                Medium
+                <input id="medium" name="medium" type="text" placeholder="Acrylic on canvas">
+              </label>
+            </fieldset>
+
+            <fieldset class="field-group">
+              <legend>Availability &amp; price</legend>
+              <div class="field-row">
+                <label>
+                  Availability
+                  <select id="availability" name="availability">
+                    <option value="Available">Available</option>
+                    <option value="Sold">Sold</option>
+                  </select>
+                </label>
+                <label>
+                  Price (AUD)
+                  <input id="price-amount" name="priceAmount" type="number" min="0" step="any" inputmode="decimal" placeholder="Leave empty for price on enquiry">
+                </label>
+              </div>
+              <label>
+                Price note (optional)
+                <input id="price-note" name="priceNote" type="text" placeholder="postage extra">
+              </label>
+            </fieldset>
+
+            <fieldset class="field-group">
+              <legend>Notes</legend>
+              <label>
+                Short card note
+                <input id="card-note" name="cardNote" type="text" placeholder="Details to be added">
+              </label>
+              <label>
+                Description
+                <textarea id="description" name="description" rows="6" placeholder="Artwork description"></textarea>
+              </label>
+            </fieldset>
+
+            <div class="provenance-block" id="provenance-block" hidden>
+              <p class="eyebrow">Provenance (admin only)</p>
+              <p class="provenance-summary" id="provenance-summary">None</p>
+            </div>
+
+            <ul class="form-errors" id="form-errors" aria-live="assertive" hidden></ul>
+            <p class="copy-status" id="save-status" role="status" aria-live="polite"></p>
+
+            <div class="actions editor-actions">
+              <button class="button primary-button" type="submit">Save changes</button>
+              <button class="button ghost-button" id="back-to-catalogue" type="button">Back to catalogue</button>
+            </div>
+          </form>
+
+          <aside class="panel preview-panel" aria-label="Preview">
+            <div class="section-heading">
+              <p class="eyebrow">Preview</p>
+              <h2 id="preview-title">Untitled painting</h2>
+            </div>
+            <div class="preview-image" id="preview-image"></div>
+            <dl class="preview-meta">
+              <div><dt>Medium</dt><dd id="preview-medium">—</dd></div>
+              <div><dt>Size</dt><dd id="preview-size">—</dd></div>
+              <div><dt>Availability</dt><dd id="preview-availability">—</dd></div>
+              <div><dt>Price</dt><dd id="preview-price">—</dd></div>
+            </dl>
+            <p id="preview-description" class="preview-description">Artwork description preview.</p>
+          </aside>
+        </div>
+      </section>
+
+      <section class="panel books-panel" id="books-dashboard" data-view-panel="books" aria-labelledby="books-heading" hidden>
         <div class="section-heading inline-heading">
           <div>
             <p class="eyebrow">Books expression of interest</p>
-            <h2 id="books-heading">Book interest dashboard</h2>
+            <h2 id="books-heading" tabindex="-1">Book enquiries</h2>
           </div>
           <div class="books-toolbar">
             <button class="button ghost-button" type="button" id="books-refresh">Refresh</button>
@@ -229,14 +253,10 @@
 
         <div class="section-heading inline-heading books-filters">
           <div>
-            <p class="eyebrow">Recent submissions</p>
-            <h2>Recent interest</h2>
+            <p class="eyebrow">Submissions</p>
+            <h2>All interest</h2>
           </div>
           <div class="books-filter-controls">
-            <label class="search-label">
-              Search name or email
-              <input id="books-search" type="search" placeholder="Filter by name or email" autocomplete="off">
-            </label>
             <label class="filter-label">
               Book
               <select id="books-filter-book">
@@ -254,12 +274,24 @@
                 <option value="withdrawn">Withdrawn</option>
               </select>
             </label>
+            <label class="search-label" id="books-email-label">
+              Find by exact email
+              <span class="email-find">
+                <input id="books-email" type="search" placeholder="name@example.com" autocomplete="off">
+                <button class="button ghost-button" type="button" id="books-email-find">Find</button>
+              </span>
+            </label>
+            <label class="search-label">
+              Name (loaded page only)
+              <input id="books-name-filter" type="search" placeholder="Filter shown names" autocomplete="off">
+            </label>
           </div>
         </div>
+        <p class="books-scope-note" id="books-scope-note" aria-live="polite"></p>
 
         <div class="books-table-wrap">
           <table class="books-table" id="books-table">
-            <caption class="visually-hidden">Recent book expressions of interest, newest first. Maximum 100 rows.</caption>
+            <caption class="visually-hidden">Book expressions of interest, newest first, 50 per page.</caption>
             <thead>
               <tr>
                 <th scope="col">Submitted</th>
@@ -274,6 +306,11 @@
             </thead>
             <tbody id="books-tbody"></tbody>
           </table>
+        </div>
+
+        <div class="catalogue-footer">
+          <p class="catalogue-count" id="books-count" role="status" aria-live="polite"></p>
+          <div class="pagination-controls" id="books-pagination"></div>
         </div>
       </section>
     </div>

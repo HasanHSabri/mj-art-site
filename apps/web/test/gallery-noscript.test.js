@@ -7,7 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { toPublicList } from '../src/artwork-schema.js';
 import { renderArtworkCards, SSR_FEATURED_COUNT } from '../src/gallery-ssr.js';
 import { FEATURED_COUNT } from '../public/gallery-display.js';
-import { CONTENT_SECURITY_POLICY } from '../src/worker.js';
+import { CONTENT_SECURITY_POLICY } from '../src/worker-contract.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const publicDir = resolve(here, '..', 'public');

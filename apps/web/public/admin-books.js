@@ -17,6 +17,11 @@ export const STATUS_LABELS = { new: 'New', contacted: 'Contacted', withdrawn: 'W
 export const BOOK_ORDER = ['biography', 'childrens'];
 export const STATUS_ORDER = ['new', 'contacted', 'withdrawn'];
 
+// Rows requested per admin page. Mirrors the server DEFAULT_BOOK_EOI_LIMIT
+// (50) and stays under MAX_BOOK_EOI_ADMITTED_LIMIT (100): each request
+// decrypts at most one bounded page, never the whole table.
+export const BOOKS_PAGE_SIZE = 50;
+
 // Human labels for stored codes; fall back to the raw value (or an em dash) so
 // an unexpected code is still visible rather than silently blank.
 export function formatBookLabel(code) {
@@ -138,6 +143,31 @@ export function filterRows(rows, { term = '', book = 'all', status = 'all' } = {
     }
     return true;
   });
+}
+
+// Name-only client-side filter over the CURRENTLY LOADED page. Names are
+// encrypted PII at rest, so a true whole-history name search is impossible
+// without decrypting every record; this helper powers the clearly scoped
+// "filter the loaded page by name" control, whose UI copy says exactly that.
+export function filterRowsByName(rows, term = '') {
+  const t = String(term == null ? '' : term).trim().toLowerCase();
+  const list = Array.isArray(rows) ? rows : [];
+  if (!t) return list.slice();
+  return list.filter((r) => {
+    if (!r || typeof r !== 'object') return false;
+    return String(r.name == null ? '' : r.name).toLowerCase().includes(t);
+  });
+}
+
+// Human range label for a server-paginated list, e.g. "1–50 of 137 records"
+// or "No records yet". `shown` is the number of rows actually on the page.
+export function booksRangeLabel(offset, shown, total) {
+  const start = Number(offset) + 1;
+  const count = Number(shown);
+  const grand = Number(total);
+  if (!Number.isFinite(grand) || grand <= 0) return 'No records yet.';
+  if (!Number.isFinite(count) || count <= 0) return 'No matching records.';
+  return `${start}\u2013${start + count - 1} of ${grand} records`;
 }
 
 // Pure RFC 4180-ish CSV serializer for the recent rows. No UI export is wired

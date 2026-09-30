@@ -46,38 +46,95 @@ code {
   background: rgba(255, 255, 255, 0.58);
 }
 
+/* ===========================================================================
+   Persistent compact top bar: brand, section nav, View website, Sign out
+   =========================================================================== */
+
+.admin-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(250, 243, 237, 0.92);
+  backdrop-filter: blur(10px);
+}
+
+.topbar-brand {
+  color: var(--accent-deep);
+  font-family: "Cormorant Garamond", serif;
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.1;
+  margin-right: auto;
+}
+
+.admin-section-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.topbar-actions .topbar-link {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 0.9rem;
+}
+
+.section-anchor {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.42);
+  color: var(--accent-deep);
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.section-anchor:hover {
+  background: rgba(255, 255, 255, 0.7);
+}
+
+/* Active view state in the persistent nav. */
+.section-anchor[aria-current="page"] {
+  border-color: rgba(154, 92, 75, 0.55);
+  background: rgba(154, 92, 75, 0.14);
+  color: var(--accent-deep);
+}
+
 .admin-shell {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 28px 0 64px;
+  padding: 24px 0 64px;
 }
 
-.admin-hero,
 .panel {
   border: 1px solid var(--border);
   border-radius: 28px;
   background: var(--surface);
   box-shadow: var(--shadow);
   backdrop-filter: blur(10px);
-}
-
-.admin-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 24px;
-  align-items: start;
-  padding: 36px;
+  padding: 28px;
 }
 
 .admin-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.95fr);
   gap: 24px;
-  margin-top: 24px;
-}
-
-.panel {
-  padding: 28px;
 }
 
 .editor-panel,
@@ -87,23 +144,14 @@ code {
   align-content: start;
 }
 
-.section-heading h2,
-.admin-hero h1 {
+.section-heading h2 {
   margin: 6px 0 0;
   font-family: "Cormorant Garamond", serif;
   line-height: 1;
+  font-size: clamp(1.9rem, 3vw, 2.6rem);
 }
 
-.admin-hero h1 {
-  max-width: 12ch;
-  font-size: clamp(3rem, 7vw, 5.4rem);
-}
-
-.section-heading h2 {
-  font-size: clamp(2rem, 4vw, 3rem);
-}
-
-.admin-hero p,
+.section-heading p,
 label,
 .preview-description,
 .preview-meta dd,
@@ -111,9 +159,16 @@ label,
   line-height: 1.6;
 }
 
-.admin-hero p {
-  max-width: 68ch;
+.login-lede {
+  margin: 8px 0 0;
+  max-width: 60ch;
   color: var(--muted);
+}
+
+.login-form {
+  display: grid;
+  gap: 16px;
+  max-width: 460px;
 }
 
 .eyebrow {
@@ -283,45 +338,6 @@ select:focus-visible,
   color: var(--muted);
 }
 
-.drafts-panel {
-  margin-top: 24px;
-}
-
-.draft-list {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
-  margin-top: 20px;
-}
-
-.draft-card {
-  display: grid;
-  gap: 12px;
-  align-content: start;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.42);
-}
-
-.draft-card img {
-  width: 100%;
-  height: 160px;
-  object-fit: cover;
-  border-radius: 14px;
-}
-
-.draft-card h3 {
-  margin: 0;
-  font-family: "Cormorant Garamond", serif;
-  font-size: 1.6rem;
-}
-
-.draft-card p {
-  margin: 0;
-  color: var(--muted);
-}
-
 .empty-state {
   margin: 0;
   color: var(--muted);
@@ -352,6 +368,15 @@ select:focus-visible,
 input[readonly] {
   background: rgba(108, 70, 52, 0.06);
   color: var(--muted);
+}
+
+/* Validation errors mark the offending controls (aria-invalid) so the
+   "highlighted fields" copy is literal; focus lands on the first one. */
+input[aria-invalid="true"],
+select[aria-invalid="true"],
+textarea[aria-invalid="true"] {
+  border-color: rgba(159, 56, 45, 0.55);
+  background: rgba(159, 56, 45, 0.05);
 }
 
 .upload-actions {
@@ -385,11 +410,50 @@ input[readonly] {
   margin-top: 4px;
 }
 
-.reorder-note {
-  min-height: 1.4em;
-  margin: 8px 0 0;
-  color: var(--muted);
-  font-size: 0.9rem;
+/* ===========================================================================
+   Editor: sticky action bar + dirty state
+   =========================================================================== */
+
+.editor-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  margin: 4px -10px -6px;
+  padding: 12px 10px 14px;
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 28px 28px;
+  background: rgba(252, 246, 240, 0.95);
+  backdrop-filter: blur(8px);
+  justify-content: flex-start;
+}
+
+.dirty-status {
+  margin: 0;
+  padding: 6px 14px;
+  border: 1px solid rgba(154, 92, 75, 0.4);
+  border-radius: 999px;
+  background: rgba(154, 92, 75, 0.12);
+  color: var(--accent-deep);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+/* ===========================================================================
+   Catalogue (compact rows on desktop, cards on mobile)
+   =========================================================================== */
+
+.catalogue-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: flex-end;
+  margin: 18px 0 4px;
+}
+
+.catalogue-controls .search-label,
+.catalogue-controls .filter-label {
+  flex: 1 1 200px;
+  max-width: 320px;
 }
 
 .search-label {
@@ -401,96 +465,177 @@ input[readonly] {
   min-height: 40px;
 }
 
-.draft-card .card-top {
-  display: flex;
+.filter-label {
   gap: 6px;
-  flex-wrap: wrap;
+  font-size: 0.8rem;
 }
 
-.draft-card .card-meta {
-  margin: 0;
+.filter-label select {
+  min-height: 40px;
+}
+
+.reorder-note {
+  min-height: 1.4em;
+  margin: 8px 0 0;
   color: var(--muted);
-  font-size: 0.86rem;
-}
-
-.draft-card .icon-button {
-  min-height: 38px;
-  padding: 0 12px;
   font-size: 0.9rem;
 }
 
-.draft-card .card-buttons {
+.catalogue-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+/* Compact desktop row: thumb | info | availability | actions. */
+.cat-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) auto;
+  grid-template-areas: "thumb info actions";
+  gap: 8px 16px;
+  align-items: center;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.cat-row img {
+  grid-area: thumb;
+  width: 64px;
+  height: 52px;
+  object-fit: cover;
+  border-radius: 10px;
+}
+
+.cat-thumb-missing {
+  grid-area: thumb;
+  display: inline-block;
+  width: 64px;
+  height: 52px;
+  border-radius: 10px;
+  border: 1px dashed var(--border);
+  background: rgba(255, 255, 255, 0.36);
+}
+
+.cat-info {
+  grid-area: info;
+  min-width: 0;
+}
+
+.cat-info h3 {
+  margin: 0;
+  font-size: 1.02rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cat-info .card-meta {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.cat-availability {
+  grid-area: availability;
+  margin: 0;
+  justify-self: end;
+  padding: 3px 12px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.cat-available {
+  border-color: rgba(72, 110, 80, 0.34);
+  background: rgba(72, 110, 80, 0.1);
+  color: #3c5e44;
+}
+
+.cat-sold {
+  border-color: var(--border);
+  background: rgba(108, 70, 52, 0.08);
+  color: var(--muted);
+}
+
+.cat-actions {
+  grid-area: actions;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
-.draft-card .card-buttons .button {
-  flex: 1 1 auto;
-  min-height: 42px;
+.cat-actions .button {
+  min-height: 38px;
+  padding: 0 12px;
+  font-size: 0.88rem;
 }
 
-.draft-card.editing {
+.cat-row.editing {
   outline: 2px solid var(--accent);
 }
 
-@media (max-width: 860px) {
-  .admin-hero,
-  .admin-grid,
-  .field-row,
-  .preview-meta,
-  .draft-list {
-    grid-template-columns: 1fr;
-  }
-
-  .admin-hero,
-  .panel {
-    padding: 22px;
-  }
-
-  .preview-image,
-  .preview-image img {
-    min-height: 320px;
-    height: 320px;
-  }
-}
-
-/* ===========================================================================
-   Section navigation (Artwork Catalogue / Book Interest Dashboard anchors)
-   =========================================================================== */
-
-.admin-section-nav {
+.catalogue-footer {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 20px;
-  margin-bottom: 4px;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 18px;
 }
 
-.section-anchor {
-  display: inline-flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 16px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.42);
-  color: var(--accent-deep);
-  font-weight: 600;
+.catalogue-count {
+  margin: 0;
+  color: var(--muted);
   font-size: 0.9rem;
 }
 
-.section-anchor:hover {
-  background: rgba(255, 255, 255, 0.7);
+.pagination-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.pagination-controls .page-button {
+  min-height: 40px;
+  padding: 0 14px;
+  font-size: 0.88rem;
+}
+
+.page-label {
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+/* Mobile: the compact row becomes a stacked card with the availability badge
+   inline with the meta line. Covers 320px / 393px / 200% zoom. */
+@media (max-width: 760px) {
+  .cat-row {
+    grid-template-columns: 64px minmax(0, 1fr);
+    grid-template-areas:
+      "thumb info"
+      "actions actions";
+  }
+
+  .cat-availability {
+    grid-area: info;
+    justify-self: start;
+    align-self: start;
+  }
+
+  .cat-actions {
+    justify-content: flex-start;
+  }
 }
 
 /* ===========================================================================
    Books EOI dashboard
    =========================================================================== */
-
-.books-panel {
-  margin-top: 24px;
-}
 
 .books-toolbar {
   display: flex;
@@ -580,14 +725,38 @@ input[readonly] {
   align-items: flex-end;
 }
 
-.filter-label {
-  gap: 6px;
-  font-size: 0.8rem;
-}
-
 .books-filter-controls input,
 .books-filter-controls select {
   min-height: 44px;
+}
+
+.books-filter-controls .filter-label,
+.books-filter-controls .search-label {
+  flex: 0 1 auto;
+}
+
+.email-find {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.email-find input {
+  min-width: 0;
+}
+
+.email-find .button {
+  min-height: 44px;
+  padding: 0 14px;
+  font-size: 0.88rem;
+}
+
+/* Honest search-scope copy: exact email = all records; name = loaded page. */
+.books-scope-note {
+  min-height: 1.4em;
+  margin: 10px 0 0;
+  color: var(--muted);
+  font-size: 0.84rem;
 }
 
 /* Recent list table */
@@ -749,6 +918,34 @@ input[readonly] {
   .books-tiles {
     grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   }
+
+  .books-filter-controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .books-filter-controls .filter-label,
+  .books-filter-controls .search-label {
+    width: 100%;
+  }
+}
+
+@media (max-width: 860px) {
+  .admin-grid,
+  .field-row,
+  .preview-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .panel {
+    padding: 22px;
+  }
+
+  .preview-image,
+  .preview-image img {
+    min-height: 320px;
+    height: 320px;
+  }
 }
 
 @media (max-width: 360px) {
@@ -759,9 +956,4 @@ input[readonly] {
   .tile-value {
     font-size: 1.6rem;
   }
-}
-/* Keep admin anchor targets clear of the section navigation without inline CSS. */
-#artwork-section,
-#books-dashboard {
-  scroll-margin-top: 84px;
 }

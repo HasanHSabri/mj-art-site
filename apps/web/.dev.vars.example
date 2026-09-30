@@ -1,0 +1,21 @@
+# Copy to apps/web/.dev.vars (gitignored) for local `wrangler dev` browser
+# verification. Use DEV-ONLY throwaway values here -- never real production or
+# preview secrets, and never commit the copied file.
+#
+# Admin sign-in (local only; pick any dev password >= a few words):
+ADMIN_PASSWORD=dev-only-admin-password
+ADMIN_SESSION_SECRET=dev-only-session-secret-0123456789abcdef
+#
+# Books EOI local backend (optional). Without these, /books and the admin Book
+# enquiries view fail closed with their normal error surfaces and the artwork
+# admin is unaffected -- that is the expected local behavior to verify.
+# To exercise Books end to end, point NEON_DATABASE_URL at a DEV Neon database
+# provisioned with database/mj-eoi-schema.sql (see
+# `node scripts/check-book-eoi-schema.mjs --probe` for the exact setup SQL),
+# then supply two distinct >=32-byte dev keys:
+# NEON_DATABASE_URL=postgres://user:pass@ep-dev-pooler.region.aws.neon.tech/neondb
+# BOOK_EOI_HMAC_KEY=dev-only-hmac-key-0123456789abcdef
+# BOOK_EOI_ENCRYPTION_KEY=dev-only-encryption-key-0123456789abcdef
+#
+# Turnstile cannot be satisfied locally (siteverify would reject localhost);
+# admin UI/server behavior is still fully verifiable without it.
