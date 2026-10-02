@@ -1113,3 +1113,277 @@ html.dialog-open {
     transform: none;
   }
 }
+
+/* ===========================================================================
+   Mobile reading layout — release label: mobile-layout-v2.
+   One readable column for every public page at <=760px: a flat masthead with
+   the single Menu disclosure, an open editorial hero (no boxed card) with
+   stacked full-width actions, hairline section rules for sequencing, a true
+   single-column artwork grid with naturally proportioned images, and
+   full-width stacked forms/CTAs. Everything lives inside max-width media
+   queries appended AFTER the earlier breakpoints, so the desktop composition
+   (>=761px) is untouched. The page sheets (gallery.css / books.css) load
+   after this file and re-assert their single-column guards in their own
+   appended blocks. No inline styles exist on these pages; scripts only
+   toggle [hidden]/[open] and dialog-open, all unaffected here.
+   =========================================================================== */
+@media (max-width: 760px) {
+  /* Comfortable lateral padding: 20px per side (16px on the smallest phones,
+     see the 380px block below). */
+  .page-shell {
+    width: min(100% - 40px, 1180px);
+    padding-top: 8px;
+  }
+
+  /* Masthead: the boxed topbar card becomes a simple full-width header row —
+     brand left, the single Menu disclosure right, hairline underneath. */
+  .topbar {
+    padding: 6px 0 12px;
+    border: 0;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0;
+    background: none;
+    backdrop-filter: none;
+  }
+
+  .brand {
+    font-size: 1.6rem;
+  }
+
+  /* One simple mobile navigation across the whole phone band (the inline
+     link row only returns above 760px). */
+  .site-nav-links {
+    display: none;
+  }
+
+  .site-nav-disclosure {
+    display: block;
+  }
+
+  .site-nav-menu {
+    max-width: calc(100vw - 40px);
+  }
+
+  /* Hero: open editorial column on the cream ground — no card chrome, no
+     inner box padding. Tamer display size (the desktop clamp overwhelms a
+     320–430px screen), a slightly larger reading size, and the primary
+     actions stacked full-width. */
+  .hero {
+    padding: 0 0 12px;
+  }
+
+  .hero-content {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    padding-top: 22px;
+  }
+
+  .hero-copy {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    backdrop-filter: none;
+    box-shadow: none;
+  }
+
+  h1 {
+    margin: 10px 0 12px;
+    font-size: clamp(2.15rem, 8.5vw, 2.7rem);
+    line-height: 1.04;
+    max-width: none;
+  }
+
+  .eyebrow,
+  .section-label,
+  .hero-card-label {
+    font-size: 0.8rem;
+  }
+
+  .hero-text {
+    font-size: 1.04rem;
+    line-height: 1.7;
+  }
+
+  .hero-actions {
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 22px;
+  }
+
+  .hero-actions .button {
+    width: 100%;
+  }
+
+  /* Artwork previews keep their framed plate but tighten: the large piece
+     spans the top, the two smaller ones pair beneath, so the first screen
+     reaches the art sooner without a tall stacked run. */
+  .hero-stack {
+    gap: 14px;
+  }
+
+  .hero-preview {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .hero-preview-image {
+    min-height: 128px;
+    border-radius: 14px;
+  }
+
+  .preview-large {
+    grid-column: 1 / -1;
+    min-height: 230px;
+  }
+
+  /* Section sequencing: air plus a hairline rule above every section, and
+     space above each heading clearly greater than the gap below it. */
+  .section {
+    margin-top: 52px;
+    padding-top: 26px;
+    border-top: 1px solid var(--border);
+  }
+
+  .section-heading {
+    gap: 10px;
+  }
+
+  h2 {
+    font-size: clamp(1.9rem, 6vw, 2.25rem);
+    line-height: 1.08;
+  }
+
+  .section-note,
+  .gallery-featured-note {
+    font-size: 1rem;
+  }
+
+  /* Gallery: one true column across the whole band (the 681–760px stretch
+     was still two-up), full-width naturally proportioned artwork, and card
+     copy/meta stepped up to legible sizes. */
+  .gallery-grid {
+    grid-template-columns: 1fr;
+    gap: 26px;
+    margin-top: 24px;
+  }
+
+  .painting-card-body {
+    padding: 14px 16px 18px;
+  }
+
+  .painting-card-body p {
+    font-size: 1.05rem;
+  }
+
+  .painting-card-body span {
+    margin-top: 10px;
+    padding: 6px 12px;
+    font-size: 0.875rem;
+  }
+
+  .gallery-results,
+  .contact-status,
+  .form-hint {
+    font-size: 1rem;
+  }
+
+  /* Filter controls read as one clean two-across grid of large tap
+     targets (script-built chips land in the same container). */
+  .gallery-filters {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .gallery-filters .filter-chip {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .gallery-load-more-row .button,
+  .gallery-preview-cta .button {
+    width: 100%;
+  }
+
+  /* Story: bigger portrait, calmer pull-quote measure. */
+  .artist-portrait {
+    width: min(100%, 340px);
+    margin-top: 20px;
+  }
+
+  .artist-quote {
+    padding: 22px 20px 18px;
+    font-size: 1.7rem;
+  }
+
+  .testimonials-grid blockquote {
+    padding: 24px 20px 20px;
+    font-size: 1.45rem;
+  }
+
+  /* Forms: full-width, stacked, thumb-sized. */
+  .contact-form {
+    gap: 14px;
+    padding: 22px 18px;
+  }
+
+  .contact-form .button {
+    width: 100%;
+  }
+
+  .painting-dialog {
+    padding: 16px;
+  }
+
+  #dialog-inquire {
+    width: 100%;
+  }
+
+  /* Footer: aligned to the same lateral padding, stacked. */
+  .site-footer {
+    margin-top: 52px;
+  }
+
+  .site-footer-inner {
+    width: min(100% - 40px, 1180px);
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+}
+
+/* Smallest phones (320–380px): keep the same column, tighten the gutters and
+   the display size so nothing wraps into a wall of headline. */
+@media (max-width: 380px) {
+  .page-shell {
+    width: min(100% - 32px, 1180px);
+  }
+
+  .site-nav-menu {
+    max-width: calc(100vw - 32px);
+  }
+
+  h1 {
+    font-size: 2rem;
+  }
+
+  .hero-preview {
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .preview-large {
+    min-height: 200px;
+  }
+
+  .hero-preview-image {
+    min-height: 116px;
+  }
+
+  .painting-card-body p {
+    font-size: 1rem;
+  }
+}

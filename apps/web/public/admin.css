@@ -667,33 +667,6 @@ textarea[aria-invalid="true"] {
   font-weight: 600;
 }
 
-/* Mobile: the compact row becomes a stacked card. The availability badge
-   gets its own grid row under the title/meta (sharing the info area would
-   stack it on top of the title text). Covers 320px / 393px / 200% zoom. */
-@media (max-width: 760px) {
-  .cat-row {
-    grid-template-columns: 64px minmax(0, 1fr);
-    grid-template-areas:
-      "thumb info"
-      "thumb availability"
-      "actions actions";
-  }
-
-  .cat-availability {
-    grid-area: availability;
-    justify-self: start;
-    align-self: start;
-    margin-top: 2px;
-  }
-
-  /* Four 44px actions as a stable two-by-two grid: no thin wrapping strip. */
-  .cat-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-  }
-}
-
 /* ===========================================================================
    Books EOI dashboard
    =========================================================================== */
@@ -921,82 +894,8 @@ textarea[aria-invalid="true"] {
   padding: 28px 12px;
 }
 
-/* Responsive: transform the table into stacked cards (no horizontal scroll) at
-   640px and below, which also covers 320px / 393px viewports and 200% browser
-   zoom on a 1280px+ viewport (effective ~640px). Each cell exposes its column
-   label via ::before from the data-label attribute. */
-@media (max-width: 640px) {
-  .books-table thead {
-    display: none;
-  }
-
-  .books-table,
-  .books-table tbody,
-  .books-table tr,
-  .books-table td {
-    display: block;
-    width: 100%;
-  }
-
-  .books-table tr {
-    border: 1px solid var(--border);
-    border-radius: 18px;
-    margin-bottom: 10px;
-    padding: 4px 10px 8px;
-    background: rgba(255, 255, 255, 0.42);
-  }
-
-  /* Label above value, full width: long emails and names get the whole card
-     width instead of a cramped fixed percentage split. */
-  .books-table tbody td {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 2px;
-    padding: 7px 2px;
-    border-bottom: none;
-    overflow-wrap: anywhere;
-  }
-
-  .books-table tbody td::before {
-    content: attr(data-label);
-    color: var(--muted);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: 0.74rem;
-    font-weight: 700;
-  }
-
-  .books-table tbody td.books-empty {
-    display: block;
-    padding: 24px 6px;
-  }
-
-  .books-table tbody td.books-empty::before {
-    content: none;
-  }
-
-  .books-actions {
-    grid-column: 1 / -1;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
-    padding-top: 6px;
-  }
-
-  .books-tiles {
-    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  }
-
-  .books-filter-controls {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .books-filter-controls .filter-label,
-  .books-filter-controls .search-label {
-    width: 100%;
-  }
-}
+/* Responsive: the phone card layout for the enquiry list lives in the unified
+   <=767px block below (with the other phone layouts). */
 
 @media (max-width: 860px) {
   .admin-grid,
@@ -1016,69 +915,17 @@ textarea[aria-invalid="true"] {
   }
 }
 
-/* Phones (<=640px): the editor becomes preview-first so the admin sees what
-   they are editing without scrolling the whole form; short field rows keep
-   the form compact; the save bar spans the panel and clears the home
-   indicator. Covers 320px, 393px, and 200% zoom on desktop viewports. */
-@media (max-width: 640px) {
-  .panel {
-    padding: 18px;
-  }
-
-  .admin-grid {
-    gap: 16px;
-  }
-
-  .admin-grid > .preview-panel {
-    order: -1;
-  }
-
-  .field-group {
-    padding: 14px 14px 16px;
-  }
-
-  /* Paired controls (width/height, availability/price) fit side by side even
-     at 320px, which keeps the long form one screen shorter. */
-  .field-row {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .preview-meta {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .preview-image,
-  .preview-image img {
-    height: clamp(180px, 56vw, 320px);
-    min-height: 0;
-  }
-
-  .editor-actions {
-    margin: 4px -18px -18px;
-    padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
-    gap: 10px;
-  }
-
-  .editor-actions .button {
-    flex: 1 1 auto;
-  }
-
-  .editor-actions .primary-button {
-    flex: 2 1 auto;
-  }
-}
-
-/* Small screens (<=720px): the top bar reflows into two deliberate rows --
-   brand plus account actions, then the section navigation as two equal
-   48px targets -- so nothing is crowded, wrapped unpredictably, or clipped
-   at 320px. Safe-area padding keeps content off rounded screen edges. */
-@media (max-width: 720px) {
+/* Phones (<=767px): a deliberately different mobile admin -- real cards, not
+   compressed desktop tables and controls. The breakpoint sits below the 768px
+   tablet band so tablets keep the desktop layout, while covering portrait
+   phones, landscape phones, and 200% desktop zoom (effective <=640px). */
+@media (max-width: 767px) {
+  /* Calm two-row account/navigation header. */
   .admin-topbar {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px 10px;
-    padding: 8px max(14px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left));
+    padding: 10px max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
   }
 
   .topbar-brand {
@@ -1101,9 +948,10 @@ textarea[aria-invalid="true"] {
   .topbar-actions .topbar-link {
     min-height: 44px;
     padding: 0 10px;
-    font-size: 0.85rem;
+    font-size: 0.95rem;
   }
 
+  /* Section navigation as two equal 48px tabs. */
   .admin-section-nav {
     grid-column: 1 / -1;
     grid-row: 2;
@@ -1117,21 +965,324 @@ textarea[aria-invalid="true"] {
     justify-content: center;
     padding: 0 8px;
     text-align: center;
+    font-size: 1rem;
   }
 
   h2[tabindex="-1"] {
-    scroll-margin-top: 148px;
+    scroll-margin-top: 152px;
+  }
+
+  .admin-shell {
+    padding: 16px 0 48px;
+  }
+
+  .panel {
+    padding: 18px;
+  }
+
+  /* Task headings and their actions separate onto clear rows. */
+  .inline-heading {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: 12px;
+  }
+
+  .inline-heading .button {
+    width: 100%;
+    min-height: 48px;
+    font-size: 1rem;
+  }
+
+  /* Sign-in: one clear full-width form. */
+  .login-form {
+    max-width: none;
+    gap: 18px;
+  }
+
+  /* Search/filters stack as large full-width controls. */
+  .catalogue-controls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+    margin: 16px 0 4px;
+  }
+
+  .catalogue-controls .search-label,
+  .catalogue-controls .filter-label {
+    max-width: none;
+  }
+
+  /* Catalogue: true artwork cards -- preview, title, availability, meta,
+     then labelled actions in their own footer row. */
+  .catalogue-list {
+    gap: 14px;
+    margin-top: 18px;
+    /* Pagination scrolls the list into view; clear the taller phone bar. */
+    scroll-margin-top: 176px;
+  }
+
+  .cat-row {
+    grid-template-columns: 84px minmax(0, 1fr);
+    grid-template-areas:
+      "thumb info"
+      "thumb availability"
+      "actions actions";
+    gap: 4px 14px;
+    padding: 14px;
+    border-radius: 16px;
+    background: var(--surface-strong);
+  }
+
+  .cat-row img,
+  .cat-thumb-missing {
+    width: 84px;
+    height: 72px;
+    border-radius: 10px;
+  }
+
+  .cat-info h3 {
+    font-size: 1.08rem;
+  }
+
+  .cat-availability {
+    justify-self: start;
+    align-self: start;
+    margin-top: 2px;
+    padding: 5px 12px;
+    font-size: 0.85rem;
+  }
+
+  .cat-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 10px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+
+  .cat-actions .button {
+    min-height: 48px;
+    padding: 0 8px;
+    font-size: 1rem;
+  }
+
+  /* Books: each enquiry becomes a readable card -- customer name + status
+     header, contact line, request detail, then grouped status actions. The
+     table semantics are kept for assistive tech; only the presentation
+     changes. Each cell still names its column via data-label. */
+  .books-table-wrap {
+    margin-top: 18px;
+    overflow-x: visible;
+  }
+
+  .books-table thead {
+    display: none;
+  }
+
+  .books-table,
+  .books-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .books-table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "name status"
+      "email email"
+      "book book"
+      "format copies"
+      "submitted submitted"
+      "actions actions";
+    gap: 4px 10px;
+    margin-bottom: 14px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--surface-strong);
+  }
+
+  .books-table tbody td {
+    display: block;
+    padding: 0;
+    border-bottom: none;
+    overflow-wrap: anywhere;
+  }
+
+  .books-table tbody td:nth-child(1) { grid-area: submitted; }
+  .books-table tbody td:nth-child(2) { grid-area: name; font-weight: 700; font-size: 1.02rem; }
+  .books-table tbody td:nth-child(3) { grid-area: email; }
+  .books-table tbody td:nth-child(4) { grid-area: book; font-weight: 600; }
+  .books-table tbody td:nth-child(5) { grid-area: format; }
+  .books-table tbody td:nth-child(6) { grid-area: copies; }
+  .books-table tbody td:nth-child(7) { grid-area: status; justify-self: end; }
+  .books-table tbody td:nth-child(8) { grid-area: actions; }
+
+  /* Detail cells carry a small inline label; the header cells (name, status,
+     email, actions) speak for themselves and stay unlabelled. */
+  .books-table tbody td:nth-child(1)::before,
+  .books-table tbody td:nth-child(4)::before,
+  .books-table tbody td:nth-child(5)::before,
+  .books-table tbody td:nth-child(6)::before {
+    content: attr(data-label) ": ";
+    color: var(--muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .books-table tbody td:nth-child(7) .status-badge {
+    padding: 4px 12px;
+    font-size: 0.82rem;
+  }
+
+  .books-table tbody td:nth-child(8) {
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+
+  .books-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .books-actions .book-action {
+    min-height: 48px;
+    padding: 0 8px;
+    font-size: 1rem;
+  }
+
+  /* The colspan empty state spans the whole card, without a stray label. */
+  .books-table tbody td.books-empty {
+    grid-column: 1 / -1;
+    padding: 24px 6px;
+    text-align: center;
+  }
+
+  .books-table tbody td.books-empty::before {
+    content: none;
+  }
+
+  .books-tiles {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+  }
+
+  .tile {
+    padding: 12px 14px;
+  }
+
+  .books-filter-controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .books-filter-controls .filter-label,
+  .books-filter-controls .search-label {
+    width: 100%;
+  }
+
+  .books-filter-controls input,
+  .books-filter-controls select {
+    min-height: 48px;
+  }
+
+  .email-find {
+    align-items: stretch;
+  }
+
+  .email-find input {
+    flex: 1 1 auto;
+  }
+
+  .email-find .button {
+    min-height: 48px;
+    font-size: 0.95rem;
+  }
+
+  /* Editor: preview-first, one full-width field per row, save actions in
+     flow at the end of the form. */
+  .admin-grid {
+    gap: 16px;
+  }
+
+  .admin-grid > .preview-panel {
+    order: -1;
+  }
+
+  .field-group {
+    padding: 14px 14px 16px;
+  }
+
+  /* Paired desktop fields become full-width single-column controls. */
+  .field-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .preview-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .preview-image,
+  .preview-image img {
+    height: clamp(180px, 56vw, 320px);
+    min-height: 0;
+  }
+
+  /* Save/Back sit in flow after the form instead of a sticky bar floating
+     over the fields being edited. */
+  .editor-actions {
+    position: static;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+    margin: 4px 0 0;
+    padding: 14px 0 0;
+    border-top: 1px solid var(--border);
+    border-radius: 0;
+    background: none;
+    backdrop-filter: none;
+  }
+
+  .editor-actions .button {
+    width: 100%;
+    min-height: 48px;
+    font-size: 1rem;
+  }
+
+  .catalogue-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .pagination-controls {
+    justify-content: stretch;
+  }
+
+  .pagination-controls .page-button {
+    flex: 1 1 auto;
+    min-height: 48px;
+    font-size: 0.95rem;
   }
 }
 
 /* Short landscape viewports (phones rotated): a sticky two-row bar would eat
    a third of the screen, so it scrolls away with the page instead. */
-@media (max-width: 720px) and (max-height: 480px) {
+@media (max-width: 767px) and (max-height: 480px) {
   .admin-topbar {
     position: static;
   }
 
-  h2[tabindex="-1"] {
+  h2[tabindex="-1"],
+  .catalogue-list {
     scroll-margin-top: 24px;
   }
 }

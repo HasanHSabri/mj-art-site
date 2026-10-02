@@ -781,8 +781,15 @@ test('admin.html exposes a persistent topbar with URL-addressable focused views'
 });
 
 // ===========================================================================
-// Responsive CSS contract (admin stays Inter; table reflows at 320/393/200%)
+// Responsive CSS contract (admin stays Inter; phone cards at <=767px)
 // ===========================================================================
+
+// Extract one max-width media block (up to the next @media) for assertions.
+function adminMediaBlock(width) {
+  const start = adminCss.indexOf(`@media (max-width: ${width}px)`);
+  assert.ok(start >= 0, `a ${width}px media block must exist`);
+  return adminCss.slice(start, adminCss.indexOf('@media', start + 10));
+}
 
 test('admin body typography stays Inter (Hanken Grotesk isolation guard)', () => {
   const body = adminCss.match(/body\s*\{([^}]*)\}/);
@@ -822,33 +829,32 @@ test('Books actions, filters, search, and section navigation meet the 44px targe
   assert.match(adminCss.match(/\.filter-label select\s*\{([^}]*)\}/)[1], /min-height:\s*48px/, 'artwork filter selects meet the 48px primary control size');
 });
 
-test('the recent list table reflows to stacked cards at <=640px (covers 320/393 and 200% zoom)', () => {
-  const mq = adminCss.match(/@media\s*\(\s*max-width:\s*640px\s*\)\s*\{([\s\S]*?)\}\s*(?=@media|\z)/);
-  assert.ok(mq, 'a 640px media block must exist');
-  assert.match(mq[1], /\.books-table\s+thead\s*\{[^}]*display:\s*none/, 'thead hidden at 640px');
-  assert.match(mq[1], /content:\s*attr\(data-label\)/, 'cells expose labels via data-label ::before');
+test('the recent list table reflows to phone cards at <=767px (below the tablet band; covers 320/393, landscape phones, and 200% zoom)', () => {
+  const mq = adminMediaBlock(767);
+  assert.match(mq, /\.books-table\s+thead\s*\{[^}]*display:\s*none/, 'thead hidden on phones');
+  assert.match(mq, /content:\s*attr\(data-label\)/, 'cells expose labels via data-label ::before');
 });
 
-test('books enquiry cards stack label-over-value at full width (no cramped split, long values wrap)', () => {
-  const mq = adminCss.match(/@media\s*\(\s*max-width:\s*640px\s*\)\s*\{([\s\S]*?)\}\s*(?=@media|\z)/);
-  assert.ok(mq, 'a 640px media block must exist');
-  assert.doesNotMatch(mq[1], /42%/, 'the fixed two-column percentage split is gone');
-  assert.match(mq[1], /\.books-table tbody td\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/, 'each cell is a single full-width column: label above value');
-  assert.match(mq[1], /\.books-table tbody td\s*\{[^}]*overflow-wrap:\s*anywhere/, 'long emails and names wrap instead of overflowing the card');
-  assert.match(mq[1], /\.books-actions\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/, 'status actions are two equal 44px+ targets per row');
+test('books enquiry cards lead with name + status, group the detail metadata, and end with grouped actions', () => {
+  const mq = adminMediaBlock(767);
+  assert.match(mq, /\.books-table tbody tr\s*\{[^}]*grid-template-areas:/, 'each enquiry row becomes a structured card grid');
+  assert.match(mq, /"name status"/, 'the card header pairs the customer name with the status badge');
+  assert.match(mq, /"actions actions"/, 'status actions close the card in their own footer area');
+  assert.doesNotMatch(mq, /42%/, 'the fixed two-column percentage split is gone');
+  assert.match(mq, /\.books-table tbody td\s*\{[^}]*overflow-wrap:\s*anywhere/, 'long emails and names wrap instead of overflowing the card');
+  assert.match(mq, /\.books-actions\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/, 'status actions are two equal 48px targets per row');
+  assert.match(mq, /\.books-table tbody td\.books-empty\s*\{[^}]*grid-column:\s*1 \/ -1/, 'the colspan empty state spans the whole card');
 });
 
 test('the mobile top bar reflows into two deliberate rows with full-width 48px section targets', () => {
-  const start = adminCss.indexOf('@media (max-width: 720px)');
-  assert.ok(start >= 0, 'a 720px top bar breakpoint exists');
-  const block = adminCss.slice(start, adminCss.indexOf('@media', start + 10));
+  const block = adminMediaBlock(767);
   assert.match(block, /grid-template-columns:\s*minmax\(0, 1fr\) auto/, 'row 1 pairs the brand with the account actions');
   assert.match(block, /\.admin-section-nav\s*\{[^}]*grid-column:\s*1 \/ -1/, 'row 2 is the full-width section navigation');
   assert.match(block, /\.admin-section-nav\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/, 'the two views are equal-width tabs');
   assert.match(block, /\.section-anchor\s*\{[^}]*min-height:\s*48px/, 'section anchors are 48px targets');
   assert.match(block, /\.topbar-actions \.topbar-link\s*\{[^}]*min-height:\s*44px/, 'topbar links keep the 44px floor');
   assert.match(block, /env\(safe-area-inset-left\)/, 'notch/home-indicator insets are respected');
-  const short = adminCss.slice(adminCss.indexOf('@media (max-width: 720px) and (max-height: 480px)'));
+  const short = adminCss.slice(adminCss.indexOf('@media (max-width: 767px) and (max-height: 480px)'));
   assert.ok(short.length > 0, 'a short-landscape rule exists');
   assert.match(short.slice(0, short.indexOf('}') + 1), /position:\s*static/, 'short landscape viewports unstick the bar so content wins the space');
 });

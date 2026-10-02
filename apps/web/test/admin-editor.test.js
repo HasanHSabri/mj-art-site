@@ -142,12 +142,18 @@ test('catalogue row actions and pagination meet the 44px touch floor', () => {
   assert.match(adminCss.match(/\.pagination-controls \.page-button\s*\{([^}]*)\}/)[1], /min-height:\s*44px/, 'pagination buttons are 44px+');
 });
 
-test('mobile editor shows the live preview first and keeps the save bar reachable', () => {
+test('mobile editor shows the live preview first and keeps saving in flow', () => {
   assert.match(adminCss, /\.admin-grid > \.preview-panel\s*\{[^}]*order:\s*-1/, 'the preview renders before the form on phones');
   assert.match(adminCss, /\.preview-image,\s*\.preview-image img\s*\{[^}]*height:\s*clamp\(180px,\s*56vw,\s*320px\)/, 'the preview height is viewport-proportional instead of a fixed 320px block');
-  assert.match(adminCss, /\.editor-actions\s*\{[^}]*env\(safe-area-inset-bottom/, 'the sticky save bar clears the home indicator');
-  assert.match(adminCss, /\.editor-actions \.primary-button\s*\{[^}]*flex:\s*2/, 'Save stays the dominant control in the bar');
-  assert.match(adminCss, /\.field-row\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/, 'paired fields stay side by side to shorten the mobile form');
+  assert.match(adminCss, /\.editor-actions\s*\{[^}]*env\(safe-area-inset-bottom/, 'the desktop sticky save bar clears the home indicator');
+  const phoneStart = adminCss.indexOf('@media (max-width: 767px)');
+  assert.ok(phoneStart >= 0, 'a unified 767px phone layout block exists');
+  const phone = adminCss.slice(phoneStart, adminCss.indexOf('@media', phoneStart + 10));
+  // Paired desktop fields are un-compressed on phones: one full-width field
+  // per row, never a squeezed two-column split at 320px.
+  assert.match(phone, /\.field-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/, 'paired fields become full-width single-column fields on phones');
+  assert.match(phone, /\.editor-actions\s*\{[^}]*position:\s*static/, 'the phone save actions sit in flow instead of a sticky overlay');
+  assert.match(phone, /\.editor-actions \.button\s*\{[^}]*min-height:\s*48px/, 'phone save/back buttons are 48px full-width targets');
 });
 
 test('focused view headings and the catalogue list clear the sticky header', () => {

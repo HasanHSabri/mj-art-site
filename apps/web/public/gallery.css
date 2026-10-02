@@ -32,3 +32,18 @@
 #gallery-load-more[hidden] {
   display: none;
 }
+
+/* Mobile reading layout (mobile-layout-v2). This sheet loads after
+   styles.css, whose own appended <=760px block already collapses the grid;
+   the guard here keeps the single artwork column authoritative even if the
+   shared sheet's breakpoint blocks are edited, and widens the load-more
+   action to the full column. Desktop (>=761px) is untouched. */
+@media (max-width: 760px) {
+  .gallery-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-load-more-row .button {
+    width: 100%;
+  }
+}

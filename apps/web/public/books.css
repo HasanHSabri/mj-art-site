@@ -278,3 +278,53 @@
     transition: none;
   }
 }
+
+/* Mobile reading layout (mobile-layout-v2). Appended after this sheet's own
+   breakpoints so it is the final word at <=760px: single-column book cards
+   with full-measure text, full-width CTAs, and the EOI form stacked at the
+   same 20px padding the 640px block's 320px box-model relies on. books.css
+   also loads on the home page, so the home books preview gets the same
+   treatment. Desktop (>=761px) is untouched. */
+@media (max-width: 760px) {
+  .books-grid {
+    gap: 22px;
+    margin-top: 22px;
+  }
+
+  .books-panel {
+    gap: 8px;
+    padding: 20px;
+  }
+
+  .books-panel-text {
+    max-width: none;
+    font-size: 1rem;
+  }
+
+  .books-panel-cta .button {
+    width: 100%;
+  }
+
+  .books-eoi-form {
+    padding: 20px;
+  }
+
+  .books-qty {
+    margin-left: 0;
+  }
+
+  /* Phone readability across the whole band, not only <=640px. */
+  .books-status,
+  .books-qty label,
+  .books-anticipation {
+    font-size: 1rem;
+  }
+
+  .books-turnstile {
+    width: 100%;
+  }
+
+  #books-submit {
+    width: 100%;
+  }
+}
