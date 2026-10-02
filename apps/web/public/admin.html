@@ -9,15 +9,34 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./admin.css?v=mobile-layout-v2">
+  <link rel="stylesheet" href="./admin.css?v=mobile-bottom-nav-v1">
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <header class="admin-topbar">
     <a class="topbar-brand" href="./admin.html" id="admin-brand">MJ Art admin</a>
     <nav class="admin-section-nav" id="admin-section-nav" aria-label="Admin sections" hidden>
-      <a class="section-anchor" href="./admin.html?view=catalogue" data-view="catalogue">Artworks</a>
-      <a class="section-anchor" href="./admin.html?view=books" data-view="books">Book enquiries</a>
+      <!-- Icon spans are decorative (aria-hidden): the accessible name stays
+           the text label. Icons show only in the <=767px fixed bottom bar. -->
+      <a class="section-anchor" href="./admin.html?view=catalogue" data-view="catalogue">
+        <span class="section-anchor-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+            <rect x="3" y="5" width="18" height="14" rx="2.2"></rect>
+            <circle cx="8.6" cy="9.8" r="1.6"></circle>
+            <path d="m21 15.4-4.6-4.6L5.6 19"></path>
+          </svg>
+        </span>
+        <span class="section-anchor-label">Artworks</span>
+      </a>
+      <a class="section-anchor" href="./admin.html?view=books" data-view="books">
+        <span class="section-anchor-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+            <path d="M12 6.5C10.2 4.9 7.6 4.5 5 5v13.5c2.6-.5 5.2-.1 7 1.5 1.8-1.6 4.4-2 7-1.5V5c-2.6-.5-5.2-.1-7 1.5Z"></path>
+            <path d="M12 6.5V20"></path>
+          </svg>
+        </span>
+        <span class="section-anchor-label">Book enquiries</span>
+      </a>
     </nav>
     <div class="topbar-actions">
       <a class="button ghost-button topbar-link" href="./index.html">View website</a>
@@ -318,6 +337,6 @@
     </div>
   </main>
 
-  <script type="module" src="./admin.js?v=mobile-layout-v2"></script>
+  <script type="module" src="./admin.js?v=mobile-bottom-nav-v1"></script>
 </body>
 </html>

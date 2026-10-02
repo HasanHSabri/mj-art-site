@@ -10,11 +10,17 @@
   --accent-deep: #6f3f35;
   --on-accent: #fff8f4;
   --shadow: 0 24px 60px rgba(81, 50, 37, 0.12);
+  /* Phone bottom navigation: the fixed bar's occupied height (bar + home
+     indicator inset), shared by the content/footer clearance and the raised
+     Back to Top offset at <=760px. Desktop never references it. */
+  --site-nav-bottom-space: calc(60px + env(safe-area-inset-bottom, 0px));
   /* Shared primary navigation: a native <details>/<summary> disclosure is the
-     narrow-screen menu, and the inline .topbar-links show on wider screens.
-     The summary IS the disclosure control (browser exposes button role +
-     expanded state from `open`); site-nav.js only adds close-on-link,
-     outside-click, and Escape/focus enhancements. */
+     legacy narrow-screen menu (now superseded on phones by the fixed
+     .site-nav-bottom bar, which hides the disclosure at every width), and the
+     inline .topbar-links show on wider screens. The summary IS the disclosure
+     control (browser exposes button role + expanded state from `open`);
+     site-nav.js only adds close-on-link, outside-click, and Escape/focus
+     enhancements. */
 }
 
 * {
@@ -304,14 +310,15 @@ label {
   display: none;
 }
 
-/* Shared primary navigation disclosure (native <details>). Narrow screens
-   hide the inline .topbar-links and surface a <details>/<summary> menu pinned
-   top-right; wider screens show the inline links and hide the disclosure. The
-   summary IS the disclosure control: the browser exposes its button role and
-   expanded state from the `open` attribute automatically (WAI-ARIA disclosure
-   pattern, native), so no manual aria-expanded/aria-controls wiring is
-   duplicated. site-nav.js adds close-on-link, outside-click, and
-   Escape/focus enhancements only. */
+/* Shared primary navigation disclosure (native <details>). Legacy narrow-
+   screen menu, kept as valid progressive-enhancement markup for site-nav.js;
+   since the fixed .site-nav-bottom bar became the phone navigation it is no
+   longer displayed at any width (base display:none below is final -- the
+   640px/760px blocks no longer re-display it). Wide screens show the inline
+   .topbar-links. The summary IS the disclosure control: the browser exposes
+   its button role and expanded state from the `open` attribute automatically
+   (WAI-ARIA disclosure pattern, native), so no manual
+   aria-expanded/aria-controls wiring is duplicated. */
 .site-nav-disclosure {
   position: relative;
   display: none;
@@ -376,6 +383,81 @@ label {
   background: rgba(154, 92, 75, 0.1);
 }
 
+/* Phone-only fixed bottom navigation (display:none until the <=760px block
+   switches it on; >=761px keeps the desktop topbar composition untouched).
+   Four equal tabs, each a plain anchor (icon + readable label) with a 56px
+   minimum target -- 44px floor, 48px+ preferred. The bar is anchored with
+   left/right/bottom only and sits below the Back to Top control (z-index 40)
+   and far below the native painting dialog top layer. Padding-bottom clears
+   the gesture safe area (viewport-fit=cover is set on every page). */
+.site-nav-bottom {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 30;
+  display: none;
+  padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  border-top: 1px solid var(--border);
+  background: rgba(255, 249, 243, 0.96);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 -12px 32px rgba(81, 50, 37, 0.1);
+}
+
+.site-nav-bottom a {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  min-height: 56px;
+  padding: 8px 4px 6px;
+  color: var(--muted);
+  -webkit-tap-highlight-color: rgba(154, 92, 75, 0.18);
+}
+
+.site-nav-bottom a:hover {
+  background: rgba(154, 92, 75, 0.08);
+}
+
+.site-nav-bottom-icon {
+  width: 20px;
+  height: 20px;
+}
+
+.site-nav-bottom-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+/* Current tab is marked with aria-current="page" and conveyed by weight AND
+   shape, never colour alone: a deliberate 3px accent rail along the bar's top
+   edge (the Facebook-style indicator, in the warm incumbent palette) plus a
+   heavier label. The rail hugs the bar edge because the tab's padding-top
+   starts at the bar's own top border. */
+.site-nav-bottom a[aria-current="page"] {
+  color: var(--accent-deep);
+}
+
+.site-nav-bottom a[aria-current="page"] .site-nav-bottom-label {
+  font-weight: 600;
+}
+
+.site-nav-bottom a[aria-current="page"]::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 22%;
+  right: 22%;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--accent);
+}
+
 /* Current page is marked statically per-page with aria-current="page" and is
    conveyed with weight AND shape, never colour alone: a heavier weight plus a
    deliberate 2px underline. Restrained by design: no fill, no side bars. */
@@ -437,6 +519,7 @@ select:focus-visible,
 textarea:focus-visible,
 .site-nav-summary:focus-visible,
 .site-nav-menu a:focus-visible,
+.site-nav-bottom a:focus-visible,
 .back-to-top:focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 3px;
@@ -1012,15 +1095,12 @@ html.dialog-open {
     flex-direction: column;
   }
 
-  /* Narrow screens: the inline links are hidden and the native <details>
-     disclosure becomes the single mobile menu. The disclosure summary and
-     every menu link meet the 44px target minimum. */
+  /* Narrow screens: the inline links stay hidden; phone navigation moved to
+     the fixed bottom bar (see the 760px block below, which covers this band
+     too). The legacy <details> disclosure stays in the markup and in the tab
+     order only while displayed; it is no longer displayed at any width. */
   .site-nav-links {
     display: none;
-  }
-
-  .site-nav-disclosure {
-    display: block;
   }
 
   .site-nav-summary {
@@ -1151,13 +1231,36 @@ html.dialog-open {
   }
 
   /* One simple mobile navigation across the whole phone band (the inline
-     link row only returns above 760px). */
+     link row only returns above 760px): the fixed bottom bar replaces both
+     the inline row and the legacy Menu disclosure, so there is never a
+     second primary nav on phones. */
   .site-nav-links {
     display: none;
   }
 
-  .site-nav-disclosure {
-    display: block;
+  .site-nav-bottom {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  /* Focused/scrolled elements never park under the fixed bar: scroll
+     container padding keeps anchor targets and programmatic focus clear of
+     the bar + safe area. */
+  html {
+    scroll-padding-block-end: calc(var(--site-nav-bottom-space, 60px) + 20px);
+  }
+
+  /* Back to Top keeps z-index 40 (above the bar's 30) and is raised above
+     the bar so the two fixed controls never overlap; its avoid-zone logic in
+     back-to-top.js is unchanged and measures the new position live. */
+  .back-to-top {
+    bottom: calc(var(--site-nav-bottom-space, 60px) + 16px);
+  }
+
+  /* The footer is the last page content: its padding clears the bar and the
+     gesture safe area with breathing room. */
+  .site-footer {
+    padding-bottom: calc(var(--site-nav-bottom-space, 60px) + 28px);
   }
 
   .site-nav-menu {

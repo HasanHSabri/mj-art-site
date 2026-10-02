@@ -233,8 +233,12 @@ function renderView() {
   for (const panel of viewPanels) {
     panel.hidden = panel.dataset.viewPanel !== state.view;
   }
+  // The artwork editor belongs to the Artworks section: it maps onto the
+  // catalogue tab so exactly one nav tab is current in every view (the editor
+  // itself has no dedicated tab).
+  const navView = state.view === 'artwork' ? 'catalogue' : state.view;
   for (const link of navLinks) {
-    if (link.dataset.view === state.view) link.setAttribute('aria-current', 'page');
+    if (link.dataset.view === navView) link.setAttribute('aria-current', 'page');
     else link.removeAttribute('aria-current');
   }
   if (state.view === 'catalogue') {

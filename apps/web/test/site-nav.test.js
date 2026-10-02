@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { createDisclosureController } from '../public/site-nav.js';
+import { createDisclosureController, resolveBottomNavCurrent, syncBottomNavCurrent, isHomePath } from '../public/site-nav.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const publicDir = join(__dirname, '..', 'public');
@@ -12,6 +12,7 @@ const indexHtml = readFileSync(join(publicDir, 'index.html'), 'utf8');
 const galleryHtml = readFileSync(join(publicDir, 'gallery.html'), 'utf8');
 const booksHtml = readFileSync(join(publicDir, 'books.html'), 'utf8');
 const stylesCss = readFileSync(join(publicDir, 'styles.css'), 'utf8');
+const siteNavJs = readFileSync(join(publicDir, 'site-nav.js'), 'utf8');
 const workerJs = readFileSync(join(srcDir, 'worker.js'), 'utf8');
 const rootPkg = readFileSync(join(__dirname, '..', 'package.json'), 'utf8');
 
@@ -263,4 +264,172 @@ test('onMenuClick closes when a link is activated, and leaves non-link clicks al
   details.open = true;
   assert.equal(c.onMenuClick(text), false);
   assert.equal(details.open, true, 'a non-link click leaves the menu open');
+});
+
+// --- Fixed bottom navigation (phones, <=760px) ------------------------------
+
+const EXPECTED_LABELS = ['Home', 'Gallery', 'Books', 'Enquire'];
+
+function bottomNavMarkup(html) {
+  const m = html.match(/<nav\b[^>]*\bclass="site-nav-bottom"[^>]*>([\s\S]*?)<\/nav>/i);
+  return m ? m[1] : null;
+}
+
+function bottomNavLinks(html) {
+  const markup = bottomNavMarkup(html);
+  if (!markup) return null;
+  return (markup.match(/<a\b[^>]*>/g) || []).map((tag) => tag.match(/href="([^"]+)"/)[1]);
+}
+
+test('every public page carries the fixed bottom nav with the same four links, icons, and labels', () => {
+  for (const [name, html] of [['home', indexHtml], ['gallery', galleryHtml], ['books', booksHtml]]) {
+    const nav = html.match(/<nav\b[^>]*\bclass="site-nav-bottom"[^>]*>/i);
+    assert.ok(nav, `${name} has a <nav.site-nav-bottom>`);
+    assert.match(nav[0], /aria-label="Primary"/, `${name} bottom nav has its own landmark label (unique vs the topbar's "Primary navigation")`);
+    assert.deepEqual(bottomNavLinks(html), EXPECTED_HREFS, `${name} bottom nav link order/hrefs`);
+    const labels = (bottomNavMarkup(html).match(/site-nav-bottom-label">[^<]+</g) || [])
+      .map((s) => s.replace(/^[^>]*>/, '').replace(/<$/, ''));
+    assert.deepEqual(labels, EXPECTED_LABELS, `${name} readable labels under the icons`);
+    // Icons are decorative: aria-hidden + not focusable, so the accessible
+    // name is always the text label.
+    const icons = bottomNavMarkup(html).match(/<svg\b[^>]*>/g) || [];
+    assert.equal(icons.length, 4, `${name} one icon per tab`);
+    for (const icon of icons) {
+      assert.match(icon, /aria-hidden="true"/, `${name} icon is aria-hidden`);
+      assert.match(icon, /focusable="false"/, `${name} icon is not focusable`);
+    }
+  }
+});
+
+test('the bottom nav sits outside main/footer content and is plain-anchor navigable without JS', () => {
+  for (const [name, html] of [['home', indexHtml], ['gallery', galleryHtml], ['books', booksHtml]]) {
+    assert.ok(
+      html.indexOf('<nav class="site-nav-bottom"') > html.lastIndexOf('</main>'),
+      `${name} bottom nav lives outside main`
+    );
+    // No scripting hooks on the tabs themselves: navigation is native.
+    const markup = bottomNavMarkup(html);
+    assert.doesNotMatch(markup, /onclick/i, `${name} tabs are plain anchors`);
+    assert.doesNotMatch(markup, /role=/, `${name} tabs keep the native link role`);
+    assert.doesNotMatch(markup, /tabindex=/i, `${name} tabs keep the native tab order`);
+  }
+});
+
+test('bottom nav static aria-current matches the page (Gallery/Books static; Home on the home page)', () => {
+  const cases = [
+    ['home', indexHtml, '/'],
+    ['gallery', galleryHtml, '/gallery'],
+    ['books', booksHtml, '/books']
+  ];
+  for (const [name, html, currentHref] of cases) {
+    const currents = (bottomNavMarkup(html).match(/<a\b[^>]*aria-current="page"[^>]*>/g) || [])
+      .map((tag) => tag.match(/href="([^"]+)"/)[1]);
+    assert.deepEqual(currents, [currentHref], `${name} marks exactly the current destination`);
+  }
+});
+
+test('bottom nav CSS: hidden on desktop, fixed phone bar with 48px+ targets, safe area, and layering under Back to Top', () => {
+  // Base rule keeps the bar off desktop (>=761px composition untouched).
+  const base = stylesCss.match(/\.site-nav-bottom\s*\{([^}]*)\}/)[1];
+  assert.match(base, /display:\s*none/, 'the bar is display:none by default');
+  assert.match(base, /position:\s*fixed/, 'fixed placement');
+  assert.match(base, /bottom:\s*0/, 'anchored to the viewport bottom');
+  assert.match(base, /z-index:\s*30/, 'below Back to Top (z-index 40) and the dialog top layer');
+  assert.match(
+    base,
+    /env\(safe-area-inset-bottom,\s*0px\)/,
+    'padding clears the gesture safe area (viewport-fit=cover)'
+  );
+  // Targets: 44px floor, 48px+ preferred.
+  const link = stylesCss.match(/\.site-nav-bottom a\s*\{([^}]*)\}/)[1];
+  const minH = Number(link.match(/min-height:\s*(\d+(?:\.\d+)?)px/i)[1]);
+  assert.ok(minH >= 48, `bottom nav targets >= 48px (got ${minH}px)`);
+  // Active state is shape + weight, never colour alone.
+  const rail = stylesCss.match(/\.site-nav-bottom a\[aria-current="page"\]::before\s*\{([^}]*)\}/);
+  assert.ok(rail, 'an active-tab ::before rail exists');
+  assert.match(rail[1], /height:\s*3px/, 'a deliberate 3px indicator rail');
+  assert.match(
+    stylesCss.match(/\.site-nav-bottom a\[aria-current="page"\] \.site-nav-bottom-label\s*\{([^}]*)\}/)[1],
+    /font-weight:\s*600/,
+    'the active label gains weight'
+  );
+  assert.ok(
+    stylesCss.includes('.site-nav-bottom a:focus-visible'),
+    'bottom nav links share the unified focus-visible ring'
+  );
+});
+
+test('every public page loads the shared site-nav.js at the current cache-bust label', () => {
+  for (const [name, html] of [['home', indexHtml], ['gallery', galleryHtml], ['books', booksHtml]]) {
+    assert.ok(
+      html.includes('./site-nav.js?v=mobile-bottom-nav-v1'),
+      `${name} loads site-nav.js?v=mobile-bottom-nav-v1`
+    );
+  }
+});
+
+// --- Bottom nav hash-aware current state (pure, no DOM) ---------------------
+
+function fakeLink() {
+  const attrs = new Map();
+  return {
+    setAttribute(n, v) { attrs.set(n, v); },
+    removeAttribute(n) { attrs.delete(n); },
+    has(n) { return attrs.has(n); }
+  };
+}
+
+test('resolveBottomNavCurrent: #contact hands current from Home to Enquire on the home page only', () => {
+  assert.equal(resolveBottomNavCurrent({ isHome: true, hash: '' }), 'home');
+  assert.equal(resolveBottomNavCurrent({ isHome: true, hash: '#story' }), 'home');
+  assert.equal(resolveBottomNavCurrent({ isHome: true, hash: '#contact' }), 'enquire');
+  // Away from home the static per-page markup owns the current tab.
+  assert.equal(resolveBottomNavCurrent({ isHome: false, hash: '#contact' }), null);
+  assert.equal(resolveBottomNavCurrent({}), null);
+});
+
+test('syncBottomNavCurrent applies aria-current to exactly one of Home/Enquire', () => {
+  // Home page, no hash: Home current.
+  let home = fakeLink();
+  let enquire = fakeLink();
+  assert.equal(syncBottomNavCurrent({ isHome: true, hash: '', homeLink: home, enquireLink: enquire }), 'home');
+  assert.ok(home.has('aria-current'), 'Home is current without a hash');
+  assert.ok(!enquire.has('aria-current'), 'Enquire is not current');
+
+  // Home page at #contact (hero CTA, section nav, or the Enquire tab itself):
+  // Enquire current, Home released.
+  home = fakeLink();
+  enquire = fakeLink();
+  home.setAttribute('aria-current', 'page');
+  assert.equal(syncBottomNavCurrent({ isHome: true, hash: '#contact', homeLink: home, enquireLink: enquire }), 'enquire');
+  assert.ok(!home.has('aria-current'), 'Home releases aria-current at #contact');
+  assert.ok(enquire.has('aria-current'), 'Enquire is current at #contact');
+
+  // Gallery/Books pages: neither Home nor Enquire is marked (their static
+  // aria-current tabs are untouched by the sync).
+  home = fakeLink();
+  home.setAttribute('aria-current', 'page');
+  enquire = fakeLink();
+  assert.equal(syncBottomNavCurrent({ isHome: false, hash: '#contact', homeLink: home, enquireLink: enquire }), null);
+  assert.ok(!home.has('aria-current'), 'a stale Home aria-current is cleared off the home page');
+
+  // Missing handles never throw.
+  assert.equal(syncBottomNavCurrent({ isHome: true, hash: '#contact' }), 'enquire');
+});
+
+test('isHomePath accepts the canonical home routes only', () => {
+  assert.equal(isHomePath('/'), true);
+  assert.equal(isHomePath('/index.html'), true);
+  assert.equal(isHomePath(''), true);
+  assert.equal(isHomePath('/gallery'), false);
+  assert.equal(isHomePath('/books'), false);
+});
+
+test('site-nav.js keeps Home/Enquire in sync via hashchange and pageshow', () => {
+  // The bootstrap wires both history-driven events (anchor clicks and
+  // back/forward fire hashchange; bfcache restores fire pageshow), so the
+  // current tab follows the URL without any per-link click handling.
+  assert.match(siteNavJs, /addEventListener\(\s*['"]hashchange['"]/);
+  assert.match(siteNavJs, /addEventListener\(\s*['"]pageshow['"]/);
+  assert.match(siteNavJs, /location\.hash/);
 });

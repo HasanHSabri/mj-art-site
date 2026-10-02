@@ -155,6 +155,21 @@ code {
   color: var(--accent-deep);
 }
 
+/* Decorative section icons (phone bottom bar only): hidden on desktop, where
+   the text tabs stay the established composition. The span is aria-hidden and
+   the svg is focusable="false", so the accessible name is always the label. */
+.section-anchor-icon {
+  display: none;
+}
+
+/* The author display rules for this nav (flex here, grid in the <=767px
+   fixed bar) would otherwise override the user-agent's [hidden] display:none
+   (author origin wins over UA origin regardless of specificity). This guard
+   keeps the logged-out contract explicit: hidden means fully removed. */
+.admin-section-nav[hidden] {
+  display: none !important;
+}
+
 .admin-shell {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
@@ -920,12 +935,19 @@ textarea[aria-invalid="true"] {
    tablet band so tablets keep the desktop layout, while covering portrait
    phones, landscape phones, and 200% desktop zoom (effective <=640px). */
 @media (max-width: 767px) {
-  /* Calm two-row account/navigation header. */
+  /* Single-row account header: brand left, View website / Sign out right.
+     The section navigation moved out of the header into the fixed bottom bar
+     below, so no empty second row remains. backdrop-filter MUST be dropped
+     here (with a near-identical opaque background): a filtered ancestor
+     becomes the containing block for its fixed-position descendants, which
+     would anchor the bottom bar to the header instead of the viewport. */
   .admin-topbar {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 8px 10px;
     padding: 10px max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
+    background: #faf3ed;
+    backdrop-filter: none;
   }
 
   .topbar-brand {
@@ -951,29 +973,89 @@ textarea[aria-invalid="true"] {
     font-size: 0.95rem;
   }
 
-  /* Section navigation as two equal 48px tabs. */
+  /* Section navigation as the fixed bottom bar (reuses the same
+     #admin-section-nav element, so authentication visibility, click
+     interception, and the dirty-editor guard in admin.js are untouched).
+     Two equal icon+label tabs, 56px targets, above the gesture safe area and
+     below the sticky topbar (z 20) in the layering. */
   .admin-section-nav {
-    grid-column: 1 / -1;
-    grid-row: 2;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 8px;
+    gap: 0;
+    padding: 0 0 env(safe-area-inset-bottom, 0px);
+    border-top: 1px solid var(--border);
+    background: rgba(255, 249, 243, 0.96);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 -12px 32px rgba(81, 50, 37, 0.1);
   }
 
   .section-anchor {
-    min-height: 48px;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
     justify-content: center;
-    padding: 0 8px;
-    text-align: center;
-    font-size: 1rem;
+    gap: 3px;
+    min-height: 56px;
+    padding: 8px 8px 6px;
+    border: 0;
+    border-radius: 0;
+    background: none;
+    font-size: 0.85rem;
+    white-space: nowrap;
+  }
+
+  .section-anchor-icon {
+    display: inline-flex;
+    width: 20px;
+    height: 20px;
+  }
+
+  .section-anchor-icon svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  /* Current tab: weight AND shape, never colour alone -- a 3px accent rail
+     along the bar's top edge plus a heavier label (the pill tint is gone in
+     the bar context). */
+  .section-anchor[aria-current="page"] {
+    border-color: transparent;
+    background: none;
+    color: var(--accent-deep);
+  }
+
+  .section-anchor[aria-current="page"] .section-anchor-label {
+    font-weight: 700;
+  }
+
+  .section-anchor[aria-current="page"]::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 24%;
+    right: 24%;
+    height: 3px;
+    border-radius: 0 0 3px 3px;
+    background: var(--accent);
+  }
+
+  /* Focused controls never park under the fixed bar. */
+  html {
+    scroll-padding-block-end: calc(66px + env(safe-area-inset-bottom, 0px) + 16px);
   }
 
   h2[tabindex="-1"] {
-    scroll-margin-top: 152px;
+    scroll-margin-top: 76px;
   }
 
   .admin-shell {
-    padding: 16px 0 48px;
+    padding: 16px 0 calc(66px + env(safe-area-inset-bottom, 0px) + 24px);
   }
 
   .panel {
@@ -1018,8 +1100,9 @@ textarea[aria-invalid="true"] {
   .catalogue-list {
     gap: 14px;
     margin-top: 18px;
-    /* Pagination scrolls the list into view; clear the taller phone bar. */
-    scroll-margin-top: 176px;
+    /* Pagination scrolls the list into view; keep it clear of the phone
+       topbar (single row) + toolbar. */
+    scroll-margin-top: 96px;
   }
 
   .cat-row {

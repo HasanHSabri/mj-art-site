@@ -763,8 +763,22 @@ test('successful PATCH followed by a mismatched summary clears PII, shows an err
 test('admin.html exposes a persistent topbar with URL-addressable focused views', () => {
   // The compact nav links to the focused, URL-addressable views and carries a
   // data-view attribute so admin.js can intercept and set the active state.
-  assert.match(adminHtml, /data-view="catalogue"[^>]*>Artworks</);
-  assert.match(adminHtml, /data-view="books"[^>]*>Book enquiries</);
+  // Tabs are icon + label: the icon span is decorative (aria-hidden) and the
+  // label span carries the accessible name.
+  for (const [view, label] of [['catalogue', 'Artworks'], ['books', 'Book enquiries']]) {
+    const anchor = adminHtml.match(new RegExp(`<a class="section-anchor"[^>]*data-view="${view}">([\\s\\S]*?)</a>`));
+    assert.ok(anchor, `${view} anchor exists`);
+    assert.match(
+      anchor[1],
+      /<span class="section-anchor-icon" aria-hidden="true">/,
+      `${view} tab carries a decorative icon span`
+    );
+    assert.match(
+      anchor[1],
+      new RegExp(`<span class="section-anchor-label">${label}</span>`),
+      `${view} tab keeps its readable text label`
+    );
+  }
   // Every view panel exists and is governed by data-view-panel, with the
   // books dashboard inside the authenticated admin content container.
   for (const panel of ['catalogue', 'artwork', 'books']) {
@@ -846,15 +860,78 @@ test('books enquiry cards lead with name + status, group the detail metadata, an
   assert.match(mq, /\.books-table tbody td\.books-empty\s*\{[^}]*grid-column:\s*1 \/ -1/, 'the colspan empty state spans the whole card');
 });
 
-test('the mobile top bar reflows into two deliberate rows with full-width 48px section targets', () => {
+test('the phone header is one account row and the section nav is the fixed bottom bar (<=767px)', () => {
   const block = adminMediaBlock(767);
-  assert.match(block, /grid-template-columns:\s*minmax\(0, 1fr\) auto/, 'row 1 pairs the brand with the account actions');
-  assert.match(block, /\.admin-section-nav\s*\{[^}]*grid-column:\s*1 \/ -1/, 'row 2 is the full-width section navigation');
-  assert.match(block, /\.admin-section-nav\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/, 'the two views are equal-width tabs');
-  assert.match(block, /\.section-anchor\s*\{[^}]*min-height:\s*48px/, 'section anchors are 48px targets');
-  assert.match(block, /\.topbar-actions \.topbar-link\s*\{[^}]*min-height:\s*44px/, 'topbar links keep the 44px floor');
+  assert.match(block, /grid-template-columns:\s*minmax\(0, 1fr\) auto/, 'the single header row pairs the brand with the account actions');
+  // The nav left the header entirely: no second header row remains.
+  assert.doesNotMatch(block, /\.admin-section-nav\s*\{[^}]*grid-row:\s*2/, 'no empty second header row is left behind');
+  // ...and became the fixed bottom bar reusing #admin-section-nav.
+  const bar = block.match(/\.admin-section-nav\s*\{([^}]*)\}/)[1];
+  assert.match(bar, /position:\s*fixed/, 'the section nav is fixed');
+  assert.match(bar, /bottom:\s*0/, 'anchored to the viewport bottom');
+  // The bar lives inside the header element, so the header must not form a
+  // containing block for fixed descendants at phone widths (backdrop-filter
+  // would re-anchor the bar to the header instead of the viewport).
+  const phoneHeader = block.match(/\.admin-topbar\s*\{([^}]*)\}/)[1];
+  assert.match(phoneHeader, /backdrop-filter:\s*none/, 'the phone header drops backdrop-filter so the bar fixes to the viewport');
+  assert.match(bar, /grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/, 'the two views are equal-width tabs');
+  assert.match(bar, /env\(safe-area-inset-bottom/, 'the bar clears the gesture safe area');
+  assert.match(block, /\.section-anchor\s*\{[^}]*min-height:\s*56px/, 'section anchors are 48px+ targets');
+  assert.match(block, /\.section-anchor\s*\{[^}]*flex-direction:\s*column/, 'tabs stack icon above label');
+  assert.match(block, /\.section-anchor-icon\s*\{[^}]*display:\s*inline-flex/, 'icons show in the phone bar');
+  // Active state beyond colour: the 3px top rail + heavier label.
+  assert.match(
+    block,
+    /\.section-anchor\[aria-current="page"\]::before\s*\{[^}]*height:\s*3px/,
+    'the active tab carries a 3px indicator rail'
+  );
+  assert.match(
+    block,
+    /\.section-anchor\[aria-current="page"\] \.section-anchor-label\s*\{[^}]*font-weight:\s*700/,
+    'the active label gains weight'
+  );
+  assert.match(block, /\.topbar-actions \.topbar-link\s*\{[^}]*min-height:\s*44px/, 'account actions stay in the header at the 44px floor');
   assert.match(block, /env\(safe-area-inset-left\)/, 'notch/home-indicator insets are respected');
+  // Content clears the bar (and safe area) so nothing sits under it.
+  assert.match(
+    block,
+    /\.admin-shell\s*\{[^}]*padding:[^}]*env\(safe-area-inset-bottom/,
+    'main content padding clears the fixed bar + safe area'
+  );
+  assert.match(block, /scroll-padding-block-end:/, 'focused controls scroll clear of the bar');
   const short = adminCss.slice(adminCss.indexOf('@media (max-width: 767px) and (max-height: 480px)'));
   assert.ok(short.length > 0, 'a short-landscape rule exists');
-  assert.match(short.slice(0, short.indexOf('}') + 1), /position:\s*static/, 'short landscape viewports unstick the bar so content wins the space');
+  assert.match(short.slice(0, short.indexOf('}') + 1), /position:\s*static/, 'short landscape viewports unstick the header so content wins the space');
+});
+
+test('the fixed phone nav stays hidden for logged-out admins and icons stay off the desktop tabs', () => {
+  // The nav element itself is reused, so authentication visibility must keep
+  // winning over the author display rules (origin beats the UA [hidden]
+  // default): the explicit guard makes that contract enforceable.
+  assert.match(
+    adminCss,
+    /\.admin-section-nav\[hidden\]\s*\{[^}]*display:\s*none\s*!important/,
+    'an explicit [hidden] guard must defeat the bar\'s display rules'
+  );
+  assert.match(adminHtml, /id="admin-section-nav"[^>]*aria-label="Admin sections" hidden/, 'the nav starts hidden until authentication succeeds');
+  // Desktop (>=768px) keeps the text-tab composition: the decorative icons
+  // are display:none outside the phone band.
+  const iconBase = adminCss.match(/\.section-anchor-icon\s*\{([^}]*)\}/)[1];
+  assert.match(iconBase, /display:\s*none/, 'icons are hidden on desktop tabs');
+});
+
+test('renderView maps the artwork editor onto the Artworks tab so exactly one tab is always current', () => {
+  // The editor view has no dedicated tab; Artworks owns it, so the fixed bar
+  // (and the desktop tabs) always show one current section. Click handling,
+  // history, and the dirty-editor guard are unchanged.
+  assert.match(
+    adminJs,
+    /const navView = state\.view === 'artwork' \? 'catalogue' : state\.view;/,
+    'renderView maps artwork -> catalogue for the nav aria-current'
+  );
+  assert.match(
+    adminJs,
+    /link\.dataset\.view === navView/,
+    'aria-current follows the mapped view'
+  );
 });

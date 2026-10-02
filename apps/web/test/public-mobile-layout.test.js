@@ -55,9 +55,9 @@ const mobileBlock = mediaBlock(stylesCss, 'max-width:\\s*760px');
 
 test('every public page cache-busts the changed sheets with one release label', () => {
   const expected = {
-    home: ['./styles.css?v=mobile-layout-v2', './books.css?v=mobile-layout-v2'],
-    gallery: ['./styles.css?v=mobile-layout-v2', './gallery.css?v=mobile-layout-v2'],
-    books: ['./styles.css?v=mobile-layout-v2', './books.css?v=mobile-layout-v2'],
+    home: ['./styles.css?v=mobile-bottom-nav-v1', './books.css?v=mobile-layout-v2'],
+    gallery: ['./styles.css?v=mobile-bottom-nav-v1', './gallery.css?v=mobile-layout-v2'],
+    books: ['./styles.css?v=mobile-bottom-nav-v1', './books.css?v=mobile-layout-v2'],
   };
   for (const [page, hrefs] of Object.entries(expected)) {
     for (const href of hrefs) {
@@ -68,8 +68,8 @@ test('every public page cache-busts the changed sheets with one release label', 
     }
     // No stale CSS version labels survive anywhere on the page.
     assert.doesNotMatch(
-      pages[page].replace(/\.js\?v=[a-z-]+/g, ''),
-      /\.css\?v=(?!mobile-layout-v2|nojs-gallery-restore)[a-z-]+/,
+      pages[page].replace(/\.js\?v=[a-z0-9-]+/g, ''),
+      /\.css\?v=(?!mobile-bottom-nav-v1|mobile-layout-v2|nojs-gallery-restore)[a-z0-9-]+/,
       `${page} must not mix old CSS cache-bust labels`
     );
   }
@@ -117,16 +117,44 @@ test('hero actions stack full-width and the hero opens into an editorial column'
   assert.match(copy, /padding:\s*0/, 'copy sits on the page ground, not in a box');
 });
 
-test('one simple mobile navigation across the phone band', () => {
+test('one simple mobile navigation across the phone band (fixed bottom bar)', () => {
   assert.match(
     ruleIn(mobileBlock, '.site-nav-links') || '',
     /display:\s*none/,
     'the inline link row is hidden'
   );
+  // The bottom bar is the one phone navigation: displayed in the 760px block...
   assert.match(
-    ruleIn(mobileBlock, '.site-nav-disclosure') || '',
-    /display:\s*block/,
-    'the single Menu disclosure carries navigation'
+    ruleIn(mobileBlock, '.site-nav-bottom') || '',
+    /display:\s*grid/,
+    'the fixed bottom bar carries navigation'
+  );
+  assert.match(
+    ruleIn(mobileBlock, '.site-nav-bottom') || '',
+    /grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/,
+    'four equal tabs'
+  );
+  // ...and the legacy Menu disclosure is never re-displayed (base rule keeps
+  // display:none), so phones never see two primary navigations.
+  assert.equal(
+    ruleIn(mobileBlock, '.site-nav-disclosure'),
+    null,
+    'the 760px block no longer displays the legacy Menu disclosure'
+  );
+  assert.match(
+    ruleIn(mobileBlock, '.site-footer') || '',
+    /padding-bottom:\s*calc\(var\(--site-nav-bottom-space/,
+    'the footer clears the fixed bar (+ safe area)'
+  );
+  assert.match(
+    ruleIn(mobileBlock, 'html') || '',
+    /scroll-padding-block-end:/,
+    'focused/scrolled elements clear the bar'
+  );
+  assert.match(
+    ruleIn(mobileBlock, '.back-to-top') || '',
+    /bottom:\s*calc\(var\(--site-nav-bottom-space/,
+    'Back to Top is raised above the bar (z-index 40 stays above the bar\'s 30)'
   );
 });
 
