@@ -23,6 +23,8 @@
 
 html {
   scroll-behavior: smooth;
+  /* Tinted (not default grey) tap feedback for touch devices. */
+  -webkit-tap-highlight-color: rgba(154, 92, 75, 0.18);
 }
 
 /* Anchor targets get a small top margin so scrolling to a section leaves a
@@ -60,6 +62,19 @@ textarea {
   font: inherit;
 }
 
+/* Touch input: `manipulation` allows panning and pinch-zoom but removes the
+   legacy double-tap-zoom delay on every interactive control. */
+a,
+button,
+input,
+select,
+textarea,
+summary,
+label,
+.painting-card {
+  touch-action: manipulation;
+}
+
 .page-shell {
   width: min(1180px, calc(100% - 32px));
   margin: 0 auto;
@@ -81,7 +96,9 @@ textarea {
 }
 
 .topbar {
-  grid-template-columns: 1fr auto;
+  /* minmax(0,1fr) lets the brand track shrink before the menu control, so a
+     long label or large text zoom can reflow instead of overflowing. */
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   padding: 18px 22px;
   border: 1px solid var(--border);
@@ -98,6 +115,9 @@ h3 {
 }
 
 .brand {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
   font-size: 1.8rem;
   font-weight: 600;
 }
@@ -238,6 +258,16 @@ label {
 .button:hover,
 .painting-card:hover {
   transform: translateY(-2px);
+}
+
+/* Touch-only pressed feedback (hover-capable pointers keep the hover nudge
+   while pressing). The settled position reads as "pressed", not "lifted". */
+@media (hover: none) {
+  .button:active,
+  .filter-chip:active,
+  .painting-card:active {
+    transform: translateY(0);
+  }
 }
 
 .button-primary {
@@ -399,6 +429,7 @@ label {
 .dialog-close:focus-visible,
 .filter-chip:focus-visible,
 .topbar a:focus-visible,
+.site-footer-nav a:focus-visible,
 .home-section-nav a:focus-visible,
 .inline-link:focus-visible,
 input:focus-visible,
@@ -526,7 +557,7 @@ textarea:focus-visible,
 .gallery-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
   margin-top: 20px;
 }
 
@@ -539,7 +570,8 @@ textarea:focus-visible,
 .filter-chip {
   display: inline-flex;
   align-items: center;
-  min-height: 40px;
+  /* Primary gallery control: 48px target (44px floor, 48px preferred). */
+  min-height: 48px;
   padding: 0 16px;
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -728,6 +760,12 @@ textarea {
   color: var(--accent-deep);
 }
 
+.form-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
 .contact-status {
   margin: 0;
   color: var(--muted);
@@ -859,6 +897,12 @@ textarea {
 
 .painting-dialog {
   width: min(920px, calc(100% - 24px));
+  /* Short viewports (landscape phones, high zoom): the dialog itself scrolls
+     instead of overflowing the screen. dvh wins where supported. */
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 22px;
 }
 
@@ -867,10 +911,18 @@ textarea {
   backdrop-filter: blur(6px);
 }
 
+/* While the modal painting dialog is open, script.js adds .dialog-open to
+   <html>. showModal() already makes the page behind inert; this also stops
+   touch devices scrolling the page behind the backdrop. */
+html.dialog-open {
+  overflow: hidden;
+}
+
 .dialog-close {
   justify-self: end;
   align-self: start;
   height: 44px;
+  min-width: 44px;
   display: block;
   border: 0;
   background: transparent;
@@ -913,6 +965,18 @@ textarea {
   .painting-dialog[open],
   .testimonials-grid {
     grid-template-columns: 1fr;
+  }
+
+  /* One-column dialog: cap the artwork against the viewport (portrait and
+     landscape alike) so a tall painting can never push the details and
+     actions off-screen. Ratio is preserved: the image shrinks to fit both
+     constraints rather than being cropped or letterboxed. */
+  .dialog-image img {
+    width: auto;
+    max-width: 100%;
+    max-height: 52vh;
+    max-height: 52dvh;
+    margin-inline: auto;
   }
 
   .stats-panel {
@@ -983,9 +1047,48 @@ textarea {
     max-width: none;
   }
 
+  /* Phone readability: primary reading text and live status messages step up
+     to a full 16px+; the small uppercase labels gain a little more size. */
+  .painting-card-body p,
+  .gallery-results,
+  .contact-status,
+  .form-hint {
+    font-size: 1rem;
+  }
+
+  .eyebrow,
+  .section-label,
+  .hero-card-label {
+    font-size: 0.78rem;
+  }
+
+  .site-footer-copy {
+    font-size: 0.95rem;
+  }
+
   .site-footer-inner {
     flex-direction: column;
     align-items: flex-start;
+  }
+}
+
+/* Coarse pointers (phones, tablets, touch-screen laptops): the text-only
+   inline nav and footer links get a true 44px minimum hit area and a little
+   more separation. Pointer-fine desktops keep the compact composition. */
+@media (pointer: coarse) {
+  .topbar-links a,
+  .site-footer-nav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .topbar-links {
+    gap: 20px;
+  }
+
+  .site-footer-nav {
+    gap: 6px 20px;
   }
 }
 

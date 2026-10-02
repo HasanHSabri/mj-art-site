@@ -17,6 +17,23 @@
   box-sizing: border-box;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+/* Placeholder text is tinted from the warm palette (never neutral gray) and
+   holds a >=4.5:1 contrast against the translucent input surface. */
+::placeholder {
+  color: #6f5c52;
+  opacity: 1;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
 body {
   margin: 0;
   min-height: 100vh;
@@ -49,6 +66,28 @@ code {
 /* ===========================================================================
    Persistent compact top bar: brand, section nav, View website, Sign out
    =========================================================================== */
+
+/* Keyboard shortcut past the persistent top bar. The link stays focusable
+   (transform, never display:none) and appears only when focused. */
+.skip-link {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 40;
+  padding: 10px 16px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--accent-deep);
+  font-weight: 600;
+  transform: translateY(-160px);
+}
+
+.skip-link:focus {
+  transform: none;
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 3px;
+}
 
 .admin-topbar {
   position: sticky;
@@ -87,7 +126,7 @@ code {
 }
 
 .topbar-actions .topbar-link {
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 14px;
   font-size: 0.9rem;
 }
@@ -149,6 +188,19 @@ code {
   font-family: "Cormorant Garamond", serif;
   line-height: 1;
   font-size: clamp(1.9rem, 3vw, 2.6rem);
+}
+
+/* Focused view headings must not land behind the sticky top bar, and the
+   programmatic focus() after a view change stays visible to sighted keyboard
+   users. */
+h2[tabindex="-1"] {
+  scroll-margin-top: 92px;
+}
+
+h2[tabindex="-1"]:focus {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 4px;
+  border-radius: 4px;
 }
 
 .section-heading p,
@@ -220,8 +272,9 @@ textarea {
 }
 
 .checkbox-label input {
-  width: 18px;
-  min-height: 18px;
+  width: 22px;
+  min-height: 22px;
+  height: 22px;
 }
 
 .actions,
@@ -419,7 +472,7 @@ textarea[aria-invalid="true"] {
   bottom: 0;
   z-index: 10;
   margin: 4px -10px -6px;
-  padding: 12px 10px 14px;
+  padding: 12px 10px calc(14px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--border);
   border-radius: 0 0 28px 28px;
   background: rgba(252, 246, 240, 0.95);
@@ -462,7 +515,7 @@ textarea[aria-invalid="true"] {
 }
 
 .search-label input {
-  min-height: 40px;
+  min-height: 48px;
 }
 
 .filter-label {
@@ -471,7 +524,7 @@ textarea[aria-invalid="true"] {
 }
 
 .filter-label select {
-  min-height: 40px;
+  min-height: 48px;
 }
 
 .reorder-note {
@@ -485,6 +538,8 @@ textarea[aria-invalid="true"] {
   display: grid;
   gap: 10px;
   margin-top: 16px;
+  /* Pagination scrolls the list into view; keep it clear of the sticky bar. */
+  scroll-margin-top: 128px;
 }
 
 /* Compact desktop row: thumb | info | availability | actions. */
@@ -569,7 +624,7 @@ textarea[aria-invalid="true"] {
 }
 
 .cat-actions .button {
-  min-height: 38px;
+  min-height: 44px;
   padding: 0 12px;
   font-size: 0.88rem;
 }
@@ -601,7 +656,7 @@ textarea[aria-invalid="true"] {
 }
 
 .pagination-controls .page-button {
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 14px;
   font-size: 0.88rem;
 }
@@ -612,24 +667,30 @@ textarea[aria-invalid="true"] {
   font-weight: 600;
 }
 
-/* Mobile: the compact row becomes a stacked card with the availability badge
-   inline with the meta line. Covers 320px / 393px / 200% zoom. */
+/* Mobile: the compact row becomes a stacked card. The availability badge
+   gets its own grid row under the title/meta (sharing the info area would
+   stack it on top of the title text). Covers 320px / 393px / 200% zoom. */
 @media (max-width: 760px) {
   .cat-row {
     grid-template-columns: 64px minmax(0, 1fr);
     grid-template-areas:
       "thumb info"
+      "thumb availability"
       "actions actions";
   }
 
   .cat-availability {
-    grid-area: info;
+    grid-area: availability;
     justify-self: start;
     align-self: start;
+    margin-top: 2px;
   }
 
+  /* Four 44px actions as a stable two-by-two grid: no thin wrapping strip. */
   .cat-actions {
-    justify-content: flex-start;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
   }
 }
 
@@ -880,17 +941,20 @@ textarea[aria-invalid="true"] {
   .books-table tr {
     border: 1px solid var(--border);
     border-radius: 18px;
-    margin-bottom: 14px;
-    padding: 6px 10px;
+    margin-bottom: 10px;
+    padding: 4px 10px 8px;
     background: rgba(255, 255, 255, 0.42);
   }
 
+  /* Label above value, full width: long emails and names get the whole card
+     width instead of a cramped fixed percentage split. */
   .books-table tbody td {
     display: grid;
-    grid-template-columns: 42% 58%;
-    gap: 8px;
-    padding: 8px 6px;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    padding: 7px 2px;
     border-bottom: none;
+    overflow-wrap: anywhere;
   }
 
   .books-table tbody td::before {
@@ -913,6 +977,10 @@ textarea[aria-invalid="true"] {
 
   .books-actions {
     grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding-top: 6px;
   }
 
   .books-tiles {
@@ -948,6 +1016,126 @@ textarea[aria-invalid="true"] {
   }
 }
 
+/* Phones (<=640px): the editor becomes preview-first so the admin sees what
+   they are editing without scrolling the whole form; short field rows keep
+   the form compact; the save bar spans the panel and clears the home
+   indicator. Covers 320px, 393px, and 200% zoom on desktop viewports. */
+@media (max-width: 640px) {
+  .panel {
+    padding: 18px;
+  }
+
+  .admin-grid {
+    gap: 16px;
+  }
+
+  .admin-grid > .preview-panel {
+    order: -1;
+  }
+
+  .field-group {
+    padding: 14px 14px 16px;
+  }
+
+  /* Paired controls (width/height, availability/price) fit side by side even
+     at 320px, which keeps the long form one screen shorter. */
+  .field-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .preview-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .preview-image,
+  .preview-image img {
+    height: clamp(180px, 56vw, 320px);
+    min-height: 0;
+  }
+
+  .editor-actions {
+    margin: 4px -18px -18px;
+    padding: 12px 14px calc(12px + env(safe-area-inset-bottom, 0px));
+    gap: 10px;
+  }
+
+  .editor-actions .button {
+    flex: 1 1 auto;
+  }
+
+  .editor-actions .primary-button {
+    flex: 2 1 auto;
+  }
+}
+
+/* Small screens (<=720px): the top bar reflows into two deliberate rows --
+   brand plus account actions, then the section navigation as two equal
+   48px targets -- so nothing is crowded, wrapped unpredictably, or clipped
+   at 320px. Safe-area padding keeps content off rounded screen edges. */
+@media (max-width: 720px) {
+  .admin-topbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 10px;
+    padding: 8px max(14px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left));
+  }
+
+  .topbar-brand {
+    grid-column: 1;
+    grid-row: 1;
+    display: inline-flex;
+    align-items: center;
+    align-self: center;
+    min-height: 44px;
+    margin-right: 0;
+    font-size: 1.18rem;
+  }
+
+  .topbar-actions {
+    grid-column: 2;
+    grid-row: 1;
+    gap: 6px;
+  }
+
+  .topbar-actions .topbar-link {
+    min-height: 44px;
+    padding: 0 10px;
+    font-size: 0.85rem;
+  }
+
+  .admin-section-nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .section-anchor {
+    min-height: 48px;
+    justify-content: center;
+    padding: 0 8px;
+    text-align: center;
+  }
+
+  h2[tabindex="-1"] {
+    scroll-margin-top: 148px;
+  }
+}
+
+/* Short landscape viewports (phones rotated): a sticky two-row bar would eat
+   a third of the screen, so it scrolls away with the page instead. */
+@media (max-width: 720px) and (max-height: 480px) {
+  .admin-topbar {
+    position: static;
+  }
+
+  h2[tabindex="-1"] {
+    scroll-margin-top: 24px;
+  }
+}
+
 @media (max-width: 360px) {
   .books-tiles {
     grid-template-columns: 1fr;
@@ -955,5 +1143,17 @@ textarea[aria-invalid="true"] {
 
   .tile-value {
     font-size: 1.6rem;
+  }
+}
+
+/* Reduced motion: the hover lift and color transitions are decorative, so
+   they are removed entirely rather than shortened. */
+@media (prefers-reduced-motion: reduce) {
+  .button {
+    transition: none;
+  }
+
+  .button:hover {
+    transform: none;
   }
 }

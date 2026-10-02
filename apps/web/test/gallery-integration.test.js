@@ -17,7 +17,7 @@ const indexSrc = readFileSync(resolve(here, '../public/index.html'), 'utf8');
 
 // Extract individual SSR card fragments from a rendered gallery string.
 function extractCards(html) {
-  const re = /<article class="painting-card"[\s\S]*?<\/article>/g;
+  const re = /<div class="painting-card"[\s\S]*?(?=\n\s*<div class="painting-card"|\n\s*<\/div>\s*$|$)/g;
   return html.match(re) || [];
 }
 
@@ -124,7 +124,7 @@ test('the public client never fetches /api/artworks or rebuilds the grid', () =>
 
 test('the static index has no hardcoded cards and no More works placeholder', () => {
   const between = indexSrc.match(/artwork-gallery:start -->([\s\S]*)<!-- artwork-gallery:end/)[1];
-  assert.equal(between.includes('<article'), false);
+  assert.equal(between.includes('<div class="painting-card"'), false);
   assert.equal(between.includes('painting-card'), false);
   assert.equal(indexSrc.includes('More works'), false);
 });

@@ -13,8 +13,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Hanken+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./styles.css?v=micro-adjust">
-  <link rel="stylesheet" href="./books.css?v=micro-adjust">
+  <link rel="stylesheet" href="./styles.css?v=mobile-a11y">
+  <link rel="stylesheet" href="./books.css?v=mobile-a11y">
 </head>
 <body>
   <a class="skip-link" href="#story">Skip to content</a>
@@ -209,17 +209,18 @@
 
         <div class="contact-grid">
           <form class="contact-form" id="inquiry-form" aria-labelledby="contact-heading">
+            <p class="form-hint">All fields are required.</p>
             <label>
               Your name
-              <input type="text" id="customer-name" name="customer-name" placeholder="Jane Smith" required>
+              <input type="text" id="customer-name" name="customer-name" autocomplete="name" placeholder="Jane Smith" required>
             </label>
             <label>
               Your email
-              <input type="email" id="customer-email" name="customer-email" placeholder="jane@example.com" required>
+              <input type="email" id="customer-email" name="customer-email" autocomplete="email" placeholder="jane@example.com" required>
             </label>
             <label>
               Painting
-              <input type="text" id="painting-name" name="painting-name" placeholder="Select from the gallery or type the title" required>
+              <input type="text" id="painting-name" name="painting-name" autocomplete="off" placeholder="Select from the gallery or type the title" required>
             </label>
             <label>
               Message

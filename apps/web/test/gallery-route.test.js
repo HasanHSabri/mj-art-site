@@ -107,8 +107,8 @@ test('GET /gallery renders 200, no-store, and the complete projected catalogue',
   assert.equal(res.headers.get('cache-control'), 'no-store');
   assert.equal(res.headers.get('content-type'), 'text/html; charset=UTF-8');
   const html = await res.text();
-  // Full gallery renders every record as an interactive dialog <article> card.
-  assert.equal(countBetween(html, '<article class="painting-card"'), 8);
+  // Full gallery renders every record as an interactive dialog <div role="button"> card.
+  assert.equal(countBetween(html, '<div class="painting-card"'), 8);
   // No Home-style preview anchor cards on the full gallery page.
   assert.equal(countBetween(html, 'painting-preview-card'), 0);
   // No internal-only fields leak into the SSR.
@@ -122,7 +122,7 @@ test('GET /gallery with missing catalogue renders 200 with an empty marker (no l
   const res = await worker.fetch(req('/gallery'), env);
   assert.equal(res.status, 200);
   const html = await res.text();
-  assert.equal(countBetween(html, '<article class="painting-card"'), 0);
+  assert.equal(countBetween(html, '<div class="painting-card"'), 0);
   assert.equal(countBetween(html, 'painting-preview-card'), 0);
 });
 
@@ -209,9 +209,9 @@ test('GET / renders exactly the first 6 public records in the artist sortOrder a
   const res = await worker.fetch(req('/'), env);
   assert.equal(res.status, 200);
   const html = await res.text();
-  // Home is a PREVIEW: exactly 6 anchor cards, never interactive <article> cards.
+  // Home is a PREVIEW: exactly 6 anchor cards, never interactive role="button" cards.
   assert.equal(countBetween(html, 'painting-preview-card'), 6);
-  assert.equal(countBetween(html, '<article class="painting-card"'), 0);
+  assert.equal(countBetween(html, '<div class="painting-card"'), 0);
   // The six are the first six by sortOrder ascending (Piece 1..Piece 6), and
   // Piece 7 / Piece 8 are NOT present on Home.
   for (const n of [1, 2, 3, 4, 5, 6]) {

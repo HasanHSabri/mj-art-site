@@ -88,14 +88,14 @@ export function renderArtworkCard(artwork, initiallyVisible = true) {
   const sizeAttrs = width != null ? ` width="${width}" height="${height}"` : '';
   const hiddenAttr = initiallyVisible ? '' : ' hidden';
 
-  return `          <article class="painting-card" role="button" tabindex="0" aria-haspopup="dialog" aria-label="View details for ${escapeAttribute(title)}" data-title="${escapeAttribute(title)}" data-medium="${escapeAttribute(medium)}" data-size="${escapeAttribute(dimensionsDisplay)}" data-price="${escapeAttribute(priceDisplay)}" data-availability="${escapeAttribute(availability)}" data-description="${escapeAttribute(description)}" data-image="${escapeAttribute(fullImage)}" data-size-category="${escapeAttribute(sizeCategory)}" data-category="${escapeAttribute(category)}"${hiddenAttr}>
+  return `          <div class="painting-card" role="button" tabindex="0" aria-haspopup="dialog" aria-label="View details for ${escapeAttribute(title)}" data-title="${escapeAttribute(title)}" data-medium="${escapeAttribute(medium)}" data-size="${escapeAttribute(dimensionsDisplay)}" data-price="${escapeAttribute(priceDisplay)}" data-availability="${escapeAttribute(availability)}" data-description="${escapeAttribute(description)}" data-image="${escapeAttribute(fullImage)}" data-size-category="${escapeAttribute(sizeCategory)}" data-category="${escapeAttribute(category)}"${hiddenAttr}>
             <div class="${imageClass}"><img src="${escapeAttribute(thumbnail)}" alt="${escapeAttribute(title)}" loading="lazy" decoding="async"${sizeAttrs}></div>
             <div class="painting-card-body">
               <h3>${escapeHtml(title)}</h3>
               <p>${escapeHtml(priceDisplay)}</p>
               <span>${escapeHtml(availability)}</span>
             </div>
-          </article>`;
+          </div>`;
 }
 
 // Render the full SSR gallery fragment (cards joined by blank lines). Empty

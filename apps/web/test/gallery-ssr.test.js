@@ -191,7 +191,7 @@ test('renderArtworkCards joins multiple cards with blank-line separators', () =>
     publicRecord({ id: 'mj-001', title: 'One' }),
     publicRecord({ id: 'mj-002', title: 'Two' })
   ]);
-  const articleCount = (html.match(/<article class="painting-card"/g) || []).length;
+  const articleCount = (html.match(/<div class="painting-card"/g) || []).length;
   assert.equal(articleCount, 2);
   assert.ok(html.includes('One'));
   assert.ok(html.includes('Two'));

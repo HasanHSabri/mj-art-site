@@ -1028,7 +1028,16 @@ function createBooksAbortController() {
   return typeof AbortController === 'function' ? new AbortController() : null;
 }
 
-const booksDebounce = typeof setTimeout === 'function' ? { set: setTimeout, clear: clearTimeout } : null;
+// The timer helpers must be wrapped: storing the detached native
+// setTimeout/clearTimeout functions and calling them off a plain object
+// throws "Illegal invocation" in browsers (they require their original
+// receiver), which silently killed the name filter's debounced re-render.
+const booksDebounce = typeof setTimeout === 'function'
+  ? {
+      set: (fn, delay) => setTimeout(fn, delay),
+      clear: (timer) => clearTimeout(timer)
+    }
+  : null;
 
 function isStaleBooksRequest(generation, epoch) {
   return generation !== booksLoadGeneration || epoch !== booksSessionEpoch;

@@ -204,6 +204,10 @@ function applyState(next, opts) {
   }
 }
 
+// Card that opened the dialog, so close reliably returns focus to it (native
+// dialog focus return is good but not guaranteed after card filtering).
+let dialogOpener = null;
+
 function openPaintingDialog(card) {
   const { title, medium, size, price, availability, description, image } = card.dataset;
 
@@ -217,10 +221,28 @@ function openPaintingDialog(card) {
   dialogImageElement.src = image || '';
   dialogImageElement.alt = title || 'Artwork';
 
+  dialogOpener = card;
+  // Lock page scroll behind the modal (html.dialog-open) for touch devices;
+  // removed on every close path below.
+  document.documentElement.classList.add('dialog-open');
   dialog.showModal();
 }
 
 dialogClose.addEventListener('click', () => dialog.close());
+
+// Fires for every close path (button, backdrop click, Escape). Unlock scroll
+// and restore focus to the opening card without scrolling the page.
+dialog.addEventListener('close', () => {
+  document.documentElement.classList.remove('dialog-open');
+  if (dialogOpener && document.contains(dialogOpener)) {
+    try {
+      dialogOpener.focus({ preventScroll: true });
+    } catch {
+      dialogOpener.focus();
+    }
+  }
+  dialogOpener = null;
+});
 
 dialog.addEventListener('click', (event) => {
   const rect = dialog.getBoundingClientRect();

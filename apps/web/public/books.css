@@ -70,7 +70,7 @@
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  font-size: 0.68rem;
+  font-size: 0.75rem;
   font-weight: 600;
 }
 
@@ -203,10 +203,12 @@
 }
 
 /* Turnstile widget container. The widget iframe is injected here once the
-   official script is loaded explicitly by books.js. */
+   official script is loaded explicitly by books.js. max-width keeps any
+   widget overflow contained to the form column instead of the page. */
 .books-turnstile {
   display: flex;
   justify-content: flex-start;
+  max-width: 100%;
   min-height: 65px;
 }
 
@@ -259,6 +261,14 @@
 
   .books-qty {
     margin-left: 0;
+  }
+
+  /* Phone readability: the live status line (errors and confirmations) and
+     the per-book quantity labels read at a full 16px. */
+  .books-status,
+  .books-qty label,
+  .books-anticipation {
+    font-size: 1rem;
   }
 }
 

@@ -123,3 +123,47 @@ test('popstate view changes move focus; same-view pops do not', () => {
   assert.ok(pop, 'popstate handler exists');
   assert.match(pop[1], /target\.view !== previousView\)\s*focusViewHeading/);
 });
+
+// ===========================================================================
+// Mobile accessibility contracts: 320px reflow, touch targets, safe areas,
+// focus visibility, and reduced motion
+// ===========================================================================
+
+test('viewport supports safe areas and the page offers a keyboard skip link', () => {
+  assert.match(adminHtml, /name="viewport" content="width=device-width, initial-scale=1\.0, viewport-fit=cover"/);
+  assert.match(adminHtml, /<a class="skip-link" href="#main-content">Skip to main content<\/a>/);
+  assert.match(adminHtml, /<main class="admin-shell" id="main-content">/);
+  assert.match(adminCss, /\.skip-link\s*\{[^}]*transform:\s*translateY/, 'the skip link is visually hidden but still focusable');
+  assert.match(adminCss, /\.skip-link:focus\s*\{[^}]*transform:\s*none/, 'the skip link appears on focus');
+});
+
+test('catalogue row actions and pagination meet the 44px touch floor', () => {
+  assert.match(adminCss.match(/\.cat-actions \.button\s*\{([^}]*)\}/)[1], /min-height:\s*44px/, 'row actions are 44px+');
+  assert.match(adminCss.match(/\.pagination-controls \.page-button\s*\{([^}]*)\}/)[1], /min-height:\s*44px/, 'pagination buttons are 44px+');
+});
+
+test('mobile editor shows the live preview first and keeps the save bar reachable', () => {
+  assert.match(adminCss, /\.admin-grid > \.preview-panel\s*\{[^}]*order:\s*-1/, 'the preview renders before the form on phones');
+  assert.match(adminCss, /\.preview-image,\s*\.preview-image img\s*\{[^}]*height:\s*clamp\(180px,\s*56vw,\s*320px\)/, 'the preview height is viewport-proportional instead of a fixed 320px block');
+  assert.match(adminCss, /\.editor-actions\s*\{[^}]*env\(safe-area-inset-bottom/, 'the sticky save bar clears the home indicator');
+  assert.match(adminCss, /\.editor-actions \.primary-button\s*\{[^}]*flex:\s*2/, 'Save stays the dominant control in the bar');
+  assert.match(adminCss, /\.field-row\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/, 'paired fields stay side by side to shorten the mobile form');
+});
+
+test('focused view headings and the catalogue list clear the sticky header', () => {
+  assert.match(adminCss, /h2\[tabindex="-1"\]\s*\{[^}]*scroll-margin-top:\s*92px/, 'headings scroll clear of the desktop bar');
+  assert.match(adminCss, /h2\[tabindex="-1"\]:focus\s*\{[^}]*outline:\s*3px solid/, 'programmatic heading focus stays visible');
+  assert.match(adminCss, /\.catalogue-list\s*\{[^}]*scroll-margin-top:\s*128px/, 'pagination scroll targets clear the sticky bar');
+});
+
+test('placeholder text is tinted from the palette at body-level contrast', () => {
+  // #6f5c52 on the warm input surface measures >=4.5:1; neutral gray is banned.
+  assert.match(adminCss, /::placeholder\s*\{[^}]*color:\s*#6f5c52/);
+});
+
+test('reduced-motion preferences remove the decorative hover lift and transitions', () => {
+  const rm = adminCss.match(/@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(rm, 'a prefers-reduced-motion block exists');
+  assert.match(rm[1], /transition:\s*none/);
+  assert.match(rm[1], /transform:\s*none/);
+});

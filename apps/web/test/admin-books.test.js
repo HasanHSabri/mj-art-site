@@ -728,6 +728,13 @@ test('Books requests are generation-guarded, aborted, and epoch-invalidated (sou
   assert.match(reset[1], /\.abort\(\)/);
   // The name filter is debounced.
   assert.match(booksCode, /booksDebounce\.set\(\(\) => \{/);
+  // The debounce helpers must be receiver-safe wrappers, not the detached
+  // native setTimeout/clearTimeout: browsers throw "Illegal invocation" for
+  // those when called off the plain object, silently breaking the filter.
+  assert.doesNotMatch(booksCode, /set:\s*setTimeout\b/);
+  assert.doesNotMatch(booksCode, /clear:\s*clearTimeout\b/);
+  assert.match(booksCode, /set:\s*\(fn, delay\) => setTimeout\(fn, delay\)/);
+  assert.match(booksCode, /clear:\s*\(timer\) => clearTimeout\(timer\)/);
 });
 
 test('successful PATCH followed by a mismatched summary clears PII, shows an error, and resets tiles', async () => {
@@ -810,7 +817,9 @@ test('Books actions, filters, search, and section navigation meet the 44px targe
   assert.match(sectionAnchor[1], /min-height:\s*44px/);
   assert.match(filters[1], /min-height:\s*44px/);
   assert.match(actions[1], /min-height:\s*44px/);
-  assert.match(adminCss.match(/\.search-label input\s*\{([^}]*)\}/)[1], /min-height:\s*40px/, 'artwork search sizing is unchanged');
+  // Catalogue search/filters are primary controls: they take the 48px size.
+  assert.match(adminCss.match(/\.search-label input\s*\{([^}]*)\}/)[1], /min-height:\s*48px/, 'artwork search meets the 48px primary control size');
+  assert.match(adminCss.match(/\.filter-label select\s*\{([^}]*)\}/)[1], /min-height:\s*48px/, 'artwork filter selects meet the 48px primary control size');
 });
 
 test('the recent list table reflows to stacked cards at <=640px (covers 320/393 and 200% zoom)', () => {
@@ -818,4 +827,28 @@ test('the recent list table reflows to stacked cards at <=640px (covers 320/393 
   assert.ok(mq, 'a 640px media block must exist');
   assert.match(mq[1], /\.books-table\s+thead\s*\{[^}]*display:\s*none/, 'thead hidden at 640px');
   assert.match(mq[1], /content:\s*attr\(data-label\)/, 'cells expose labels via data-label ::before');
+});
+
+test('books enquiry cards stack label-over-value at full width (no cramped split, long values wrap)', () => {
+  const mq = adminCss.match(/@media\s*\(\s*max-width:\s*640px\s*\)\s*\{([\s\S]*?)\}\s*(?=@media|\z)/);
+  assert.ok(mq, 'a 640px media block must exist');
+  assert.doesNotMatch(mq[1], /42%/, 'the fixed two-column percentage split is gone');
+  assert.match(mq[1], /\.books-table tbody td\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/, 'each cell is a single full-width column: label above value');
+  assert.match(mq[1], /\.books-table tbody td\s*\{[^}]*overflow-wrap:\s*anywhere/, 'long emails and names wrap instead of overflowing the card');
+  assert.match(mq[1], /\.books-actions\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/, 'status actions are two equal 44px+ targets per row');
+});
+
+test('the mobile top bar reflows into two deliberate rows with full-width 48px section targets', () => {
+  const start = adminCss.indexOf('@media (max-width: 720px)');
+  assert.ok(start >= 0, 'a 720px top bar breakpoint exists');
+  const block = adminCss.slice(start, adminCss.indexOf('@media', start + 10));
+  assert.match(block, /grid-template-columns:\s*minmax\(0, 1fr\) auto/, 'row 1 pairs the brand with the account actions');
+  assert.match(block, /\.admin-section-nav\s*\{[^}]*grid-column:\s*1 \/ -1/, 'row 2 is the full-width section navigation');
+  assert.match(block, /\.admin-section-nav\s*\{[^}]*grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/, 'the two views are equal-width tabs');
+  assert.match(block, /\.section-anchor\s*\{[^}]*min-height:\s*48px/, 'section anchors are 48px targets');
+  assert.match(block, /\.topbar-actions \.topbar-link\s*\{[^}]*min-height:\s*44px/, 'topbar links keep the 44px floor');
+  assert.match(block, /env\(safe-area-inset-left\)/, 'notch/home-indicator insets are respected');
+  const short = adminCss.slice(adminCss.indexOf('@media (max-width: 720px) and (max-height: 480px)'));
+  assert.ok(short.length > 0, 'a short-landscape rule exists');
+  assert.match(short.slice(0, short.indexOf('}') + 1), /position:\s*static/, 'short landscape viewports unstick the bar so content wins the space');
 });

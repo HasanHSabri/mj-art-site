@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>MJ Art Admin</title>
   <meta name="robots" content="noindex">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="./admin.css">
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to main content</a>
   <header class="admin-topbar">
     <a class="topbar-brand" href="./admin.html" id="admin-brand">MJ Art admin</a>
     <nav class="admin-section-nav" id="admin-section-nav" aria-label="Admin sections" hidden>
@@ -24,7 +25,8 @@
     </div>
   </header>
 
-  <main class="admin-shell">
+  <main class="admin-shell" id="main-content">
+    <h1 class="visually-hidden">MJ Art admin</h1>
     <section class="panel login-panel" id="login-panel" aria-label="Admin sign in">
       <form id="login-form" class="login-form">
         <div class="section-heading">

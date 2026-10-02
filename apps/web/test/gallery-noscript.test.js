@@ -17,7 +17,7 @@ const noscriptCssPath = resolve(publicDir, 'gallery-noscript.css');
 const catalog = JSON.parse(readFileSync(resolve(here, '../../../catalog/catalog.json'), 'utf8'));
 
 function extractCards(html) {
-  return html.match(/<article class="painting-card"[\s\S]*?<\/article>/g) || [];
+  return html.match(/<div class="painting-card"[\s\S]*?(?=\n\s*<div class="painting-card"|\n\s*<\/div>\s*$|$)/g) || [];
 }
 
 // ===========================================================================

@@ -15,7 +15,7 @@ const scriptJs = readFileSync(resolve(publicDir, 'script.js'), 'utf8');
 const catalog = JSON.parse(readFileSync(resolve(here, '../../../catalog/catalog.json'), 'utf8'));
 
 function extractCards(html) {
-  return html.match(/<article class="painting-card"[\s\S]*?<\/article>/g) || [];
+  return html.match(/<div class="painting-card"[\s\S]*?(?=\n\s*<div class="painting-card"|\n\s*<\/div>\s*$|$)/g) || [];
 }
 
 function cssRuleBody(css, selector) {

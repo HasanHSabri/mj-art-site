@@ -6,6 +6,8 @@
 //   - wire the one-or-both book checkboxes to their per-book estimated-copies
 //     controls (hidden + disabled while unselected, revealed + enabled when
 //     checked; an unselected book's quantity is never submitted)
+//   - validate field-by-field before submission: a specific message in the
+//     status region, aria-invalid on the exact control, and focus moved to it
 //   - preselect a book checkbox from a validated ?book=<code> query param
 //   - robustly submit the EOI to POST /api/books/eoi as
 //     { interests: [{ book, quantity }], name, email, consent, turnstileToken },
@@ -102,6 +104,76 @@ export function hasNoSelection(values) {
   return !selections.some((sel) => sel && sel.checked === true);
 }
 
+// Simple email shape guard so the form can name the problem before
+// submission. The server remains the authority; this is messaging only.
+// The pattern, the '..' rejection, and the length cap mirror the server's
+// normalizeEmail contract so a locally accepted address is never bounced by
+// the API with only a generic failure.
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const MAX_NAME_LENGTH = 100;
+export const MAX_EMAIL_LENGTH = 320;
+
+function isValidEmail(raw) {
+  const trimmed = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (trimmed.length === 0 || trimmed.length > MAX_EMAIL_LENGTH) return false;
+  if (!EMAIL_PATTERN.test(trimmed)) return false;
+  if (trimmed.includes('..')) return false;
+  return true;
+}
+
+// Canonicalize like the server does (trim + collapse whitespace) so the
+// client length check sees the same string the API will reject.
+function canonicalNameLength(raw) {
+  if (typeof raw !== 'string') return -1;
+  return raw.trim().replace(/\s+/g, ' ').length;
+}
+
+// First invalid field key, in the order the submit handler announces them
+// (selections -> quantity -> name -> email -> consent -> verification).
+// Mirrors buildEoiPayload's guards so validation can name and focus the exact
+// control instead of reporting one generic message. '' means every
+// client-checkable field is satisfied. The email check is deliberately
+// stricter than buildEoiPayload (which only requires non-empty) so a
+// malformed address is caught before the round-trip.
+export function firstInvalidEoiField(values) {
+  const v = values || {};
+  const selections = Array.isArray(v.selections) ? v.selections : [];
+  const checked = selections.filter((sel) => sel && sel.checked === true);
+  if (checked.length === 0) return 'selections';
+  for (const sel of checked) {
+    if (!BOOK_VALUES.includes(sel.book)) return 'selections';
+    const quantity = toInt(sel.quantity);
+    if (quantity === null || quantity < MIN_QUANTITY || quantity > MAX_QUANTITY) return 'quantity';
+  }
+  const name = typeof v.name === 'string' ? v.name.trim() : '';
+  if (name.length === 0 || canonicalNameLength(v.name) > MAX_NAME_LENGTH) return 'name';
+  if (!isValidEmail(v.email)) return 'email';
+  if (v.consent !== true) return 'consent';
+  if (typeof v.turnstileToken !== 'string' || v.turnstileToken.length === 0) return 'verification';
+  return '';
+}
+
+// Specific, actionable message per invalid field: each names the problem and
+// the recovery step.
+export function invalidFieldMessage(field) {
+  switch (field) {
+    case 'selections':
+      return 'Please choose at least one book to join the update list.';
+    case 'quantity':
+      return 'Please choose an estimated quantity between 1 and 10 for each selected book.';
+    case 'name':
+      return 'Please enter your name so we can record your interest.';
+    case 'email':
+      return 'Please enter a valid email address so we can send you updates.';
+    case 'consent':
+      return 'Please tick the consent box so we are allowed to email you about the books.';
+    case 'verification':
+      return 'Please complete the verification check, then register your interest again.';
+    default:
+      return 'Please complete every field, including consent and verification.';
+  }
+}
+
 // Validate a ?book=<code> query value against the canonical allowlist. Returns
 // the canonical book value when valid, or '' when absent/invalid, so an invalid
 // or missing value leaves existing behaviour unchanged.
@@ -156,6 +228,10 @@ function init() {
   for (const checkbox of els.checkboxes) {
     checkbox.addEventListener('change', () => syncQuantities(els));
   }
+  // A field's invalid flag clears as soon as the visitor edits it again.
+  for (const control of invalidFlagControls(els)) {
+    control.addEventListener('input', () => control.removeAttribute('aria-invalid'));
+  }
   applyBookPreselection(form, { focus: true });
   syncQuantities(els);
   window.addEventListener('popstate', () => {
@@ -190,7 +266,9 @@ function init() {
 
     const payload = buildEoiPayload(raw);
     if (!payload) {
-      announce(els.status, 'Please complete every field, including consent and verification.');
+      const invalidField = firstInvalidEoiField(raw);
+      announce(els.status, invalidFieldMessage(invalidField));
+      flagInvalidField(els, invalidField);
       return;
     }
 
@@ -207,6 +285,7 @@ function init() {
 
       if (res.ok) {
         announce(els.status, 'Thank you. Your interest has been recorded. We will be in touch with updates about the book(s) you selected.');
+        clearInvalidFlags(els);
         resetForm(els.form);
         syncQuantities(els);
         resetTurnstile(turnstileWidgetId);
@@ -269,6 +348,52 @@ function syncQuantities(els) {
   }
 }
 
+// Every control that can carry an aria-invalid flag.
+function invalidFlagControls(els) {
+  const quantityInputs = els.qtyContainers.flatMap((c) => [...c.querySelectorAll('input')]);
+  return [els.name, els.email, els.consent, ...quantityInputs].filter(Boolean);
+}
+
+function clearInvalidFlags(els) {
+  for (const control of invalidFlagControls(els)) {
+    control.removeAttribute('aria-invalid');
+  }
+}
+
+// Point screen-reader and sighted users at the exact invalid control: the
+// field is flagged with aria-invalid and receives focus (the status region
+// has already announced the specific message). Verification has no focusable
+// control of its own, so its message relies on the announce() live region.
+function flagInvalidField(els, field) {
+  clearInvalidFlags(els);
+  let control = null;
+  if (field === 'quantity') {
+    control = firstCheckedQuantityInput(els);
+  } else if (field === 'name') {
+    control = els.name;
+  } else if (field === 'email') {
+    control = els.email;
+  } else if (field === 'consent') {
+    control = els.consent;
+  }
+  if (!control) return;
+  control.setAttribute('aria-invalid', 'true');
+  try {
+    control.focus({ preventScroll: false });
+  } catch {
+    control.focus();
+  }
+}
+
+function firstCheckedQuantityInput(els) {
+  for (const checkbox of els.checkboxes) {
+    if (checkbox.checked !== true) continue;
+    const input = quantityInputFor(els, checkbox.value);
+    if (input && !input.disabled) return input;
+  }
+  return null;
+}
+
 // Preselect the book checkbox from a validated ?book=<canonical> param. On the
 // initial load (opts.focus === true) the selected checkbox also receives focus
 // so keyboard users land on the form; on history navigation focus is left to
@@ -316,6 +441,12 @@ function initTurnstile(els, handlers) {
         sitekey,
         action,
         theme: 'light',
+        // The normal widget is a fixed 300px wide; on very narrow viewports
+        // (320px phones, 400% zoom) it would overflow the form and drag the
+        // page sideways. The compact widget (150px) fits everywhere.
+        size: window.matchMedia && window.matchMedia('(max-width: 359px)').matches
+          ? 'compact'
+          : 'normal',
         callback: (token) => handlers.onToken(token),
         'error-callback': () => handlers.onReset(),
         'expired-callback': () => handlers.onReset()
